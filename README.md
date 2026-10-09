@@ -13,6 +13,11 @@
   </p>
 </p>
 
+> [!IMPORTANT]
+> This repository is for the hosted instance at [splitpro.app](https://splitpro.app). If you use splitpro.app, post your issues here.
+>
+> To self-host SplitPro, use [oss-apps/split-pro](https://github.com/oss-apps/split-pro).
+
 ## About
 
 SplitPro aims to provide an open-source way to share expenses with your friends.

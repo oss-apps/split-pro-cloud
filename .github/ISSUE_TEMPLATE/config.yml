@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Self-hosting SplitPro
+    url: https://github.com/oss-apps/split-pro/issues
+    about: This repository is only for splitpro.app. Issues with your own SplitPro instance go to oss-apps/split-pro.
