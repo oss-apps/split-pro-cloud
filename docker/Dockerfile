@@ -37,7 +37,6 @@ COPY --from=base  /app/prisma/schema.prisma ./prisma/schema.prisma
 COPY --from=base  /app/prisma/migrations ./prisma/migrations
 COPY --from=base  /app/node_modules/prisma ./node_modules/prisma
 COPY --from=base  /app/node_modules/@prisma ./node_modules/@prisma
-COPY --from=base  /app/node_modules/sharp ./node_modules/sharp
 
 # Symlink the prisma binary
 RUN mkdir node_modules/.bin

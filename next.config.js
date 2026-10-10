@@ -33,16 +33,8 @@ const config = {
   },
   transpilePackages: ['geist'],
   images: {
-    remotePatterns: [
-      {
-        protocol: 'https',
-        hostname: '**',
-      },
-      {
-        protocol: 'http',
-        hostname: '**',
-      },
-    ],
+    // Images are static assets or user-uploaded receipts; never run them through the optimizer
+    unoptimized: true,
   },
 };
 
