@@ -3,7 +3,7 @@ import { type GetStaticPaths, type GetStaticProps } from 'next';
 import Image from 'next/image';
 import Link from 'next/link';
 import { PrimaryLink, SecondaryLink } from '~/components/Site/blocks';
-import { AUTHOR_URL, SITE_URL } from '~/components/Site/constants';
+import { AUTHOR_URL, QUICK_SPLIT_PATH, SITE_URL } from '~/components/Site/constants';
 import { PostCard, formatPostDate } from '~/components/Site/PostCard';
 import { Seo } from '~/components/Site/Seo';
 import { SiteLayout } from '~/components/Site/SiteLayout';
@@ -89,7 +89,7 @@ const BlogPost: React.FC<{ post: Post; related: PostMeta[] }> = ({ post, related
             </p>
             <div className="mt-6 flex flex-col gap-3 sm:flex-row">
               <PrimaryLink href="/auth/signin">Start splitting for free</PrimaryLink>
-              <SecondaryLink href="/tools">Try the free tools</SecondaryLink>
+              <SecondaryLink href={QUICK_SPLIT_PATH}>Try a quick split</SecondaryLink>
             </div>
           </aside>
         </article>

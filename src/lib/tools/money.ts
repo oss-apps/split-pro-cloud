@@ -35,11 +35,6 @@ export const parseAmount = (value: string, currency: string) => {
   return Math.round(number * minorUnitFactor(currency));
 };
 
-export const parsePercent = (value: string) => {
-  const number = Number.parseFloat(value.replace(',', '.'));
-  return Number.isFinite(number) && number > 0 ? number : 0;
-};
-
 export const formatMoney = (minor: number, currency: string) => {
   const factor = minorUnitFactor(currency);
   try {
@@ -85,4 +80,24 @@ export const allocate = (total: number, weights: readonly number[]) => {
   return parts;
 };
 
-export const percentOf = (amount: number, percent: number) => Math.round((amount * percent) / 100);
+/** Minor units back to a plain number for an input field, like 12345 → "123.45". */
+export const toInputAmount = (minor: number, currency: string) => {
+  if (!minor) {
+    return '';
+  }
+  const digits = fractionDigits(currency);
+  const fixed = (minor / 10 ** digits).toFixed(digits);
+  return digits ? fixed.replace(/\.?0+$/, '') : fixed;
+};
+
+export const currencySymbol = (currency: string) => {
+  try {
+    return (
+      new Intl.NumberFormat('en', { style: 'currency', currency, currencyDisplay: 'narrowSymbol' })
+        .formatToParts(0)
+        .find((part) => 'currency' === part.type)?.value ?? currency
+    );
+  } catch {
+    return currency;
+  }
+};

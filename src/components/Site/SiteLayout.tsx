@@ -5,10 +5,17 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import { cn } from '~/lib/utils';
-import { AUTHOR_URL, GITHUB_URL, ISSUES_URL, SPONSOR_URL, TOOLS, TWITTER_URL } from './constants';
+import {
+  AUTHOR_URL,
+  GITHUB_URL,
+  ISSUES_URL,
+  QUICK_SPLIT_PATH,
+  SPONSOR_URL,
+  TWITTER_URL,
+} from './constants';
 
 const NAV_LINKS = [
-  { href: '/tools', label: 'Free tools' },
+  { href: QUICK_SPLIT_PATH, label: 'Quick split' },
   { href: '/blog', label: 'Blog' },
   { href: '/blog/need-for-splitwise-alternative', label: 'Why SplitPro' },
 ] as const;
@@ -23,7 +30,7 @@ export const SiteLayout: React.FC<{ children: React.ReactNode }> = ({ children }
       ) : null}
       <SiteBackground />
       <SiteHeader />
-      <main className="relative">{children}</main>
+      <div className="relative">{children}</div>
       <SiteFooter />
     </div>
   );
@@ -132,13 +139,10 @@ const FOOTER_COLUMNS = [
     links: [
       { href: '/auth/signin', label: 'Get started' },
       { href: '/balances', label: 'Open the app' },
+      { href: QUICK_SPLIT_PATH, label: 'Quick split, no sign-up' },
       { href: '/blog/need-for-splitwise-alternative', label: 'Why SplitPro' },
       { href: ISSUES_URL, label: 'Report a problem' },
     ],
-  },
-  {
-    title: 'Free tools',
-    links: [{ href: '/tools', label: 'All tools' }, ...TOOLS.map((t) => ({ ...t, label: t.name }))],
   },
   {
     title: 'Resources',
@@ -160,7 +164,7 @@ const FOOTER_COLUMNS = [
 
 const SiteFooter = () => (
   <footer className="relative mt-32 border-t border-white/[0.06]">
-    <div className="mx-auto grid max-w-6xl gap-12 px-5 py-16 lg:grid-cols-[1.3fr_repeat(4,1fr)] lg:px-8">
+    <div className="mx-auto grid max-w-6xl gap-12 px-5 py-16 lg:grid-cols-[1.3fr_repeat(3,1fr)] lg:px-8">
       <div className="max-w-xs">
         <Logo />
         <p className="mt-4 text-sm leading-relaxed text-gray-400">

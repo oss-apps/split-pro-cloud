@@ -55,6 +55,6 @@ Anyone who signs in with that email sees their balances straight away. People wh
 
 **Can I import the same group twice?** Avoid it. Import once, check the balances, and add new expenses in SplitPro from then on.
 
-**What about recurring costs like rent?** Add them as regular expenses each month. If you're unsure how to split rent fairly, our [rent split calculator](/tools/rent-split) helps you agree on the numbers first.
+**What about recurring costs like rent?** Add them as regular expenses each month. If you're unsure how to split rent fairly, our guide on [how to split rent fairly](/blog/how-to-split-rent-fairly) walks through the options.
 
-**I only need to settle one last trip.** You don't have to import anything. Enter the trip's expenses into the free [settle-up calculator](/tools/settle-up), share the result, and start fresh in SplitPro.
+**I only need to settle one last trip.** You don't have to import anything. Enter the trip's expenses into a free [quick split](/split), share the link, and start fresh in SplitPro.

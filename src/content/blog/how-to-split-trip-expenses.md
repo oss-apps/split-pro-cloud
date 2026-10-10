@@ -54,7 +54,7 @@ Priya didn't come along for the drive, so her share of the gas is zero. Paying b
 - Priya pays Alex **$71.70**
 - Sam pays Alex **$36.10**
 
-That's it. Everyone is even. You can try this exact example, or your own trip, in our free [settle-up calculator](/tools/settle-up). No sign-up, and you can share the result with your group as a link. If you're curious how the matching works, we explain it in [how "simplify debts" works](/blog/simplify-debts-explained).
+That's it. Everyone is even. You can try this exact example, or your own trip, with our free [quick split](/split). No sign-up, and you can share it with your group as a link. If you're curious how the matching works, we explain it in [how "simplify debts" works](/blog/simplify-debts-explained).
 
 ## A few tricky situations
 

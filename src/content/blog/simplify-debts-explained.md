@@ -69,6 +69,6 @@ Usually, but not always. Finding the true minimum in every case is a famously ha
 
 ## Try it with your own numbers
 
-Our free [settle-up calculator](/tools/settle-up) does exactly this. Add the people and the expenses, untick anyone who wasn't part of something, and it shows the balances and the payments. It runs in your browser, and you can share the result with a link.
+Our free [quick split](/split) does exactly this. Add the people and the expenses, untick anyone who wasn't part of something, and it shows the balances and the payments. It runs in your browser, and you can share it with a link.
 
 For trips that are still going on, or for a group you split with every week, [SplitPro](/auth/signin) keeps a running balance for everyone, so settling up is just a matter of looking at the numbers.
