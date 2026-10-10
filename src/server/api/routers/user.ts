@@ -11,6 +11,12 @@ import {
   importGroupFromSplitwise,
   importUserBalanceFromSplitWise,
 } from '../services/splitService';
+import {
+  addFriendship,
+  assertCanSavePersonalExpense,
+  canViewExpense,
+  deleteFriendship,
+} from '../services/accessControl';
 import { TRPCError } from '@trpc/server';
 import { randomUUID } from 'crypto';
 import { getDocumentUploadUrl } from '~/server/storage';
@@ -87,17 +93,27 @@ export const userRouter = createTRPCRouter({
   }),
 
   getFriends: protectedProcedure.query(async ({ ctx }) => {
-    const balanceWithFriends = await db.balance.findMany({
-      where: {
-        userId: ctx.session.user.id,
-      },
-      select: {
-        friendId: true,
-      },
-      distinct: ['friendId'],
-    });
+    const [balanceWithFriends, friendships] = await Promise.all([
+      db.balance.findMany({
+        where: {
+          userId: ctx.session.user.id,
+        },
+        select: {
+          friendId: true,
+        },
+        distinct: ['friendId'],
+      }),
+      db.friendship.findMany({
+        where: {
+          userId: ctx.session.user.id,
+        },
+        select: {
+          friendId: true,
+        },
+      }),
+    ]);
 
-    const friendsIds = balanceWithFriends.map((f) => f.friendId);
+    const friendsIds = [...new Set([...balanceWithFriends, ...friendships].map((f) => f.friendId))];
 
     const friends = await db.user.findMany({
       where: {
@@ -121,6 +137,7 @@ export const userRouter = createTRPCRouter({
 
       if (friend) {
         console.log('Friend already exists so skipping this step');
+        await addFriendship(session.user.id, friend.id);
         return friend;
       }
 
@@ -130,6 +147,8 @@ export const userRouter = createTRPCRouter({
           name: input.email.split('@')[0],
         },
       });
+
+      await addFriendship(session.user.id, user.id);
 
       if (input.sendInviteEmail) {
         sendInviteEmail(input.email, session.user.name ?? session.user.email ?? '').catch((err) => {
@@ -163,25 +182,7 @@ export const userRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ input, ctx }) => {
-      if (input.expenseId) {
-        const expenseParticipant = await db.expenseParticipant.findUnique({
-          where: {
-            expenseId_userId: {
-              expenseId: input.expenseId,
-              userId: ctx.session.user.id,
-            },
-          },
-        });
-
-        console.log('expenseParticipant', expenseParticipant);
-
-        if (!expenseParticipant) {
-          throw new TRPCError({
-            code: 'UNAUTHORIZED',
-            message: 'You are not the participant of the expense',
-          });
-        }
-      }
+      await assertCanSavePersonalExpense(ctx.session.user.id, input);
 
       try {
         const expense = input.expenseId
@@ -287,7 +288,7 @@ export const userRouter = createTRPCRouter({
 
   getExpenseDetails: protectedProcedure
     .input(z.object({ expenseId: z.string() }))
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       const expense = await db.expense.findUnique({
         where: {
           id: input.expenseId,
@@ -306,6 +307,10 @@ export const userRouter = createTRPCRouter({
           group: true,
         },
       });
+
+      if (!expense || !(await canViewExpense(ctx.session.user.id, expense))) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Expense not found' });
+      }
 
       return expense;
     }),
@@ -361,18 +366,6 @@ export const userRouter = createTRPCRouter({
 
     return expenses;
   }),
-
-  getUserDetails: protectedProcedure
-    .input(z.object({ userId: z.number() }))
-    .query(async ({ input }) => {
-      const user = await db.user.findUnique({
-        where: {
-          id: input.userId,
-        },
-      });
-
-      return user;
-    }),
 
   getUploadUrl: protectedProcedure
     .input(z.object({ fileName: z.string(), fileType: z.string(), fileSize: z.number() }))
@@ -433,11 +426,22 @@ export const userRouter = createTRPCRouter({
       const friend = await db.user.findUnique({
         where: {
           id: input.friendId,
-          userBalances: {
-            some: {
-              friendId: ctx.session.user.id,
+          OR: [
+            {
+              userBalances: {
+                some: {
+                  friendId: ctx.session.user.id,
+                },
+              },
             },
-          },
+            {
+              friendships: {
+                some: {
+                  friendId: ctx.session.user.id,
+                },
+              },
+            },
+          ],
         },
       });
 
@@ -494,6 +498,8 @@ export const userRouter = createTRPCRouter({
           userId: ctx.session.user.id,
         },
       });
+
+      await deleteFriendship(ctx.session.user.id, input.friendId);
     }),
 
   downloadData: protectedProcedure.mutation(async ({ ctx }) => {

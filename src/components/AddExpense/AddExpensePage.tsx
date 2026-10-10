@@ -1,5 +1,6 @@
 import { useRouter } from 'next/router';
 import React from 'react';
+import { toast } from 'sonner';
 import { useAddExpenseStore } from '~/store/addStore';
 import { api } from '~/utils/api';
 import { UserInput } from './UserInput';
@@ -187,6 +188,9 @@ export const AddOrEditExpensePage: React.FC<{
                 .catch(console.error);
             }
           },
+          onError: (error) => {
+            toast.error(error.message);
+          },
         },
       );
     } else {
@@ -214,6 +218,9 @@ export const AddOrEditExpensePage: React.FC<{
                 .then(() => resetState())
                 .catch(console.error);
             }
+          },
+          onError: (error) => {
+            toast.error(error.message);
           },
         },
       );
