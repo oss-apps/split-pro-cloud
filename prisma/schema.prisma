@@ -200,3 +200,12 @@ model PushNotification {
     userId       Int    @id
     subscription String
 }
+
+model RateLimit {
+    key         String   @id
+    count       Int
+    windowStart DateTime
+    expiresAt   DateTime
+
+    @@index([expiresAt])
+}

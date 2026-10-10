@@ -1,6 +1,7 @@
 'use client';
 import { type ClientSafeProvider, getProviders, signIn } from 'next-auth/react';
 import Head from 'next/head';
+import { useRouter } from 'next/router';
 import { Button } from '~/components/ui/button';
 import Image from 'next/image';
 import { type GetServerSideProps } from 'next';
@@ -35,8 +36,26 @@ const emailSchema = z.object({
   email: z.string({ required_error: 'Email is required' }).email({ message: 'Invalid email' }),
 });
 
+const OTP_LENGTH = 6;
+
+function getSignInErrorMessage(error: string) {
+  const rateLimited = /^RateLimited:(\d+)$/.exec(error);
+  if (rateLimited) {
+    const minutes = Number(rateLimited[1]);
+    return `Too many attempts, try again in ${minutes} minute${1 === minutes ? '' : 's'}.`;
+  }
+
+  if ('Verification' === error) {
+    return 'That code is invalid or has expired. Please request a new one.';
+  }
+
+  return error;
+}
+
 const otpSchema = z.object({
-  otp: z.string({ required_error: 'OTP is required' }).length(5, { message: 'Invalid OTP' }),
+  otp: z
+    .string({ required_error: 'OTP is required' })
+    .length(OTP_LENGTH, { message: 'Invalid OTP' }),
 });
 
 const providerSvgs = {
@@ -75,6 +94,8 @@ const Home: NextPage<{ feedbackEmail: string; providers: ClientSafeProvider[] }>
 }) => {
   const [emailStatus, setEmailStatus] = useState<'idle' | 'sending' | 'success' | 'error'>('idle');
   const [emailError, setEmailError] = useState<string>('');
+  const router = useRouter();
+  const queryError = 'string' === typeof router.query.error ? router.query.error : '';
 
   const emailForm = useForm<z.infer<typeof emailSchema>>({
     resolver: zodResolver(emailSchema),
@@ -93,7 +114,7 @@ const Home: NextPage<{ feedbackEmail: string; providers: ClientSafeProvider[] }>
     const result = await signIn('email', { email, redirect: false });
 
     if (result?.error) {
-      setEmailError(result.error);
+      setEmailError(getSignInErrorMessage(result.error));
       setEmailStatus('error');
       return;
     }
@@ -109,7 +130,7 @@ const Home: NextPage<{ feedbackEmail: string; providers: ClientSafeProvider[] }>
 
     window.location.href = `/api/auth/callback/email?email=${encodeURIComponent(
       email.toLowerCase(),
-    )}&token=${values.otp.toLowerCase()}${callbackUrl ? `&callbackUrl=${callbackUrl}/balances` : ''}`;
+    )}&token=${values.otp.toUpperCase()}${callbackUrl ? `&callbackUrl=${callbackUrl}/balances` : ''}`;
   }
 
   return (
@@ -171,17 +192,19 @@ const Home: NextPage<{ feedbackEmail: string; providers: ClientSafeProvider[] }>
                           <FormControl>
                             <InputOTP
                               className="w-[300px]"
-                              maxLength={5}
+                              maxLength={OTP_LENGTH}
                               pattern={REGEXP_ONLY_DIGITS_AND_CHARS}
                               inputMode="text"
                               {...field}
                             >
                               <InputOTPGroup>
-                                <InputOTPSlot className="w-[60px]" index={0} />
-                                <InputOTPSlot className="w-[60px]" index={1} />
-                                <InputOTPSlot className="w-[60px]" index={2} />
-                                <InputOTPSlot className="w-[60px]" index={3} />
-                                <InputOTPSlot className="w-[60px]" index={4} />
+                                {Array.from({ length: OTP_LENGTH }, (_, index) => (
+                                  <InputOTPSlot
+                                    key={index}
+                                    className="w-[50px] uppercase"
+                                    index={index}
+                                  />
+                                ))}
                               </InputOTPGroup>
                             </InputOTP>
                           </FormControl>
@@ -228,6 +251,11 @@ const Home: NextPage<{ feedbackEmail: string; providers: ClientSafeProvider[] }>
                     </Button>
                   </form>
                 </Form>
+                {queryError ? (
+                  <p className="mt-6 w-[300px] text-center text-sm text-red-500">
+                    {getSignInErrorMessage(queryError)}
+                  </p>
+                ) : null}
               </>
             )
           ) : null}

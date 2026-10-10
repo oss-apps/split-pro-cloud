@@ -1,4 +1,5 @@
 import { PrismaAdapter } from '@next-auth/prisma-adapter';
+import { randomInt } from 'crypto';
 import { type GetServerSidePropsContext } from 'next';
 import { getServerSession, type DefaultSession, type NextAuthOptions } from 'next-auth';
 import { Adapter, AdapterUser } from 'next-auth/adapters';
@@ -10,6 +11,54 @@ import AuthentikProvider from 'next-auth/providers/authentik';
 import { env } from '~/env';
 import { db } from '~/server/db';
 import { sendSignUpEmail } from './mailer';
+import { type RateLimitRule, resetRateLimit } from './rateLimit';
+
+export const EMAIL_TOKEN_MAX_AGE_SECONDS = 10 * 60;
+const EMAIL_TOKEN_LENGTH = 6;
+// No 0/O or 1/I so codes are easy to type
+const EMAIL_TOKEN_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+const MINUTE = 60;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+
+export const EMAIL_AUTH_LIMITS = {
+  sendPerEmail15m: { name: 'email-send:email:15m', limit: 3, windowSeconds: 15 * MINUTE },
+  sendPerEmailDay: { name: 'email-send:email:1d', limit: 10, windowSeconds: DAY },
+  sendPerIpHour: { name: 'email-send:ip:1h', limit: 10, windowSeconds: HOUR },
+  sendPerIpDay: { name: 'email-send:ip:1d', limit: 30, windowSeconds: DAY },
+  verifyPerEmail: {
+    name: 'email-verify:email',
+    limit: 5,
+    windowSeconds: EMAIL_TOKEN_MAX_AGE_SECONDS,
+  },
+  verifyPerIpHour: { name: 'email-verify:ip:1h', limit: 20, windowSeconds: HOUR },
+} satisfies Record<string, RateLimitRule>;
+
+/**
+ * Same rules as next-auth's default email normalizer, shared so rate limit keys match the
+ * identifier stored on VerificationToken.
+ */
+export function normalizeEmailIdentifier(identifier: string) {
+  const trimmed = identifier.normalize('NFKC').trim();
+
+  if (1 !== (trimmed.match(/@/g) ?? []).length || trimmed.includes('"')) {
+    throw new Error('Invalid email address format.');
+  }
+
+  const [local, rawDomain] = trimmed.toLowerCase().split('@');
+  const domain = rawDomain?.split(',')[0];
+
+  if (!local || !domain?.includes('.')) {
+    throw new Error('Invalid email address format.');
+  }
+
+  return `${local}@${domain}`;
+}
+
+export async function deleteVerificationTokens(identifier: string) {
+  await db.verificationToken.deleteMany({ where: { identifier } });
+}
 
 /**
  * Module augmentation for `next-auth` types. Allows us to add custom properties to the `session`
@@ -54,6 +103,15 @@ const SplitProPrismaAdapter = (...args: Parameters<typeof PrismaAdapter>): Adapt
       }
 
       return prismaCreateUser(user);
+    },
+    createVerificationToken: async (verificationToken) => {
+      // Only the newest code works, and it gets a fresh set of verification attempts.
+      const [, created] = await db.$transaction([
+        db.verificationToken.deleteMany({ where: { identifier: verificationToken.identifier } }),
+        db.verificationToken.create({ data: verificationToken }),
+      ]);
+      await resetRateLimit(EMAIL_AUTH_LIMITS.verifyPerEmail, verificationToken.identifier);
+      return created;
     },
   };
 };
@@ -158,6 +216,8 @@ function getProviders() {
             pass: env.EMAIL_SERVER_PASSWORD,
           },
         },
+        maxAge: EMAIL_TOKEN_MAX_AGE_SECONDS,
+        normalizeIdentifier: normalizeEmailIdentifier,
         async sendVerificationRequest({ identifier: email, url, token }) {
           // Check if user already exists - allow existing users to sign in
           const existingUser = await db.user.findUnique({
@@ -215,7 +275,10 @@ function getProviders() {
           }
         },
         async generateVerificationToken() {
-          return Math.random().toString(36).substring(2, 7).toLowerCase();
+          return Array.from(
+            { length: EMAIL_TOKEN_LENGTH },
+            () => EMAIL_TOKEN_ALPHABET[randomInt(EMAIL_TOKEN_ALPHABET.length)],
+          ).join('');
         },
       }),
     );
