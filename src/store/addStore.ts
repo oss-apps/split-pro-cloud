@@ -79,12 +79,16 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
     setAmountStr: (amountStr) => set({ amountStr }),
     setSplitType: (splitType) =>
       set((state) => {
-        const participants = calculateSplitShareBasedOnAmount(
-          state.amount,
-          state.participants,
-          splitType,
-          state.paidBy,
-        );
+        // Without an amount there is nothing to rebuild shares from, so keep the current ones
+        const participants =
+          0 === state.amount
+            ? state.participants
+            : calculateSplitShareBasedOnAmount(
+                state.amount,
+                state.participants,
+                splitType,
+                state.paidBy,
+              );
 
         return {
           splitType,
