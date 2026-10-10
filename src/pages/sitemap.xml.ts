@@ -1,11 +1,10 @@
 import { type GetServerSideProps } from 'next';
-import { SITE_URL, TOOLS } from '~/components/Site/constants';
+import { QUICK_SPLIT_PATH, SITE_URL } from '~/components/Site/constants';
 import { getAllPosts } from '~/lib/blog';
 
 const STATIC_PAGES = [
   { path: '/', priority: '1.0' },
-  { path: '/tools', priority: '0.9' },
-  ...TOOLS.map((tool) => ({ path: tool.href, priority: '0.9' })),
+  { path: QUICK_SPLIT_PATH, priority: '0.9' },
   { path: '/blog', priority: '0.8' },
   { path: '/privacy', priority: '0.3' },
   { path: '/terms', priority: '0.3' },

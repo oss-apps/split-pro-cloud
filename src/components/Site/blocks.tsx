@@ -1,7 +1,7 @@
 import { ArrowRight, ChevronDown } from 'lucide-react';
 import Link from 'next/link';
 import { cn } from '~/lib/utils';
-import { TOOLS } from './constants';
+import { QUICK_SPLIT_PATH } from './constants';
 
 export const Eyebrow: React.FC<{ children: React.ReactNode; className?: string }> = ({
   children,
@@ -109,35 +109,8 @@ export const CtaBand: React.FC<{ title?: string; description?: string }> = ({
       <p className="mx-auto mt-4 max-w-xl text-pretty text-gray-400 sm:text-lg">{description}</p>
       <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
         <PrimaryLink href="/auth/signin">Start splitting for free</PrimaryLink>
-        <SecondaryLink href="/tools">Try the free tools</SecondaryLink>
+        <SecondaryLink href={QUICK_SPLIT_PATH}>Try a quick split</SecondaryLink>
       </div>
     </div>
   </section>
-);
-
-export const ToolCards: React.FC<{ exclude?: string }> = ({ exclude }) => (
-  <div className="grid gap-4 md:grid-cols-3">
-    {TOOLS.filter((tool) => tool.href !== exclude).map((tool) => (
-      <Link
-        key={tool.href}
-        href={tool.href}
-        className="group relative overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.02] p-6 transition-colors hover:border-white/[0.16] hover:bg-white/[0.04]"
-      >
-        <div
-          aria-hidden
-          className={cn(
-            'absolute -right-10 -top-10 h-32 w-32 rounded-full bg-gradient-to-br opacity-20 blur-2xl transition-opacity group-hover:opacity-40',
-            tool.accent,
-          )}
-        />
-        <div className={cn('h-1.5 w-10 rounded-full bg-gradient-to-r', tool.accent)} />
-        <p className="mt-5 text-lg font-medium text-white">{tool.name}</p>
-        <p className="mt-2 text-sm leading-relaxed text-gray-400">{tool.short}</p>
-        <p className="mt-6 inline-flex items-center gap-1.5 text-sm font-medium text-cyan-300">
-          Open tool
-          <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
-        </p>
-      </Link>
-    ))}
-  </div>
 );

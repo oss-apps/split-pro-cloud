@@ -74,4 +74,4 @@ The easiest switch happens between trips, not in the middle of one.
 
 We wrote a step-by-step guide for the third part: [how to move from Splitwise to SplitPro](/blog/move-from-splitwise-to-splitpro).
 
-And if you just need to settle one trip right now, without signing up for anything, our free [settle-up calculator](/tools/settle-up) works out who owes whom in a minute.
+And if you just need to settle one trip right now, without signing up for anything, our free [quick split](/split) works out who owes whom in a minute.

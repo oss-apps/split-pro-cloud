@@ -75,7 +75,7 @@ A couple in one bedroom uses more of the shared space than one person does. Two 
 ## How to actually agree
 
 1. **Do it before anyone picks a room.** Once someone has moved their bed in, every number feels personal.
-2. **Put the options side by side.** Our free [rent split calculator](/tools/rent-split) shows equal, room size and income splits with your real numbers, and how much each person pays compared to an equal split.
+2. **Put the options side by side.** Work out each option with your real numbers, using the examples above, and write down how much each person pays compared to an equal split.
 3. **Share the link** in your group chat, so everyone looks at the same numbers.
 4. **Write it down.** One message with the agreed amounts saves an argument a year from now.
 5. **Revisit when something changes**: someone moves out, the rent goes up, or a couple moves in.

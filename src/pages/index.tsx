@@ -11,16 +11,14 @@ import {
 } from 'lucide-react';
 import Image from 'next/image';
 import Link from 'next/link';
-import { GITHUB_URL, SITE_URL } from '~/components/Site/constants';
+import { GITHUB_URL, QUICK_SPLIT_PATH, SITE_URL } from '~/components/Site/constants';
 import {
   CtaBand,
-  Eyebrow,
   Faq,
   type FaqItem,
   PrimaryLink,
   SecondaryLink,
   SectionHeading,
-  ToolCards,
 } from '~/components/Site/blocks';
 import { Seo, faqJsonLd } from '~/components/Site/Seo';
 import { SiteLayout } from '~/components/Site/SiteLayout';
@@ -87,15 +85,14 @@ export default function Home() {
       <Hero />
       <Features />
       <Showcase />
-      <HowItWorks />
       <section className="mx-auto mt-32 max-w-6xl px-5 lg:px-8">
         <SectionHeading
-          eyebrow="Free tools"
-          title="Need a quick answer? No sign-up needed."
-          description="Calculators for the questions that come up every time money is shared. Share the result with a link."
+          eyebrow="Quick split"
+          title="Just one trip? Skip the sign-up."
+          description="Add people and expenses, see who owes whom in as few payments as possible, and share it with one link. Nobody needs an account."
         />
-        <div className="mt-12">
-          <ToolCards />
+        <div className="mt-10 flex justify-center">
+          <SecondaryLink href={QUICK_SPLIT_PATH}>Start a quick split</SecondaryLink>
         </div>
       </section>
       <Why />
@@ -115,10 +112,7 @@ export default function Home() {
 const Hero = () => (
   <section className="mx-auto grid max-w-6xl items-center gap-16 px-5 pb-8 pt-16 sm:pt-24 lg:grid-cols-[1.15fr_1fr] lg:px-8 lg:pt-28">
     <div className="text-center lg:text-left">
-      <Eyebrow>
-        <Sparkles className="h-3.5 w-3.5" /> Open source · No daily limits
-      </Eyebrow>
-      <h1 className="mt-6 text-balance text-4xl font-semibold leading-[1.1] tracking-tight text-white sm:text-5xl lg:text-6xl">
+      <h1 className="text-balance text-4xl font-semibold leading-[1.1] tracking-tight text-white sm:text-5xl lg:text-6xl">
         Split expenses with friends,{' '}
         <span className="bg-gradient-to-r from-cyan-300 via-sky-300 to-emerald-300 bg-clip-text text-transparent">
           for free
@@ -131,7 +125,7 @@ const Hero = () => (
       </p>
       <div className="mt-10 flex flex-col items-center gap-3 sm:flex-row sm:justify-center lg:justify-start">
         <PrimaryLink href="/auth/signin">Start splitting for free</PrimaryLink>
-        <SecondaryLink href="/tools/settle-up">Try the settle-up calculator</SecondaryLink>
+        <SecondaryLink href={QUICK_SPLIT_PATH}>Quick split, no sign-up</SecondaryLink>
       </div>
       <ul className="mt-10 flex flex-wrap items-center justify-center gap-x-6 gap-y-3 text-sm text-gray-400 lg:justify-start">
         {['Unlimited expenses', '100+ currencies', 'Works on any phone'].map((item) => (
@@ -160,19 +154,6 @@ const Hero = () => (
           className="h-auto w-full"
         />
       </PhoneFrame>
-      <FloatingCard className="-left-6 top-24 sm:-left-20">
-        <p className="text-[11px] text-gray-400">Lisbon trip</p>
-        <p className="text-sm font-medium text-emerald-300">you get €68.03</p>
-      </FloatingCard>
-      <FloatingCard className="-right-4 bottom-28 sm:-right-16">
-        <p className="flex items-center gap-1.5 text-sm font-medium text-white">
-          <span className="flex h-4 w-4 items-center justify-center rounded-full bg-emerald-400">
-            <Check className="h-2.5 w-2.5 text-gray-950" strokeWidth={3} />
-          </span>
-          Settled up with Priya
-        </p>
-        <p className="mt-0.5 text-[11px] text-gray-400">€42.50 · just now</p>
-      </FloatingCard>
     </div>
   </section>
 );
@@ -182,20 +163,6 @@ const PhoneFrame: React.FC<{ children: React.ReactNode }> = ({ children }) => (
     <div className="overflow-hidden rounded-[2.35rem] border border-black/60 bg-background">
       {children}
     </div>
-  </div>
-);
-
-const FloatingCard: React.FC<{ children: React.ReactNode; className?: string }> = ({
-  children,
-  className,
-}) => (
-  <div
-    className={cn(
-      'absolute rounded-2xl border border-white/10 bg-gray-900/80 px-4 py-3 shadow-xl shadow-black/40 backdrop-blur-md',
-      className,
-    )}
-  >
-    {children}
   </div>
 );
 
@@ -370,40 +337,6 @@ const Showcase = () => (
         />
       </div>
     </div>
-  </section>
-);
-
-const STEPS = [
-  {
-    title: 'Add your people',
-    description: 'Create a group for the trip or the flat, or add a friend by email.',
-  },
-  {
-    title: 'Add expenses as they happen',
-    description: 'Who paid, how much, and how to split it. It takes about ten seconds.',
-  },
-  {
-    title: 'Settle up when you are ready',
-    description:
-      'SplitPro shows exactly who owes whom. Record a payment and the balance goes back to zero.',
-  },
-] as const;
-
-const HowItWorks = () => (
-  <section className="mx-auto mt-32 max-w-6xl px-5 lg:px-8">
-    <SectionHeading eyebrow="How it works" title="Three steps, then never think about it again" />
-    <ol className="mt-14 grid gap-4 md:grid-cols-3">
-      {STEPS.map((step, index) => (
-        <li
-          key={step.title}
-          className="relative rounded-2xl border border-white/[0.07] bg-white/[0.02] p-7"
-        >
-          <span className="font-mono text-sm text-cyan-300">0{index + 1}</span>
-          <h3 className="mt-4 text-lg font-medium text-white">{step.title}</h3>
-          <p className="mt-2 leading-relaxed text-gray-400">{step.description}</p>
-        </li>
-      ))}
-    </ol>
   </section>
 );
 
