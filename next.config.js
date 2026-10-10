@@ -14,15 +14,14 @@ import pwa from 'next-pwa';
 // eslint-disable-next-line @typescript-eslint/no-unsafe-call
 const withPwa = pwa({
   dest: 'public',
+  // Next 15 emits this build-only manifest; it isn't served, so precaching it breaks SW install
+  buildExcludes: [/dynamic-css-manifest\.json$/],
   // disable: process.env.NODE_ENV === 'development',
 });
 
 const config = {
   reactStrictMode: true,
   output: process.env.DOCKER_OUTPUT ? 'standalone' : undefined,
-  experimental: {
-    instrumentationHook: true,
-  },
   /**
    * If you are using `appDir` then you must comment the below `i18n` config out.
    *
