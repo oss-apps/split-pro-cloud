@@ -133,7 +133,7 @@ const FOOTER_COLUMNS = [
     links: [
       { href: '/blog', label: 'Blog' },
       { href: '/blog/splitwise-alternatives', label: 'Splitwise alternatives' },
-      { href: '/blog/how-to-split-rent-fairly', label: 'How to split rent' },
+      { href: '/blog/move-from-splitwise-to-splitpro', label: 'Move from Splitwise' },
       { href: GITHUB_URL, label: 'Source code' },
     ],
   },

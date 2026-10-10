@@ -60,9 +60,7 @@ export const QuickSplitGuide = () => (
     </p>
     <p>
       We explain the idea step by step in{' '}
-      <Link href="/blog/simplify-debts-explained">how “simplify debts” works</Link>, and share
-      habits that keep group trips calm in{' '}
-      <Link href="/blog/how-to-split-trip-expenses">how to split trip expenses</Link>.
+      <Link href="/blog/simplify-debts-explained">how “simplify debts” works</Link>.
     </p>
     <p>
       Splitting with the same people every month? A{' '}
