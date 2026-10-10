@@ -62,7 +62,7 @@ export const SettleUp: React.FC<{
           utils.user.invalidate().catch(console.error);
         },
         onError: (error) => {
-          toast.info('Error while saving expense');
+          toast.error(error.message || 'Error while saving expense');
         },
       },
     );

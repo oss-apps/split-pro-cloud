@@ -14,6 +14,7 @@ import { motion } from 'framer-motion';
 import { type NextPageWithUser } from '~/types';
 import { Fragment } from 'react';
 import { AdSlot, isFeedAdPosition } from '~/components/Ads/AdSlot';
+import { getGroupBalanceSummary } from '~/utils/balances';
 
 const BalancePage: NextPageWithUser = () => {
   const groupQuery = api.group.getAllGroupsWithBalances.useQuery();
@@ -49,9 +50,10 @@ const BalancePage: NextPageWithUser = () => {
               </motion.div>
             ) : (
               groupQuery.data?.map((g, index, groups) => {
-                const [amount, currency] = Object.keys(g.balances).length
-                  ? [Object.values(g.balances)[0] ?? 0, Object.keys(g.balances)[0] ?? 'USD']
-                  : [0, 'USD'];
+                const { amount, currency, multiCurrency } = getGroupBalanceSummary(
+                  g.balances,
+                  g.defaultCurrency,
+                );
                 return (
                   <Fragment key={g.id}>
                     <GroupBalance
@@ -60,6 +62,7 @@ const BalancePage: NextPageWithUser = () => {
                       amount={amount}
                       isPositive={amount >= 0 ? true : false}
                       currency={currency}
+                      multiCurrency={multiCurrency}
                     />
                     {isFeedAdPosition(index, groups.length) ? (
                       <AdSlot listGap="gap-8" index={index} />
@@ -81,7 +84,8 @@ const GroupBalance: React.FC<{
   amount: number;
   isPositive: boolean;
   currency: string;
-}> = ({ name, amount, isPositive, currency, groupId }) => {
+  multiCurrency: boolean;
+}> = ({ name, amount, isPositive, currency, groupId, multiCurrency }) => {
   return (
     <Link href={`/groups/${groupId}`}>
       <div className="flex items-center justify-between">
@@ -104,6 +108,7 @@ const GroupBalance: React.FC<{
               </div>
               <div className={`${isPositive ? 'text-emerald-500' : 'text-orange-600'} text-right`}>
                 {currency} {toUIString(amount)}
+                {multiCurrency ? '*' : ''}
               </div>
             </>
           )}

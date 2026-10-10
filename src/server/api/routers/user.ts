@@ -26,6 +26,7 @@ import { pushNotification } from '~/server/notification';
 import { toFixedNumber, toUIString } from '~/utils/numbers';
 import { SplitwiseGroupSchema, SplitwiseUserSchema } from '~/types';
 import { env } from '~/env';
+import { runBalanceTransaction } from '../services/balanceTransaction';
 
 export const userRouter = createTRPCRouter({
   me: protectedProcedure.query(async ({ ctx }) => {
@@ -214,6 +215,9 @@ export const userRouter = createTRPCRouter({
 
         return expense;
       } catch (error) {
+        if (error instanceof TRPCError) {
+          throw error;
+        }
         console.error(error);
         throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to create expense' });
       }
@@ -468,35 +472,34 @@ export const userRouter = createTRPCRouter({
   deleteFriend: protectedProcedure
     .input(z.object({ friendId: z.number() }))
     .mutation(async ({ input, ctx }) => {
-      const friendBalances = await db.balance.findMany({
-        where: {
-          userId: ctx.session.user.id,
-          friendId: input.friendId,
-          amount: {
-            not: 0,
+      await runBalanceTransaction(async (tx) => {
+        const friendBalances = await tx.balance.findMany({
+          where: {
+            OR: [
+              { userId: ctx.session.user.id, friendId: input.friendId },
+              { userId: input.friendId, friendId: ctx.session.user.id },
+            ],
+            amount: {
+              not: 0,
+            },
           },
-        },
-      });
-
-      if (friendBalances.length > 0) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: 'You have outstanding balances with this friend',
         });
-      }
 
-      await db.balance.deleteMany({
-        where: {
-          userId: input.friendId,
-          friendId: ctx.session.user.id,
-        },
-      });
+        if (friendBalances.length > 0) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'You have outstanding balances with this friend',
+          });
+        }
 
-      await db.balance.deleteMany({
-        where: {
-          friendId: input.friendId,
-          userId: ctx.session.user.id,
-        },
+        await tx.balance.deleteMany({
+          where: {
+            OR: [
+              { userId: ctx.session.user.id, friendId: input.friendId },
+              { userId: input.friendId, friendId: ctx.session.user.id },
+            ],
+          },
+        });
       });
 
       await deleteFriendship(ctx.session.user.id, input.friendId);
