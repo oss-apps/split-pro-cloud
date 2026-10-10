@@ -11,6 +11,8 @@ import { type User } from 'next-auth';
 import { BalanceSkeleton } from '~/components/ui/skeleton';
 import useEnableAfter from '~/hooks/useEnableAfter';
 import { LoadingSpinner } from '~/components/ui/spinner';
+import { Fragment } from 'react';
+import { AdSlot, isFeedAdPosition } from '~/components/Ads/AdSlot';
 
 function getPaymentString(
   user: User,
@@ -65,54 +67,58 @@ const ActivityPage: NextPageWithUser = ({ user }) => {
                 {!expensesQuery.data?.length ? (
                   <div className="mt-[30vh] text-center text-gray-400">No activities yet</div>
                 ) : null}
-                {expensesQuery.data?.map((e) => (
-                  <Link
-                    href={`${e.expense.groupId ? `/groups/${e.expense.groupId}/` : '/'}expenses/${e.expenseId}`}
-                    key={e.expenseId}
-                    className="flex  gap-2"
-                  >
-                    <div className="mt-1">
-                      <UserAvatar user={e.expense.paidByUser} size={30} />
-                    </div>
-                    <div>
-                      {e.expense.deletedByUser ? (
-                        <p className="text-red-500 opacity-70">
-                          <span className="  font-semibold ">
-                            {e.expense.deletedBy === user.id
-                              ? 'You'
-                              : e.expense.deletedByUser.name ?? e.expense.deletedByUser.email}
-                          </span>
-                          {' deleted the expense '}
-                          <span className=" font-semibold ">{e.expense.name}</span>
-                        </p>
-                      ) : (
-                        <p className="text-gray-300">
-                          <span className="  font-semibold text-gray-300">
-                            {e.expense.paidBy === user.id
-                              ? 'You'
-                              : e.expense.paidByUser.name ?? e.expense.paidByUser.email}
-                          </span>
-                          {' paid for '}
-                          <span className=" font-semibold text-gray-300">{e.expense.name}</span>
-                        </p>
-                      )}
-
-                      <div>
-                        {getPaymentString(
-                          user,
-                          e.expense.amount,
-                          e.expense.paidBy,
-                          e.amount,
-                          e.expense.splitType === SplitType.SETTLEMENT,
-                          e.expense.currency,
-                          !!e.expense.deletedBy,
-                        )}
+                {expensesQuery.data?.map((e, index, expenses) => (
+                  <Fragment key={e.expenseId}>
+                    <Link
+                      href={`${e.expense.groupId ? `/groups/${e.expense.groupId}/` : '/'}expenses/${e.expenseId}`}
+                      className="flex  gap-2"
+                    >
+                      <div className="mt-1">
+                        <UserAvatar user={e.expense.paidByUser} size={30} />
                       </div>
-                      <p className="text-xs text-gray-500">
-                        {format(e.expense.expenseDate, 'dd MMM')}
-                      </p>
-                    </div>
-                  </Link>
+                      <div>
+                        {e.expense.deletedByUser ? (
+                          <p className="text-red-500 opacity-70">
+                            <span className="  font-semibold ">
+                              {e.expense.deletedBy === user.id
+                                ? 'You'
+                                : e.expense.deletedByUser.name ?? e.expense.deletedByUser.email}
+                            </span>
+                            {' deleted the expense '}
+                            <span className=" font-semibold ">{e.expense.name}</span>
+                          </p>
+                        ) : (
+                          <p className="text-gray-300">
+                            <span className="  font-semibold text-gray-300">
+                              {e.expense.paidBy === user.id
+                                ? 'You'
+                                : e.expense.paidByUser.name ?? e.expense.paidByUser.email}
+                            </span>
+                            {' paid for '}
+                            <span className=" font-semibold text-gray-300">{e.expense.name}</span>
+                          </p>
+                        )}
+
+                        <div>
+                          {getPaymentString(
+                            user,
+                            e.expense.amount,
+                            e.expense.paidBy,
+                            e.amount,
+                            e.expense.splitType === SplitType.SETTLEMENT,
+                            e.expense.currency,
+                            !!e.expense.deletedBy,
+                          )}
+                        </div>
+                        <p className="text-xs text-gray-500">
+                          {format(e.expense.expenseDate, 'dd MMM')}
+                        </p>
+                      </div>
+                    </Link>
+                    {isFeedAdPosition(index, expenses.length, true) ? (
+                      <AdSlot listGap="gap-4" index={index} />
+                    ) : null}
+                  </Fragment>
                 ))}
               </>
             )}

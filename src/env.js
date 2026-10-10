@@ -49,6 +49,10 @@ export const env = createEnv({
     WEB_PUSH_PUBLIC_KEY: z.string().optional(),
     FEEDBACK_EMAIL: z.string().optional(),
     DISCORD_WEBHOOK_URL: z.string().optional(),
+    ADSENSE_CLIENT: z.string().startsWith('ca-pub-').optional(),
+    ADSENSE_FEED_SLOT: z.string().optional(),
+    ADSENSE_FEED_LAYOUT_KEY: z.string().optional(),
+    ADSENSE_DEMO: z.boolean(),
   },
 
   /**
@@ -92,6 +96,10 @@ export const env = createEnv({
     WEB_PUSH_PUBLIC_KEY: process.env.WEB_PUSH_PUBLIC_KEY,
     FEEDBACK_EMAIL: process.env.FEEDBACK_EMAIL,
     DISCORD_WEBHOOK_URL: process.env.DISCORD_WEBHOOK_URL,
+    ADSENSE_CLIENT: process.env.ADSENSE_CLIENT,
+    ADSENSE_FEED_SLOT: process.env.ADSENSE_FEED_SLOT,
+    ADSENSE_FEED_LAYOUT_KEY: process.env.ADSENSE_FEED_LAYOUT_KEY,
+    ADSENSE_DEMO: process.env.ADSENSE_DEMO === 'true',
   },
   /**
    * Run `build` or `dev` with `SKIP_ENV_VALIDATION` to skip env validation. This is especially
