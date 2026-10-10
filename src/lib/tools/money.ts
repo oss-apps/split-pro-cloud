@@ -24,11 +24,35 @@ export const fractionDigits = (currency: string) => {
 
 export const minorUnitFactor = (currency: string) => 10 ** fractionDigits(currency);
 
-/** Parses user input like "1,234.50" or "12" into minor units. Invalid input is 0. */
+/**
+ * Turns "1,234.50", "1.234,50", "12,5" or "12" into a plain decimal string. With both separators,
+ * the last one is the decimal point. A lone separator repeated, or a single comma followed by
+ * exactly three digits, is a thousands separator.
+ */
+const normalizeDecimal = (value: string) => {
+  const cleaned = value.replace(/[^\d.,]/g, '');
+  const lastDot = cleaned.lastIndexOf('.');
+  const lastComma = cleaned.lastIndexOf(',');
+  if (-1 !== lastDot && -1 !== lastComma) {
+    const decimal = lastDot > lastComma ? '.' : ',';
+    const thousands = '.' === decimal ? ',' : '.';
+    return cleaned.split(thousands).join('').replace(decimal, '.');
+  }
+  const separator = -1 !== lastDot ? '.' : -1 !== lastComma ? ',' : null;
+  if (!separator) {
+    return cleaned;
+  }
+  const parts = cleaned.split(separator);
+  const isThousands = 2 < parts.length || (',' === separator && 3 === (parts[1] ?? '').length);
+  return isThousands ? parts.join('') : parts.join('.');
+};
+
+/** Parses user input into minor units. Invalid or negative input is 0. */
 export const parseAmount = (value: string, currency: string) => {
-  const cleaned = value.replace(/[^\d.,-]/g, '').replace(/,(?=\d{3}(\D|$))/g, '');
-  const normalized = cleaned.replace(',', '.');
-  const number = Number.parseFloat(normalized);
+  if (value.trim().startsWith('-')) {
+    return 0;
+  }
+  const number = Number.parseFloat(normalizeDecimal(value));
   if (!Number.isFinite(number) || number < 0) {
     return 0;
   }

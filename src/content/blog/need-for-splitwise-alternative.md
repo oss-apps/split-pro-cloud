@@ -34,7 +34,7 @@ Any existing features will not be paid. But I have plans to introduce paid featu
 
 ## How are you running it for free?
 
-I working on a full time job and this is my side project. Even with very high usage, splitrpo won't cost more than $100 a month. I currently can afford this. As I said earlier I will add some paid pro features / open up donations to fund the project.
+I working on a full time job and this is my side project. Even with very high usage, SplitPro won't cost more than $100 a month. I currently can afford this. As I said earlier I will add some paid pro features / open up donations to fund the project.
 
 ## How can I help?
 

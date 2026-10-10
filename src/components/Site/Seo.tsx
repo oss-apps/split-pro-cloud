@@ -51,7 +51,7 @@ export const Seo: React.FC<SeoProps> = ({
         <script
           key={`jsonld-${index}`}
           type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(schema).replace(/</g, '\\u003c') }}
         />
       ))}
     </Head>

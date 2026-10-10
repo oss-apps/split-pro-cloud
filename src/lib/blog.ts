@@ -49,11 +49,11 @@ const parseFrontmatter = (raw: string) => {
 };
 
 /** Accepts 2024/3/17 or 2024-03-17 and returns 2024-03-17. */
-const normalizeDate = (value: string | undefined) => {
+const normalizeDate = (value: string | undefined, slug: string) => {
   const parts = (value ?? '').split(/[-/]/).map((part) => Number.parseInt(part, 10));
   const [year, month, day] = parts;
   if (!year || !month || !day) {
-    return '1970-01-01';
+    throw new Error(`Blog post "${slug}" has a missing or invalid date: ${value ?? ''}`);
   }
   return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 };
@@ -74,8 +74,8 @@ const toMeta = (slug: string, raw: string) => {
     slug,
     title: data.title ?? slug,
     description: data.description ?? '',
-    date: normalizeDate(data.date),
-    updated: data.updated ? normalizeDate(data.updated) : null,
+    date: normalizeDate(data.date, slug),
+    updated: data.updated ? normalizeDate(data.updated, slug) : null,
     author: data.author ?? 'KM Koushik',
     tags: (data.tags ?? '')
       .split(',')

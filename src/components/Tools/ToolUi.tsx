@@ -177,6 +177,7 @@ export const CommitInput: React.FC<
 > = ({ value, onCommit, allowEmpty = false, ...props }) => {
   const [draft, setDraft] = useState(value);
   const focused = useRef(false);
+  const cancelled = useRef(false);
 
   useEffect(() => {
     if (!focused.current) {
@@ -201,6 +202,10 @@ export const CommitInput: React.FC<
       onFocus={() => (focused.current = true)}
       onBlur={() => {
         focused.current = false;
+        if (cancelled.current) {
+          cancelled.current = false;
+          return;
+        }
         commit();
       }}
       onKeyDown={(e) => {
@@ -208,8 +213,8 @@ export const CommitInput: React.FC<
           e.currentTarget.blur();
         }
         if ('Escape' === e.key) {
+          cancelled.current = true;
           setDraft(value);
-          focused.current = false;
           e.currentTarget.blur();
         }
       }}
