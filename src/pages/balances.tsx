@@ -15,6 +15,8 @@ import useEnableAfter from '~/hooks/useEnableAfter';
 import { LoadingSpinner } from '~/components/ui/spinner';
 import { NotificationModal } from '~/components/NotificationModal';
 import { GetServerSideProps } from 'next';
+import { Fragment } from 'react';
+import { AdSlot, isFeedAdPosition } from '~/components/Ads/AdSlot';
 
 const BalancePage: NextPageWithUser = () => {
   function shareWithFriends() {
@@ -109,16 +111,20 @@ const BalancePage: NextPageWithUser = () => {
               ) : null
             ) : null}
 
-            {balanceQuery.data?.balances.map((b) => (
-              <FriendBalance
-                key={b.friend.id}
-                id={b.friend.id}
-                friend={b.friend}
-                amount={b.amount}
-                isPositive={b.amount > 0}
-                currency={b.currency}
-                hasMore={b.hasMore}
-              />
+            {balanceQuery.data?.balances.map((b, index, balances) => (
+              <Fragment key={b.friend.id}>
+                <FriendBalance
+                  id={b.friend.id}
+                  friend={b.friend}
+                  amount={b.amount}
+                  isPositive={b.amount > 0}
+                  currency={b.currency}
+                  hasMore={b.hasMore}
+                />
+                {isFeedAdPosition(index, balances.length) ? (
+                  <AdSlot listGap="gap-8" index={index} />
+                ) : null}
+              </Fragment>
             ))}
 
             {!balanceQuery.isLoading && !balanceQuery.data?.balances.length ? (

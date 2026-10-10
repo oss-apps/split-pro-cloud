@@ -520,4 +520,18 @@ export const userRouter = createTRPCRouter({
   getWebPushPublicKey: protectedProcedure.query(async ({ ctx }) => {
     return env.WEB_PUSH_PUBLIC_KEY;
   }),
+
+  getAdConfig: protectedProcedure.query(() => {
+    if (env.ADSENSE_DEMO && 'production' !== env.NODE_ENV) {
+      return { demo: true } as const;
+    }
+    if (!env.ADSENSE_CLIENT || !env.ADSENSE_FEED_SLOT || !env.ADSENSE_FEED_LAYOUT_KEY) {
+      return null;
+    }
+    return {
+      client: env.ADSENSE_CLIENT,
+      slot: env.ADSENSE_FEED_SLOT,
+      layoutKey: env.ADSENSE_FEED_LAYOUT_KEY,
+    };
+  }),
 });

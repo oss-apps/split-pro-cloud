@@ -2,7 +2,10 @@ import { type NextPage } from 'next';
 import Link from 'next/link';
 import { env } from '~/env';
 
-const Privacy: NextPage<{ feedbackEmail: string }> = ({ feedbackEmail }) => {
+const Privacy: NextPage<{ feedbackEmail: string; adsEnabled: boolean }> = ({
+  feedbackEmail,
+  adsEnabled,
+}) => {
   return (
     <>
       <div>
@@ -46,8 +49,40 @@ const Privacy: NextPage<{ feedbackEmail: string }> = ({ feedbackEmail }) => {
           </p>
           <p className="mt-16 text-xl font-semibold">Sharing Your Information</p>
           <p className="mt-1 text-lg text-gray-400">
-            We do not sell, rent, or share your personal information with third parties.
+            We do not sell, rent, or share your personal information with third parties
+            {adsEnabled ? ', except as described under Advertising below' : ''}.
           </p>
+          {adsEnabled ? (
+            <>
+              <p id="advertising" className="mt-16 scroll-mt-8 text-xl font-semibold">
+                Advertising
+              </p>
+              <p className="mt-1 text-lg text-gray-400">
+                We show ads from Google AdSense on some pages. Google and its partners may use
+                cookies and your device&apos;s IP address to serve and measure ads, and, where you
+                have given consent, to personalise them. We never share your expenses, balances,
+                name or email with advertisers. You can learn how Google uses this data at{' '}
+                <a
+                  href="https://policies.google.com/technologies/partner-sites"
+                  className="underline"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  policies.google.com/technologies/partner-sites
+                </a>{' '}
+                and manage ad personalisation at{' '}
+                <a
+                  href="https://adssettings.google.com"
+                  className="underline"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  adssettings.google.com
+                </a>
+                .
+              </p>
+            </>
+          ) : null}
           <p className="mt-16 text-xl font-semibold">4. Data Security</p>
           <p className="mt-1 text-lg text-gray-400">
             We take reasonable steps to protect your information from unauthorized access, use, or
@@ -107,6 +142,7 @@ export async function getServerSideProps() {
   return {
     props: {
       feedbackEmail: env.FEEDBACK_EMAIL ?? '',
+      adsEnabled: !!(env.ADSENSE_CLIENT && env.ADSENSE_FEED_SLOT && env.ADSENSE_FEED_LAYOUT_KEY),
     },
   };
 }

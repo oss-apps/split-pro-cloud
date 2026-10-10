@@ -19,6 +19,7 @@ import { CategoryIcons } from '../ui/categoryIcons';
 import Link from 'next/link';
 import { CURRENCIES } from '~/lib/currency';
 import { env } from '~/env';
+import { AdSlot } from '../Ads/AdSlot';
 
 const categories = {
   entertainment: {
@@ -391,7 +392,8 @@ export const AddOrEditExpensePage: React.FC<{
                         >
                           <CalendarIcon className="mr-2 h-6 w-6 text-cyan-500" />
                           {expenseDate ? (
-                            format(expenseDate, 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd') ? (
+                            format(expenseDate, 'yyyy-MM-dd') ===
+                            format(new Date(), 'yyyy-MM-dd') ? (
                               'Today'
                             ) : (
                               format(expenseDate, 'MMM dd')
@@ -402,7 +404,12 @@ export const AddOrEditExpensePage: React.FC<{
                         </Button>
                       </PopoverTrigger>
                       <PopoverContent className="w-auto p-0">
-                        <Calendar mode="single" selected={expenseDate} onSelect={setExpenseDate} initialFocus />
+                        <Calendar
+                          mode="single"
+                          selected={expenseDate}
+                          onSelect={setExpenseDate}
+                          initialFocus
+                        />
                       </PopoverContent>
                     </Popover>
                   </div>
@@ -432,6 +439,7 @@ export const AddOrEditExpensePage: React.FC<{
                 </div>
               </div>
             )}
+            <AdSlot listGap="gap-4" index={1} className="mt-6" />
             <div className=" flex w-full justify-center">
               <Link
                 href="https://github.com/sponsors/KMKoushik"

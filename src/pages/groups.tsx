@@ -12,6 +12,8 @@ import { GroupAvatar } from '~/components/ui/avatar';
 import { toUIString } from '~/utils/numbers';
 import { motion } from 'framer-motion';
 import { type NextPageWithUser } from '~/types';
+import { Fragment } from 'react';
+import { AdSlot, isFeedAdPosition } from '~/components/Ads/AdSlot';
 
 const BalancePage: NextPageWithUser = () => {
   const groupQuery = api.group.getAllGroupsWithBalances.useQuery();
@@ -46,19 +48,23 @@ const BalancePage: NextPageWithUser = () => {
                 </CreateGroup>
               </motion.div>
             ) : (
-              groupQuery.data?.map((g) => {
+              groupQuery.data?.map((g, index, groups) => {
                 const [amount, currency] = Object.keys(g.balances).length
                   ? [Object.values(g.balances)[0] ?? 0, Object.keys(g.balances)[0] ?? 'USD']
                   : [0, 'USD'];
                 return (
-                  <GroupBalance
-                    key={g.id}
-                    groupId={g.id}
-                    name={g.name}
-                    amount={amount}
-                    isPositive={amount >= 0 ? true : false}
-                    currency={currency}
-                  />
+                  <Fragment key={g.id}>
+                    <GroupBalance
+                      groupId={g.id}
+                      name={g.name}
+                      amount={amount}
+                      isPositive={amount >= 0 ? true : false}
+                      currency={currency}
+                    />
+                    {isFeedAdPosition(index, groups.length) ? (
+                      <AdSlot listGap="gap-8" index={index} />
+                    ) : null}
+                  </Fragment>
                 );
               })
             )}
