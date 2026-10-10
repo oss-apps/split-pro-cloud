@@ -106,17 +106,37 @@ export const restoreSettlementAllocations = async (
       userId: allocation.friendId,
     });
   });
-  const groupUsers = await tx.groupUser.findMany({
-    where: { OR: [...requiredMemberships.values()] },
-  });
+  const groupIds = [...new Set(allocations.map((allocation) => allocation.groupId))];
+  const [groupUsers, groups] = await Promise.all([
+    tx.groupUser.findMany({
+      where: { OR: [...requiredMemberships.values()] },
+    }),
+    tx.group.findMany({ where: { id: { in: groupIds } }, select: { id: true } }),
+  ]);
   const currentMemberships = new Set(
     groupUsers.map((groupUser) => `${groupUser.groupId}:${groupUser.userId}`),
   );
+  const existingGroupIds = new Set(groups.map((group) => group.id));
   const restorableAllocations = allocations.filter(
     (allocation) =>
       currentMemberships.has(`${allocation.groupId}:${allocation.userId}`) &&
       currentMemberships.has(`${allocation.groupId}:${allocation.friendId}`),
   );
+  const skippedAllocations = allocations.filter(
+    (allocation) => !restorableAllocations.includes(allocation),
+  );
+
+  skippedAllocations.forEach((allocation) => {
+    console.warn('Skipping settlement allocation restore', {
+      settlementExpenseId,
+      groupId: allocation.groupId,
+      currency: allocation.currency,
+      userId: allocation.userId,
+      friendId: allocation.friendId,
+      amount: allocation.amount,
+      reason: existingGroupIds.has(allocation.groupId) ? 'member left group' : 'group deleted',
+    });
+  });
 
   await Promise.all(
     restorableAllocations.map((allocation) =>

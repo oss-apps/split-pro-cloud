@@ -305,7 +305,11 @@ void test(
         },
       }),
       db.groupBalance.findMany({
-        where: { groupId: { in: [groupOne.id, groupTwo.id] }, userId: creditor.id },
+        where: {
+          groupId: { in: [groupOne.id, groupTwo.id] },
+          userId: creditor.id,
+          currency: 'USD',
+        },
         orderBy: { groupId: 'asc' },
       }),
       db.settlementAllocation.findMany({ where: { settlementExpenseId: settlement.id } }),
@@ -367,7 +371,11 @@ void test(
 
     const [balancesAfterMetadataEdit, allocationsAfterMetadataEdit] = await Promise.all([
       db.groupBalance.findMany({
-        where: { groupId: { in: [groupOne.id, groupTwo.id] }, userId: creditor.id },
+        where: {
+          groupId: { in: [groupOne.id, groupTwo.id] },
+          userId: creditor.id,
+          currency: 'USD',
+        },
       }),
       db.settlementAllocation.findMany({ where: { settlementExpenseId: settlement.id } }),
     ]);
@@ -391,7 +399,11 @@ void test(
         },
       }),
       db.groupBalance.findMany({
-        where: { groupId: { in: [groupOne.id, groupTwo.id] }, userId: creditor.id },
+        where: {
+          groupId: { in: [groupOne.id, groupTwo.id] },
+          userId: creditor.id,
+          currency: 'USD',
+        },
         orderBy: { groupId: 'asc' },
       }),
       db.settlementAllocation.findMany({ where: { settlementExpenseId: settlement.id } }),
@@ -422,10 +434,80 @@ void test(
         },
       },
     });
-    await assert.rejects(
-      () => deleteExpense(legacySettlement.id, debtor.id),
-      /Legacy settlements cannot be edited or deleted safely/,
+    const balanceBeforeLegacyEdit = await db.balance.findUniqueOrThrow({
+      where: {
+        userId_currency_friendId: { userId: creditor.id, currency: 'USD', friendId: debtor.id },
+      },
+    });
+    await editExpense(
+      legacySettlement.id,
+      debtor.id,
+      'Renamed legacy settlement',
+      'general',
+      1,
+      SplitType.SETTLEMENT,
+      'USD',
+      [
+        { userId: debtor.id, amount: 1 },
+        { userId: creditor.id, amount: -1 },
+      ],
+      debtor.id,
+      new Date('2026-01-02'),
     );
+    await editExpense(
+      legacySettlement.id,
+      debtor.id,
+      'Renamed legacy settlement',
+      'general',
+      4,
+      SplitType.SETTLEMENT,
+      'USD',
+      [
+        { userId: debtor.id, amount: 4 },
+        { userId: creditor.id, amount: -4 },
+      ],
+      debtor.id,
+      new Date('2026-01-02'),
+    );
+    const legacyAfterEdit = await db.expense.findUniqueOrThrow({
+      where: { id: legacySettlement.id },
+      include: { expenseParticipants: true, settlementAllocations: true },
+    });
+    assert.equal(legacyAfterEdit.amount, 400);
+    assert.equal(legacyAfterEdit.settlementAllocationVersion, null);
+    assert.equal(legacyAfterEdit.settlementAllocations.length, 0);
+    await deleteExpense(legacySettlement.id, debtor.id);
+    await deleteExpense(legacySettlement.id, debtor.id);
+    const [balanceAfterLegacyDelete, groupBalancesAfterLegacyDelete] = await Promise.all([
+      db.balance.findUniqueOrThrow({
+        where: {
+          userId_currency_friendId: { userId: creditor.id, currency: 'USD', friendId: debtor.id },
+        },
+      }),
+      db.groupBalance.findMany({
+        where: {
+          groupId: { in: [groupOne.id, groupTwo.id] },
+          userId: creditor.id,
+          currency: 'USD',
+        },
+        orderBy: { groupId: 'asc' },
+      }),
+    ]);
+    // The legacy settlement was never applied, so removing it moves the pair by its stored amount
+    // and leaves group balances untouched.
+    assert.equal(balanceAfterLegacyDelete.amount, balanceBeforeLegacyEdit.amount + 100);
+    assert.deepEqual(
+      groupBalancesAfterLegacyDelete.map((balance) => balance.amount),
+      deletedGroupBalances.map((balance) => balance.amount),
+    );
+    await db.balance.updateMany({
+      where: { userId: creditor.id, friendId: debtor.id, currency: 'USD' },
+      data: { amount: { decrement: 100 } },
+    });
+    await db.balance.updateMany({
+      where: { userId: debtor.id, friendId: creditor.id, currency: 'USD' },
+      data: { amount: { increment: 100 } },
+    });
 
     const detachedSettlement = await addUserExpense(
       debtor.id,
@@ -445,25 +527,6 @@ void test(
     await db.groupUser.delete({
       where: { groupId_userId: { groupId: groupTwo.id, userId: debtor.id } },
     });
-    await assert.rejects(
-      () =>
-        createGroupExpense(
-          groupTwo.id,
-          creditor.id,
-          'Expense after leaving',
-          'general',
-          1,
-          SplitType.EQUAL,
-          'USD',
-          [
-            { userId: creditor.id, amount: 1 },
-            { userId: debtor.id, amount: -1 },
-          ],
-          creditor.id,
-          new Date('2026-03-02'),
-        ),
-      /must be current group members/,
-    );
     await editExpense(
       detachedSettlement.id,
       debtor.id,
@@ -510,6 +573,207 @@ void test(
 
     await db.group.deleteMany({ where: { id: { in: [groupOne.id, groupTwo.id] } } });
     await db.user.deleteMany({ where: { id: { in: [debtor.id, creditor.id] } } });
+    await db.$disconnect();
+  },
+);
+
+void test(
+  'keeps old group expenses editable and deletes them exactly once',
+  { skip: !databaseUrl },
+  async () => {
+    assert.match(new URL(databaseUrl!).pathname, /test/i, 'Refusing to clean a non-test database');
+    process.env.DATABASE_URL = databaseUrl;
+    process.env.SKIP_ENV_VALIDATION = '1';
+
+    const [{ SplitType }, { db }, { createGroupExpense, deleteExpense, editExpense }] =
+      await Promise.all([
+        import('@prisma/client'),
+        import('~/server/db'),
+        import('~/server/api/services/splitService'),
+      ]);
+    const suffix = `${Date.now()}-${Math.random()}`;
+    const [payer, friend, formerMember] = await Promise.all([
+      db.user.create({ data: { email: `payer-${suffix}@example.com`, name: 'Payer' } }),
+      db.user.create({ data: { email: `friend-${suffix}@example.com`, name: 'Friend' } }),
+      db.user.create({ data: { email: `former-${suffix}@example.com`, name: 'Former' } }),
+    ]);
+    const group = await db.group.create({
+      data: { name: 'Trip', publicId: `trip-${suffix}`, userId: payer.id },
+    });
+    await db.groupUser.createMany({
+      data: [payer, friend, formerMember].map((user) => ({ groupId: group.id, userId: user.id })),
+    });
+
+    const getGroupBalance = async (userId: number, friendId: number) =>
+      (
+        await db.groupBalance.findUnique({
+          where: {
+            groupId_currency_firendId_userId: {
+              groupId: group.id,
+              currency: 'USD',
+              userId,
+              firendId: friendId,
+            },
+          },
+        })
+      )?.amount ?? 0;
+    const getBalance = async (userId: number, friendId: number) =>
+      (
+        await db.balance.findUnique({
+          where: { userId_currency_friendId: { userId, currency: 'USD', friendId } },
+        })
+      )?.amount ?? 0;
+
+    const expense = await createGroupExpense(
+      group.id,
+      payer.id,
+      'Dinner',
+      'general',
+      30,
+      SplitType.EQUAL,
+      'USD',
+      [
+        { userId: payer.id, amount: 20 },
+        { userId: friend.id, amount: -10 },
+        { userId: formerMember.id, amount: -10 },
+      ],
+      payer.id,
+      new Date('2026-01-01'),
+    );
+    await db.groupUser.delete({
+      where: { groupId_userId: { groupId: group.id, userId: formerMember.id } },
+    });
+
+    await editExpense(
+      expense.id,
+      payer.id,
+      'Dinner with everyone',
+      'food',
+      30,
+      SplitType.EQUAL,
+      'USD',
+      [
+        { userId: payer.id, amount: 20 },
+        { userId: friend.id, amount: -10 },
+        { userId: formerMember.id, amount: -10 },
+      ],
+      payer.id,
+      new Date('2026-01-02'),
+    );
+    await editExpense(
+      expense.id,
+      payer.id,
+      'Dinner with everyone',
+      'food',
+      40,
+      SplitType.EXACT,
+      'USD',
+      [
+        { userId: payer.id, amount: 30 },
+        { userId: friend.id, amount: -20 },
+        { userId: formerMember.id, amount: -10 },
+      ],
+      payer.id,
+      new Date('2026-01-02'),
+    );
+    assert.equal(await getGroupBalance(payer.id, friend.id), 2000);
+    assert.equal(await getGroupBalance(friend.id, payer.id), -2000);
+    assert.equal(await getGroupBalance(payer.id, formerMember.id), 1000);
+    assert.equal(await getBalance(formerMember.id, payer.id), -1000);
+
+    // An old row whose amounts no longer add up can still be renamed.
+    await db.expenseParticipant.update({
+      where: { expenseId_userId: { expenseId: expense.id, userId: payer.id } },
+      data: { amount: 9999 },
+    });
+    await editExpense(
+      expense.id,
+      payer.id,
+      'Renamed again',
+      'food',
+      40,
+      SplitType.EXACT,
+      'USD',
+      [
+        { userId: payer.id, amount: 99.99 },
+        { userId: friend.id, amount: -20 },
+        { userId: formerMember.id, amount: -10 },
+      ],
+      payer.id,
+      new Date('2026-01-03'),
+    );
+    await assert.rejects(
+      () =>
+        editExpense(
+          expense.id,
+          payer.id,
+          'Renamed again',
+          'food',
+          45,
+          SplitType.EXACT,
+          'USD',
+          [
+            { userId: payer.id, amount: 99.99 },
+            { userId: friend.id, amount: -20 },
+            { userId: formerMember.id, amount: -10 },
+          ],
+          payer.id,
+          new Date('2026-01-03'),
+        ),
+      /must add up/,
+    );
+
+    await Promise.all([deleteExpense(expense.id, payer.id), deleteExpense(expense.id, payer.id)]);
+    await deleteExpense(expense.id, payer.id);
+    assert.equal(await getGroupBalance(payer.id, friend.id), 0);
+    assert.equal(await getGroupBalance(friend.id, payer.id), 0);
+    assert.equal(await getGroupBalance(payer.id, formerMember.id), 0);
+    assert.equal(await getBalance(payer.id, friend.id), 0);
+    assert.equal(await getBalance(formerMember.id, payer.id), 0);
+
+    const results = await Promise.allSettled(
+      Array.from({ length: 10 }, (_, index) =>
+        createGroupExpense(
+          group.id,
+          index % 2 ? payer.id : friend.id,
+          `Concurrent ${index}`,
+          'general',
+          1,
+          SplitType.EQUAL,
+          'USD',
+          [
+            { userId: payer.id, amount: index % 2 ? 0.5 : -0.5 },
+            { userId: friend.id, amount: index % 2 ? -0.5 : 0.5 },
+          ],
+          payer.id,
+          new Date('2026-01-04'),
+        ),
+      ),
+    );
+    const created = results.filter((result) => 'fulfilled' === result.status).length;
+    results.forEach((result) => {
+      if ('rejected' === result.status) {
+        assert.match(String(result.reason), /Please try again/);
+      }
+    });
+    const liveExpenses = await db.expense.findMany({
+      where: { groupId: group.id, deletedAt: null },
+      include: { expenseParticipants: true },
+    });
+    assert.equal(liveExpenses.length, created);
+    const expected = liveExpenses.reduce(
+      (total, liveExpense) =>
+        total +
+        (liveExpense.expenseParticipants.find((participant) => participant.userId === payer.id)
+          ?.amount ?? 0),
+      0,
+    );
+    assert.equal(await getGroupBalance(payer.id, friend.id), expected);
+    assert.equal(await getGroupBalance(friend.id, payer.id), 0 - expected);
+    assert.equal(await getBalance(payer.id, friend.id), expected);
+
+    await db.group.delete({ where: { id: group.id } });
+    await db.user.deleteMany({ where: { id: { in: [payer.id, friend.id, formerMember.id] } } });
     await db.$disconnect();
   },
 );

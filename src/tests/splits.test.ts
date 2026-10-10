@@ -70,11 +70,16 @@ void describe('split cent conservation', () => {
 
   void it('normalizes bounded rounding drift from old clients', () => {
     assert.deepEqual(
-      toBalancedParticipants(10, 1, [
-        { userId: 1, amount: 6.67 },
-        { userId: 2, amount: -3.33 },
-        { userId: 3, amount: -3.33 },
-      ]),
+      toBalancedParticipants(
+        10,
+        1,
+        [
+          { userId: 1, amount: 6.67 },
+          { userId: 2, amount: -3.33 },
+          { userId: 3, amount: -3.33 },
+        ],
+        SplitType.EQUAL,
+      ),
       [
         { userId: 1, amount: 6.66 },
         { userId: 2, amount: -3.33 },
@@ -83,15 +88,121 @@ void describe('split cent conservation', () => {
     );
   });
 
-  void it('accepts settlement participants', () => {
+  void it('canonicalizes settlements to the payer receiving the full amount back', () => {
     assert.deepEqual(
-      toBalancedParticipants(10, 1, [
-        { userId: 1, amount: 10 },
-        { userId: 2, amount: -10 },
-      ]),
+      toBalancedParticipants(
+        10,
+        1,
+        [
+          { userId: 1, amount: 0 },
+          { userId: 2, amount: 10 },
+        ],
+        SplitType.SETTLEMENT,
+      ),
       [
         { userId: 1, amount: 10 },
         { userId: 2, amount: -10 },
+      ],
+    );
+    assert.throws(
+      () =>
+        toBalancedParticipants(
+          10,
+          1,
+          [
+            { userId: 1, amount: 10 },
+            { userId: 2, amount: -5 },
+            { userId: 3, amount: -5 },
+          ],
+          SplitType.SETTLEMENT,
+        ),
+      /between two people/,
+    );
+  });
+
+  void it('mirrors signs for negative expenses', () => {
+    assert.deepEqual(
+      toBalancedParticipants(
+        -10,
+        1,
+        [
+          { userId: 1, amount: -6.67 },
+          { userId: 2, amount: 3.33 },
+          { userId: 3, amount: 3.33 },
+        ],
+        SplitType.EQUAL,
+      ),
+      [
+        { userId: 1, amount: -6.66 },
+        { userId: 2, amount: 3.33 },
+        { userId: 3, amount: 3.33 },
+      ],
+    );
+    assert.deepEqual(
+      toBalancedParticipants(
+        -10,
+        1,
+        [
+          { userId: 1, amount: -7 },
+          { userId: 2, amount: 7 },
+        ],
+        SplitType.PERCENTAGE,
+      ),
+      [
+        { userId: 1, amount: -7 },
+        { userId: 2, amount: 7 },
+      ],
+    );
+    assert.throws(
+      () =>
+        toBalancedParticipants(
+          -10,
+          1,
+          [
+            { userId: 1, amount: 5 },
+            { userId: 2, amount: -5 },
+          ],
+          SplitType.EQUAL,
+        ),
+      /do not match the expense amount/,
+    );
+  });
+
+  void it('adds a missing payer from the other participants', () => {
+    assert.deepEqual(
+      toBalancedParticipants(
+        10,
+        1,
+        [
+          { userId: 2, amount: -5 },
+          { userId: 3, amount: -5 },
+        ],
+        SplitType.EQUAL,
+      ),
+      [
+        { userId: 2, amount: -5 },
+        { userId: 3, amount: -5 },
+        { userId: 1, amount: 10 },
+      ],
+    );
+  });
+
+  void it('allows negative exact shares as long as the amounts balance', () => {
+    assert.deepEqual(
+      toBalancedParticipants(
+        1,
+        1,
+        [
+          { userId: 1, amount: 0 },
+          { userId: 2, amount: -3 },
+          { userId: 3, amount: 3 },
+        ],
+        SplitType.EXACT,
+      ),
+      [
+        { userId: 1, amount: 0 },
+        { userId: 2, amount: -3 },
+        { userId: 3, amount: 3 },
       ],
     );
   });
@@ -99,28 +210,60 @@ void describe('split cent conservation', () => {
   void it('rejects material imbalances and invalid debt directions', () => {
     assert.throws(
       () =>
-        toBalancedParticipants(10, 1, [
-          { userId: 1, amount: 5 },
-          { userId: 2, amount: -3 },
-        ]),
-      /must balance to zero/,
+        toBalancedParticipants(
+          10,
+          1,
+          [
+            { userId: 1, amount: 5 },
+            { userId: 2, amount: -3 },
+          ],
+          SplitType.EXACT,
+        ),
+      /must add up/,
     );
     assert.throws(
       () =>
-        toBalancedParticipants(10, 1, [
-          { userId: 1, amount: 0 },
-          { userId: 2, amount: 5 },
-          { userId: 3, amount: -5 },
-        ]),
-      /valid expense/,
+        toBalancedParticipants(
+          10,
+          1,
+          [
+            { userId: 1, amount: 0 },
+            { userId: 2, amount: 5 },
+            { userId: 3, amount: -5 },
+          ],
+          SplitType.EQUAL,
+        ),
+      /do not match the expense amount/,
     );
     assert.throws(
       () =>
-        toBalancedParticipants(10, 1, [
-          { userId: 2, amount: 0 },
-          { userId: 3, amount: 0 },
-        ]),
-      /include the payer exactly once/,
+        toBalancedParticipants(
+          10,
+          1,
+          [
+            { userId: 1, amount: 20 },
+            { userId: 2, amount: -20 },
+          ],
+          SplitType.SHARE,
+        ),
+      /do not match the expense amount/,
+    );
+    assert.throws(
+      () =>
+        toBalancedParticipants(
+          10,
+          1,
+          [
+            { userId: 1, amount: 10 },
+            { userId: 1, amount: -10 },
+          ],
+          SplitType.EQUAL,
+        ),
+      /must be unique/,
+    );
+    assert.throws(
+      () => toBalancedParticipants(Number.NaN, 1, [{ userId: 1, amount: 0 }], SplitType.EQUAL),
+      /not valid/,
     );
   });
 });

@@ -215,6 +215,9 @@ export const userRouter = createTRPCRouter({
 
         return expense;
       } catch (error) {
+        if (error instanceof TRPCError) {
+          throw error;
+        }
         console.error(error);
         throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to create expense' });
       }
