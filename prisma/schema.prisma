@@ -194,6 +194,30 @@ model SettlementAllocation {
     @@index([groupId, currency, friendId, userId])
 }
 
+/// Audit trail of the one-off balance repair (src/scripts/repair-balances.ts), so a run can be
+/// undone. No relations, so the log outlives the rows it describes.
+model BalanceRepairLog {
+    id        Int      @id @default(autoincrement())
+    runId     String
+    /// "settlement:<expenseId>" or "set:<setId>": the unit applied in one transaction.
+    scope     String
+    /// "Balance", "GroupBalance" or "ExpenseParticipant"
+    table     String
+    groupId   Int?
+    currency  String?
+    expenseId String?
+    userId    Int
+    friendId  Int?
+    /// null when the row did not exist
+    before    Int?
+    delta     Int
+    after     Int?
+    reason    String
+    createdAt DateTime @default(now())
+
+    @@index([runId, scope])
+}
+
 model ExpenseParticipant {
     expenseId String
     userId    Int
