@@ -252,6 +252,14 @@ export function calculateParticipantSplit(
         amount: remainingAmountShare + (p.splitShare ?? 0),
       }));
       break;
+    case SplitType.SETTLEMENT:
+      // The payer gets the whole amount back from the other person.
+      const receivers = participants.filter((p) => p.id !== paidBy?.id).length;
+      updatedParticipants = participants.map((p) => ({
+        ...p,
+        amount: p.id === paidBy?.id || 0 === receivers ? 0 : amount / receivers,
+      }));
+      break;
   }
 
   const participantsToAdjust = updatedParticipants
@@ -335,8 +343,8 @@ export function calculateSplitShareBasedOnAmount(
           amount === 0
             ? 0
             : paidBy?.id !== p.id
-              ? Math.round((Math.abs(p.amount ?? 0) / amount) * 10000) / 100
-              : Math.round((Math.abs(amount - (p.amount ?? 0)) / amount) * 10000) / 100,
+              ? Math.round((Math.abs(p.amount ?? 0) / Math.abs(amount)) * 10000) / 100
+              : Math.round((Math.abs(amount - (p.amount ?? 0)) / Math.abs(amount)) * 10000) / 100,
       }));
       break;
 
@@ -344,8 +352,8 @@ export function calculateSplitShareBasedOnAmount(
       // Convert amounts back to shares
       const shares = participants.map((p) =>
         p.id === paidBy?.id
-          ? Math.abs(amount - (p.amount ?? 0)) / amount
-          : Math.abs(p.amount ?? 0) / amount,
+          ? Math.abs(amount - (p.amount ?? 0)) / Math.abs(amount)
+          : Math.abs(p.amount ?? 0) / Math.abs(amount),
       );
 
       // Find the minimum share value
@@ -360,17 +368,16 @@ export function calculateSplitShareBasedOnAmount(
           (amount === 0
             ? 0
             : paidBy?.id !== p.id
-              ? Math.abs(p.amount ?? 0) / amount
-              : Math.abs(amount - (p.amount ?? 0)) / amount) * multiplier,
+              ? Math.abs(p.amount ?? 0) / Math.abs(amount)
+              : Math.abs(amount - (p.amount ?? 0)) / Math.abs(amount)) * multiplier,
       }));
       break;
 
     case SplitType.EXACT:
-      // For exact, split share is the absolute amount
+      // For exact, split share is what each person owes, so refunds and negative shares survive
       updatedParticipants = participants.map((p) => ({
         ...p,
-        splitShare:
-          paidBy?.id !== p.id ? Math.abs(p.amount ?? 0) : Math.abs(amount - (p.amount ?? 0)),
+        splitShare: paidBy?.id !== p.id ? -(p.amount ?? 0) : amount - (p.amount ?? 0),
       }));
       break;
 

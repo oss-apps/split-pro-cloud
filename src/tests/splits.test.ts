@@ -291,4 +291,50 @@ void describe('split type conversion', () => {
     );
     assert.equal(useAddExpenseStore.getState().canSplitScreenClosed, true);
   });
+
+  void it('keeps settlement signs when the amount is edited', () => {
+    const payer = createUser(1);
+    const friend = createUser(2);
+
+    useAddExpenseStore.setState({
+      amount: 5,
+      paidBy: payer,
+      splitType: SplitType.SETTLEMENT,
+      participants: [
+        { ...payer, amount: 5 },
+        { ...friend, amount: -5 },
+      ],
+    });
+
+    useAddExpenseStore.getState().actions.setAmount(8);
+
+    assert.deepEqual(
+      useAddExpenseStore.getState().participants.map((participant) => participant.amount),
+      [8, -8],
+    );
+    assert.equal(useAddExpenseStore.getState().canSplitScreenClosed, true);
+  });
+
+  void it('reconstructs exact shares of a refund', () => {
+    const payer = createUser(1);
+    const friend = createUser(2);
+
+    useAddExpenseStore.setState({
+      amount: -10,
+      paidBy: payer,
+      splitType: SplitType.EQUAL,
+      participants: [
+        { ...payer, amount: -5, splitShare: 1 },
+        { ...friend, amount: 5, splitShare: 1 },
+      ],
+    });
+
+    useAddExpenseStore.getState().actions.setSplitType(SplitType.EXACT);
+
+    assert.deepEqual(
+      useAddExpenseStore.getState().participants.map((participant) => participant.amount),
+      [-5, 5],
+    );
+    assert.equal(useAddExpenseStore.getState().canSplitScreenClosed, true);
+  });
 });
