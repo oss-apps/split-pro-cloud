@@ -1,31 +1,8 @@
 import Link from 'next/link';
 import { SITE_URL } from '~/components/Site/constants';
-import { type Person, type SharedExpense } from '~/lib/tools/settleUp';
 
 export const QUICK_SPLIT_DESCRIPTION =
   'Split costs for a trip, a dinner or a weekend away without signing up. Add who paid for what, see who owes whom in as few payments as possible, and share one link with everyone.';
-
-export const EXAMPLE: {
-  name: string;
-  currency: string;
-  people: Person[];
-  expenses: SharedExpense[];
-} = {
-  name: 'Cabin weekend',
-  currency: 'USD',
-  people: [
-    { id: 'a', name: 'Alex' },
-    { id: 'b', name: 'Priya' },
-    { id: 'c', name: 'Jordan' },
-    { id: 'd', name: 'Sam' },
-  ],
-  expenses: [
-    { id: 'e1', title: 'Cabin', amount: 48000, paidBy: 'a', splitAmong: ['a', 'b', 'c', 'd'] },
-    { id: 'e2', title: 'Groceries', amount: 12640, paidBy: 'b', splitAmong: ['a', 'b', 'c', 'd'] },
-    { id: 'e3', title: 'Gas', amount: 7200, paidBy: 'c', splitAmong: ['a', 'c', 'd'] },
-    { id: 'e4', title: 'Dinner', amount: 18600, paidBy: 'd', splitAmong: ['a', 'b', 'c', 'd'] },
-  ],
-};
 
 export const QUICK_SPLIT_FAQS = [
   {

@@ -23,19 +23,19 @@ export const ToolPage: React.FC<{
       path={path}
       jsonLd={[toolJsonLd(name, description, path), faqJsonLd(faqs)]}
     />
-    <section className="mx-auto max-w-6xl px-5 pt-12 sm:pt-16 lg:px-8">
+    <section className="mx-auto max-w-6xl px-5 pt-10 sm:pt-14 lg:px-8">
       <div className="max-w-3xl">
-        <h1 className="text-balance text-4xl font-semibold tracking-tight text-white sm:text-5xl">
+        <h1 className="text-balance text-3xl font-semibold tracking-tight text-white sm:text-4xl">
           {title}
         </h1>
-        <p className="mt-4 max-w-2xl text-pretty text-lg leading-relaxed text-gray-400">
+        <p className="mt-3 max-w-2xl text-pretty text-lg leading-relaxed text-gray-400">
           {description}
         </p>
       </div>
-      <div className="mt-10">{children}</div>
+      <div className="mt-8">{children}</div>
     </section>
-    <section className="mx-auto mt-28 grid max-w-6xl gap-14 px-5 lg:grid-cols-[1.4fr_1fr] lg:px-8">
-      <div className="prose prose-invert max-w-none prose-headings:font-semibold prose-headings:tracking-tight prose-h2:text-2xl prose-p:leading-relaxed prose-p:text-gray-400 prose-a:text-cyan-300 prose-strong:text-gray-100 prose-li:text-gray-400">
+    <section className="mx-auto mt-24 grid max-w-6xl gap-14 px-5 lg:grid-cols-[1.4fr_1fr] lg:px-8">
+      <div className="prose prose-invert max-w-none prose-headings:font-semibold prose-headings:tracking-tight prose-h2:text-2xl prose-p:leading-relaxed prose-p:text-gray-400 prose-a:text-primary prose-strong:text-gray-100 prose-li:text-gray-400">
         {guide}
       </div>
       <div>
@@ -45,7 +45,7 @@ export const ToolPage: React.FC<{
         </div>
       </div>
     </section>
-    <div className="mt-28">
+    <div className="mt-24">
       <CtaBand
         title="Splitting with the same people again?"
         description="SplitPro keeps a running tab for your group, so next time you just add the expense and everyone sees who owes whom."
@@ -60,14 +60,9 @@ export const Panel: React.FC<{
   children: React.ReactNode;
   className?: string;
 }> = ({ title, action, children, className }) => (
-  <div
-    className={cn(
-      'rounded-2xl border border-white/[0.08] bg-gray-900/50 p-5 shadow-xl shadow-black/20 backdrop-blur sm:p-6',
-      className,
-    )}
-  >
+  <div className={cn('rounded-xl border border-white/10 p-5 sm:p-6', className)}>
     {title ? (
-      <div className="mb-5 flex items-center justify-between gap-4">
+      <div className="mb-4 flex items-center justify-between gap-4">
         <h2 className="text-base font-medium text-white">{title}</h2>
         {action}
       </div>
@@ -80,7 +75,7 @@ export const FieldLabel: React.FC<{ children: React.ReactNode; htmlFor?: string 
   children,
   htmlFor,
 }) => (
-  <label htmlFor={htmlFor} className="mb-1.5 block text-xs font-medium text-gray-400">
+  <label htmlFor={htmlFor} className="mb-1.5 block text-sm text-gray-400">
     {children}
   </label>
 );
@@ -89,7 +84,7 @@ export const TextInput = ({ className, ...props }: React.InputHTMLAttributes<HTM
   <input
     {...props}
     className={cn(
-      'h-10 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-white outline-none transition-colors placeholder:text-gray-600 focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-400/20',
+      'h-10 w-full rounded-lg border border-white/15 bg-transparent px-3 text-sm text-white outline-none transition-colors placeholder:text-gray-600 focus:border-primary',
       className,
     )}
   />
@@ -122,7 +117,7 @@ export const CurrencySelect: React.FC<{
     id={id}
     value={value}
     onChange={(e) => onChange(e.target.value)}
-    className="h-10 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-white outline-none focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-400/20"
+    className="h-10 w-full rounded-lg border border-white/15 bg-background px-3 text-sm text-white outline-none focus:border-primary"
   >
     <optgroup label="Popular">
       {POPULAR_CURRENCIES.map((code) => (
@@ -142,14 +137,14 @@ export const CurrencySelect: React.FC<{
 );
 
 const AVATAR_COLORS = [
-  'bg-cyan-400/15 text-cyan-200 ring-cyan-400/30',
-  'bg-emerald-400/15 text-emerald-200 ring-emerald-400/30',
-  'bg-violet-400/15 text-violet-200 ring-violet-400/30',
-  'bg-amber-400/15 text-amber-200 ring-amber-400/30',
-  'bg-rose-400/15 text-rose-200 ring-rose-400/30',
-  'bg-sky-400/15 text-sky-200 ring-sky-400/30',
-  'bg-lime-400/15 text-lime-200 ring-lime-400/30',
-  'bg-fuchsia-400/15 text-fuchsia-200 ring-fuchsia-400/30',
+  'bg-cyan-500/20 text-cyan-200',
+  'bg-emerald-500/20 text-emerald-200',
+  'bg-violet-500/20 text-violet-200',
+  'bg-amber-500/20 text-amber-200',
+  'bg-rose-500/20 text-rose-200',
+  'bg-sky-500/20 text-sky-200',
+  'bg-lime-500/20 text-lime-200',
+  'bg-fuchsia-500/20 text-fuchsia-200',
 ] as const;
 
 export const PersonAvatar: React.FC<{ name: string; index: number; size?: 'sm' | 'md' }> = ({
@@ -160,7 +155,7 @@ export const PersonAvatar: React.FC<{ name: string; index: number; size?: 'sm' |
   <span
     aria-hidden
     className={cn(
-      'flex shrink-0 items-center justify-center rounded-full font-medium ring-1',
+      'flex shrink-0 items-center justify-center rounded-full font-medium',
       'sm' === size ? 'h-6 w-6 text-[10px]' : 'h-9 w-9 text-xs',
       AVATAR_COLORS[index % AVATAR_COLORS.length],
     )}
@@ -247,7 +242,7 @@ export const PeopleEditor: React.FC<{
         {people.map((person, index) => (
           <div
             key={person.id}
-            className="flex items-center gap-2 rounded-xl border border-white/[0.06] bg-black/20 py-1.5 pl-1.5 pr-2"
+            className="flex items-center gap-2 rounded-lg border border-white/10 py-1.5 pl-1.5 pr-2"
           >
             <PersonAvatar name={person.name} index={index} />
             <CommitInput
@@ -286,7 +281,7 @@ export const PeopleEditor: React.FC<{
           />
           <button
             type="submit"
-            className="flex h-10 shrink-0 items-center gap-1.5 rounded-lg border border-white/10 px-3 text-sm text-gray-200 transition-colors hover:border-cyan-400/40 hover:text-white"
+            className="flex h-10 shrink-0 items-center gap-1.5 rounded-lg border border-white/15 px-3 text-sm text-gray-200 transition-colors hover:bg-white/5"
           >
             <Plus className="h-4 w-4" /> Add
           </button>
@@ -312,7 +307,7 @@ export const Segmented = <T extends string>({
   <div
     role="radiogroup"
     aria-label={label}
-    className="inline-flex w-full rounded-xl border border-white/[0.08] bg-black/30 p-1 sm:w-auto"
+    className="inline-flex w-full rounded-lg border border-white/15 p-0.5 sm:w-auto"
   >
     {options.map((option) => (
       <button
@@ -322,10 +317,10 @@ export const Segmented = <T extends string>({
         aria-checked={value === option.value}
         onClick={() => onChange(option.value)}
         className={cn(
-          'flex-1 rounded-lg text-sm transition-colors sm:flex-none',
+          'flex-1 rounded-md text-sm transition-colors sm:flex-none',
           'sm' === size ? 'px-3 py-1.5 text-xs' : 'px-4 py-2',
           value === option.value
-            ? 'bg-white/10 font-medium text-white shadow-sm'
+            ? 'bg-white/10 font-medium text-white'
             : 'text-gray-400 hover:text-gray-200',
         )}
       >
@@ -348,8 +343,8 @@ export const Chip: React.FC<{
     className={cn(
       'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors',
       selected
-        ? 'border-cyan-400/40 bg-cyan-400/10 text-cyan-100'
-        : 'border-white/10 text-gray-500 hover:border-white/20 hover:text-gray-300',
+        ? 'border-primary/60 bg-primary/10 text-white'
+        : 'border-white/15 text-gray-500 hover:text-gray-300',
       className,
     )}
   >
@@ -392,7 +387,7 @@ export const ShareActions: React.FC<{
       <button
         type="button"
         onClick={() => share().catch(console.error)}
-        className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-full bg-white px-5 text-sm font-medium text-gray-950 transition-colors hover:bg-cyan-100 sm:flex-none"
+        className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 sm:flex-none"
       >
         {'link' === copied ? <Check className="h-4 w-4" /> : <Share2 className="h-4 w-4" />}
         {'link' === copied ? 'Link copied' : 'Share link'}
@@ -404,7 +399,7 @@ export const ShareActions: React.FC<{
             .then((url) => copy('text', summary(url)))
             .catch(console.error);
         }}
-        className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-full border border-white/10 px-5 text-sm text-gray-200 transition-colors hover:border-white/20 sm:flex-none"
+        className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-lg border border-white/15 px-4 text-sm text-gray-200 transition-colors hover:bg-white/5 sm:flex-none"
       >
         {'text' === copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
         {'text' === copied ? 'Copied' : 'Copy summary'}
@@ -414,7 +409,7 @@ export const ShareActions: React.FC<{
 };
 
 export const EmptyHint: React.FC<{ children: React.ReactNode }> = ({ children }) => (
-  <p className="rounded-xl border border-dashed border-white/10 px-4 py-8 text-center text-sm text-gray-500">
+  <p className="rounded-lg border border-dashed border-white/10 px-4 py-6 text-center text-sm text-gray-500">
     {children}
   </p>
 );

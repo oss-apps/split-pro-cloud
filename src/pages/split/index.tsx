@@ -1,11 +1,10 @@
 import { ArrowRight, ChevronRight, UserPlus, X } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { toast } from 'sonner';
-import { MAX_PEOPLE, TransferRow } from '~/components/QuickSplit/GroupView';
+import { MAX_PEOPLE } from '~/components/QuickSplit/GroupView';
 import {
-  EXAMPLE,
   QUICK_SPLIT_DESCRIPTION,
   QUICK_SPLIT_FAQS,
   QuickSplitGuide,
@@ -20,8 +19,6 @@ import {
   TextInput,
   ToolPage,
 } from '~/components/Tools/ToolUi';
-import { formatMoney } from '~/lib/tools/money';
-import { computeBalances, computeTransfers } from '~/lib/tools/settleUp';
 import { api } from '~/utils/api';
 
 const QuickSplitPage = () => (
@@ -37,6 +34,22 @@ const QuickSplitPage = () => (
     <Setup />
   </ToolPage>
 );
+
+const STEPS = [
+  {
+    title: 'Add the people',
+    description: 'Type the names of everyone in the split. Nobody needs an account.',
+  },
+  {
+    title: 'Add expenses as they happen',
+    description: 'Who paid, how much, and who it was for.',
+  },
+  {
+    title: 'Share the link',
+    description:
+      'Everyone sees the same split and who pays whom. The link stays the same as you add more.',
+  },
+] as const;
 
 const Setup = () => {
   const router = useRouter();
@@ -54,13 +67,8 @@ const Setup = () => {
   const filled = names.map((n) => n.trim()).filter(Boolean);
   const canStart = 2 <= filled.length && !create.isLoading && !create.isSuccess;
 
-  const preview = useMemo(
-    () => computeTransfers(computeBalances(EXAMPLE.people, EXAMPLE.expenses)),
-    [],
-  );
-
   return (
-    <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+    <div className="grid items-start gap-10 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
       <div className="space-y-6">
         <Panel>
           <form
@@ -120,7 +128,7 @@ const Setup = () => {
                 <button
                   type="button"
                   onClick={() => setNames((all) => [...all, ''])}
-                  className="flex h-10 items-center justify-center gap-2 rounded-lg border border-dashed border-white/15 text-sm text-gray-400 transition-colors hover:border-cyan-400/40 hover:text-white"
+                  className="flex h-10 items-center justify-center gap-2 rounded-lg border border-dashed border-white/15 text-sm text-gray-400 transition-colors hover:bg-white/5 hover:text-white"
                 >
                   <UserPlus className="h-4 w-4" /> Add someone
                 </button>
@@ -131,7 +139,7 @@ const Setup = () => {
               <button
                 type="submit"
                 disabled={!canStart}
-                className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-cyan-400 px-6 text-sm font-semibold text-gray-950 transition-colors hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-40"
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-primary px-5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {create.isLoading || create.isSuccess ? 'Creating…' : 'Start splitting'}
                 <ArrowRight className="h-4 w-4" />
@@ -145,12 +153,12 @@ const Setup = () => {
 
         {recent.length ? (
           <Panel title="Your recent splits">
-            <ul className="-mx-2 divide-y divide-white/[0.05]">
+            <ul className="-mx-2 divide-y divide-white/5">
               {recent.map((split) => (
                 <li key={split.id} className="group flex items-center gap-2">
                   <Link
                     href={`${QUICK_SPLIT_PATH}/${split.id}`}
-                    className="flex min-w-0 flex-1 items-center justify-between gap-3 rounded-xl px-2 py-3 text-sm text-gray-200 transition-colors hover:bg-white/[0.03] hover:text-white"
+                    className="flex min-w-0 flex-1 items-center justify-between gap-3 rounded-lg px-2 py-3 text-sm text-gray-200 transition-colors hover:bg-white/[0.03] hover:text-white"
                   >
                     <span className="truncate">{split.name ? split.name : 'Untitled split'}</span>
                     <ChevronRight className="h-4 w-4 shrink-0 text-gray-600" />
@@ -160,7 +168,7 @@ const Setup = () => {
                     aria-label={`Remove ${split.name ? split.name : 'split'} from this list`}
                     title="Remove from this list"
                     onClick={() => forget(split.id)}
-                    className="rounded-full p-2 text-gray-600 transition-colors hover:bg-white/5 hover:text-gray-200"
+                    className="rounded-lg p-2 text-gray-600 transition-colors hover:bg-white/5 hover:text-gray-200"
                   >
                     <X className="h-3.5 w-3.5" />
                   </button>
@@ -174,26 +182,21 @@ const Setup = () => {
         ) : null}
       </div>
 
-      <div aria-hidden className="hidden lg:block">
-        <div className="rounded-2xl border border-white/[0.06] bg-gradient-to-b from-cyan-400/[0.06] to-transparent p-6">
-          <p className="text-sm text-gray-500">{EXAMPLE.name}</p>
-          <p className="mt-1 text-sm text-gray-400">Who pays whom</p>
-          <div className="mt-4 space-y-2">
-            {preview.map((t) => (
-              <TransferRow
-                key={`${t.from}-${t.to}`}
-                from={EXAMPLE.people.find((p) => p.id === t.from)?.name ?? ''}
-                to={EXAMPLE.people.find((p) => p.id === t.to)?.name ?? ''}
-                fromIndex={EXAMPLE.people.findIndex((p) => p.id === t.from)}
-                amount={formatMoney(t.amount, EXAMPLE.currency)}
-              />
-            ))}
-          </div>
-          <p className="mt-5 text-sm leading-relaxed text-gray-500">
-            Four people, four expenses, three payments. Everyone opens the same link and sees new
-            expenses as they are added.
-          </p>
-        </div>
+      <div>
+        <h2 className="font-medium text-white">How it works</h2>
+        <ol className="mt-4 space-y-5">
+          {STEPS.map((step, index) => (
+            <li key={step.title} className="flex gap-4">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-white/15 text-sm text-gray-300">
+                {index + 1}
+              </span>
+              <div>
+                <p className="font-medium text-gray-100">{step.title}</p>
+                <p className="mt-0.5 text-sm leading-relaxed text-gray-400">{step.description}</p>
+              </div>
+            </li>
+          ))}
+        </ol>
       </div>
     </div>
   );

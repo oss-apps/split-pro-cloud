@@ -1,39 +1,19 @@
-import { ArrowRight, ChevronDown } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
 import Link from 'next/link';
 import { cn } from '~/lib/utils';
 import { QUICK_SPLIT_PATH } from './constants';
 
-export const Eyebrow: React.FC<{ children: React.ReactNode; className?: string }> = ({
-  children,
-  className,
-}) => (
-  <p
-    className={cn(
-      'inline-flex items-center gap-2 rounded-full border border-cyan-400/20 bg-cyan-400/[0.07] px-3 py-1 text-xs font-medium text-cyan-200',
-      className,
-    )}
-  >
-    {children}
-  </p>
-);
-
 export const SectionHeading: React.FC<{
-  eyebrow?: string;
   title: React.ReactNode;
   description?: React.ReactNode;
   align?: 'left' | 'center';
-}> = ({ eyebrow, title, description, align = 'center' }) => (
+}> = ({ title, description, align = 'center' }) => (
   <div className={cn('max-w-2xl', 'center' === align && 'mx-auto text-center')}>
-    {eyebrow ? (
-      <p className="text-sm font-medium uppercase tracking-[0.16em] text-cyan-300/80">{eyebrow}</p>
-    ) : null}
-    <h2 className="mt-3 text-balance text-3xl font-semibold tracking-tight text-white sm:text-4xl">
+    <h2 className="text-balance text-2xl font-semibold tracking-tight text-white sm:text-3xl">
       {title}
     </h2>
     {description ? (
-      <p className="mt-4 text-pretty text-base leading-relaxed text-gray-400 sm:text-lg">
-        {description}
-      </p>
+      <p className="mt-3 text-pretty leading-relaxed text-gray-400">{description}</p>
     ) : null}
   </div>
 );
@@ -46,12 +26,11 @@ export const PrimaryLink: React.FC<{
   <Link
     href={href}
     className={cn(
-      'group inline-flex items-center justify-center gap-2 rounded-full bg-cyan-400 px-6 py-3 text-sm font-semibold text-gray-950 shadow-[0_0_0_1px_rgba(34,211,238,0.4),0_8px_40px_-8px_rgba(34,211,238,0.6)] transition-all hover:bg-cyan-300',
+      'inline-flex h-11 items-center justify-center rounded-lg bg-primary px-5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90',
       className,
     )}
   >
     {children}
-    <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
   </Link>
 );
 
@@ -63,7 +42,7 @@ export const SecondaryLink: React.FC<{
   <Link
     href={href}
     className={cn(
-      'inline-flex items-center justify-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-6 py-3 text-sm font-medium text-gray-100 transition-colors hover:border-white/20 hover:bg-white/[0.07]',
+      'inline-flex h-11 items-center justify-center rounded-lg border border-white/15 px-5 text-sm font-medium text-gray-100 transition-colors hover:bg-white/5',
       className,
     )}
   >
@@ -77,17 +56,14 @@ export interface FaqItem {
 }
 
 export const Faq: React.FC<{ items: readonly FaqItem[] }> = ({ items }) => (
-  <div className="divide-y divide-white/[0.07] rounded-2xl border border-white/[0.07] bg-white/[0.02]">
+  <div className="divide-y divide-white/10 border-y border-white/10">
     {items.map((item) => (
-      <details
-        key={item.question}
-        className="group px-6 [&_summary::-webkit-details-marker]:hidden"
-      >
-        <summary className="flex cursor-pointer list-none items-center justify-between gap-6 py-5 text-left font-medium text-gray-100">
+      <details key={item.question} className="group [&_summary::-webkit-details-marker]:hidden">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-6 py-4 text-left font-medium text-gray-100">
           {item.question}
           <ChevronDown className="h-4 w-4 shrink-0 text-gray-500 transition-transform group-open:rotate-180" />
         </summary>
-        <p className="-mt-1 pb-5 leading-relaxed text-gray-400">{item.answer}</p>
+        <p className="pb-4 leading-relaxed text-gray-400">{item.answer}</p>
       </details>
     ))}
   </div>
@@ -98,15 +74,11 @@ export const CtaBand: React.FC<{ title?: string; description?: string }> = ({
   description = 'Groups, trips and shared homes in one place. SplitPro remembers who paid what, so nobody has to.',
 }) => (
   <section className="mx-auto max-w-6xl px-5 lg:px-8">
-    <div className="relative overflow-hidden rounded-3xl border border-white/[0.08] bg-gradient-to-b from-cyan-400/[0.12] via-cyan-400/[0.04] to-transparent px-6 py-14 text-center sm:px-12 sm:py-20">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute left-1/2 top-0 h-px w-2/3 -translate-x-1/2 bg-gradient-to-r from-transparent via-cyan-300/70 to-transparent"
-      />
-      <h2 className="mx-auto max-w-2xl text-balance text-3xl font-semibold tracking-tight text-white sm:text-4xl">
+    <div className="rounded-xl border border-white/10 px-6 py-12 text-center sm:px-12">
+      <h2 className="mx-auto max-w-2xl text-balance text-2xl font-semibold tracking-tight text-white sm:text-3xl">
         {title}
       </h2>
-      <p className="mx-auto mt-4 max-w-xl text-pretty text-gray-400 sm:text-lg">{description}</p>
+      <p className="mx-auto mt-3 max-w-xl text-pretty text-gray-400">{description}</p>
       <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
         <PrimaryLink href="/auth/signin">Start splitting for free</PrimaryLink>
         <SecondaryLink href={QUICK_SPLIT_PATH}>Try a quick split</SecondaryLink>

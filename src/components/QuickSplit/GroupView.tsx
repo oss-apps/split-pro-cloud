@@ -161,13 +161,13 @@ export const GroupView: React.FC<{ split: QuickSplitData }> = ({ split }) => {
             >
               <span className="flex -space-x-1.5">
                 {people.slice(0, 6).map((p, index) => (
-                  <span key={p.id} className="rounded-full ring-2 ring-gray-950">
+                  <span key={p.id} className="rounded-full ring-2 ring-background">
                     <PersonAvatar name={p.name} index={index} size="sm" />
                   </span>
                 ))}
               </span>
               {people.length} people · {currency}
-              <span className="text-cyan-300">{showPeople ? 'Done' : 'Edit'}</span>
+              <span className="text-primary">{showPeople ? 'Done' : 'Edit people'}</span>
             </button>
           </div>
           <ShareActions
@@ -177,7 +177,7 @@ export const GroupView: React.FC<{ split: QuickSplitData }> = ({ split }) => {
           />
         </div>
         {showPeople ? (
-          <div className="mt-5 border-t border-white/[0.06] pt-5">
+          <div className="mt-5 border-t border-white/10 pt-5">
             <PeopleEditor
               people={people}
               locked={involved}
@@ -227,7 +227,7 @@ export const GroupView: React.FC<{ split: QuickSplitData }> = ({ split }) => {
         </div>
 
         <div className="space-y-6 lg:sticky lg:top-24 lg:col-start-2 lg:row-span-2 lg:row-start-1">
-          <Panel className="border-cyan-400/20 bg-gradient-to-b from-cyan-400/[0.07] to-gray-900/50">
+          <Panel>
             <div className="flex items-end justify-between gap-4">
               <div>
                 <p className="text-sm text-gray-400">Total spent</p>
@@ -240,11 +240,14 @@ export const GroupView: React.FC<{ split: QuickSplitData }> = ({ split }) => {
               </p>
             </div>
 
-            <p className="mt-6 text-sm font-medium text-gray-300">
-              {transfers.length
-                ? `${transfers.length} ${1 === transfers.length ? 'payment settles' : 'payments settle'} everyone`
-                : 'Settle up'}
-            </p>
+            <div className="mt-6 border-t border-white/10 pt-5">
+              <h2 className="font-medium text-white">Who pays whom</h2>
+              <p className="mt-0.5 text-sm text-gray-500">
+                {transfers.length
+                  ? `${transfers.length} ${1 === transfers.length ? 'payment settles' : 'payments settle'} everyone`
+                  : 'Nothing to pay yet'}
+              </p>
+            </div>
             <div className="mt-3 space-y-2">
               {transfers.length ? (
                 transfers.map((t) => (
@@ -272,18 +275,14 @@ export const GroupView: React.FC<{ split: QuickSplitData }> = ({ split }) => {
                 </EmptyHint>
               )}
             </div>
-            <p className="mt-5 flex items-center gap-2 text-xs leading-relaxed text-gray-500">
-              <span className="relative flex h-2 w-2 shrink-0">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60 motion-reduce:animate-none" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
-              </span>
-              Live. Everyone with the link sees changes within a few seconds.
+            <p className="mt-5 text-xs leading-relaxed text-gray-500">
+              Everyone with the link sees changes within a few seconds.
             </p>
           </Panel>
 
           <Panel title="Balances">
             <div className="text-sm">
-              <div className="grid grid-cols-[1fr_auto_auto] gap-x-4 border-b border-white/[0.06] pb-2 text-xs text-gray-500">
+              <div className="grid grid-cols-[1fr_auto_auto] gap-x-4 border-b border-white/10 pb-2 text-xs text-gray-500">
                 <span>Person</span>
                 <span className="w-20 text-right">Spent</span>
                 <span className="w-24 text-right">Balance</span>
@@ -291,7 +290,7 @@ export const GroupView: React.FC<{ split: QuickSplitData }> = ({ split }) => {
               {balances.map((b, index) => (
                 <div
                   key={b.id}
-                  className="grid grid-cols-[1fr_auto_auto] items-center gap-x-4 border-b border-white/[0.04] py-2.5 last:border-0"
+                  className="grid grid-cols-[1fr_auto_auto] items-center gap-x-4 border-b border-white/5 py-2.5 last:border-0"
                 >
                   <span className="flex min-w-0 items-center gap-2">
                     <PersonAvatar name={nameOf(b.id)} index={index} size="sm" />
@@ -328,7 +327,7 @@ export const GroupView: React.FC<{ split: QuickSplitData }> = ({ split }) => {
           }
         >
           {expenses.length ? (
-            <ul className="-mx-2 divide-y divide-white/[0.05]">
+            <ul className="-mx-2 divide-y divide-white/5">
               {[...expenses].reverse().map((expense) => (
                 <ExpenseRow
                   key={expense.id}
@@ -370,7 +369,7 @@ export const TransferRow: React.FC<{
   busy?: boolean;
   onPaid?: () => void;
 }> = ({ from, to, fromIndex, amount, busy, onPaid }) => (
-  <div className="flex items-center gap-3 rounded-xl border border-white/[0.06] bg-black/25 px-3 py-2.5">
+  <div className="flex items-center gap-3 rounded-lg border border-white/10 px-3 py-2.5">
     <PersonAvatar name={from} index={fromIndex} />
     <div className="min-w-0 flex-1 text-sm">
       <p className="truncate text-white">
@@ -378,14 +377,14 @@ export const TransferRow: React.FC<{
         <span className="text-gray-500"> pays </span>
         <span className="font-medium">{to}</span>
       </p>
-      <p className="font-semibold tabular-nums text-emerald-300">{amount}</p>
+      <p className="font-medium tabular-nums text-white">{amount}</p>
     </div>
     {onPaid ? (
       <button
         type="button"
         onClick={onPaid}
         disabled={busy}
-        className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-white/10 px-3 text-xs text-gray-300 transition-colors hover:border-emerald-400/40 hover:text-emerald-200 disabled:opacity-50"
+        className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-white/15 px-3 text-xs text-gray-300 transition-colors hover:bg-white/5 hover:text-white disabled:opacity-50"
       >
         <Check className="h-3.5 w-3.5" /> Mark paid
       </button>
@@ -418,13 +417,13 @@ const ExpenseRow: React.FC<{
   return (
     <li
       className={cn(
-        'group flex items-center gap-3 rounded-xl px-2 py-3 transition-colors',
-        active && 'bg-cyan-400/[0.06]',
+        'group flex items-center gap-3 rounded-lg px-2 py-3 transition-colors',
+        active && 'bg-white/5',
         busy && 'opacity-50',
       )}
     >
       {expense.payment ? (
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-400/10 text-emerald-300 ring-1 ring-emerald-400/30">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-200">
           <Check className="h-4 w-4" />
         </span>
       ) : (
@@ -478,7 +477,7 @@ const IconButton: React.FC<{
     title={label}
     onClick={onClick}
     disabled={disabled}
-    className="rounded-full p-2 text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-200 disabled:pointer-events-none"
+    className="rounded-lg p-2 text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-200 disabled:pointer-events-none"
   >
     {children}
   </button>
@@ -548,7 +547,7 @@ const ExpenseForm: React.FC<{
   return (
     <Panel
       title={initial ? 'Edit expense' : 'Add an expense'}
-      className={cn(initial && 'border-cyan-400/30')}
+      className={cn(initial && 'border-primary/50')}
     >
       <form
         onSubmit={(e) => {
@@ -568,7 +567,7 @@ const ExpenseForm: React.FC<{
               maxLength={80}
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              className="h-11 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-white outline-none transition-colors placeholder:text-gray-600 focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-400/20"
+              className="h-11 w-full rounded-lg border border-white/15 bg-transparent px-3 text-sm text-white outline-none transition-colors placeholder:text-gray-600 focus:border-primary"
             />
           </div>
           {'equal' === mode ? (
@@ -590,7 +589,7 @@ const ExpenseForm: React.FC<{
           ) : (
             <div>
               <FieldLabel>Amount</FieldLabel>
-              <p className="flex h-11 items-center rounded-lg border border-white/[0.06] bg-black/10 px-3 text-base font-medium tabular-nums text-gray-300">
+              <p className="flex h-11 items-center rounded-lg border border-white/10 px-3 text-base font-medium tabular-nums text-gray-300">
                 {money(assigned)}
               </p>
             </div>
@@ -610,8 +609,8 @@ const ExpenseForm: React.FC<{
                 className={cn(
                   'inline-flex items-center gap-2 rounded-full border py-1 pl-1 pr-3 text-sm transition-colors',
                   paidBy === p.id
-                    ? 'border-cyan-400/50 bg-cyan-400/10 text-white'
-                    : 'border-white/10 text-gray-400 hover:border-white/20 hover:text-gray-200',
+                    ? 'border-primary/60 bg-primary/10 text-white'
+                    : 'border-white/15 text-gray-400 hover:text-gray-200',
                 )}
               >
                 <PersonAvatar name={p.name} index={index} size="sm" />
@@ -623,7 +622,7 @@ const ExpenseForm: React.FC<{
 
         <div className="mt-5">
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-            <span className="text-xs font-medium text-gray-400">Split between</span>
+            <span className="text-sm text-gray-400">Split between</span>
             <Segmented
               label="How to split"
               value={mode}
@@ -713,7 +712,7 @@ const ExpenseForm: React.FC<{
           <button
             type="submit"
             disabled={!valid || saving}
-            className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-full bg-cyan-400 px-6 text-sm font-semibold text-gray-950 transition-colors hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-40 sm:flex-none"
+            className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-lg bg-primary px-5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40 sm:flex-none"
           >
             {initial ? (
               <>
@@ -729,7 +728,7 @@ const ExpenseForm: React.FC<{
             <button
               type="button"
               onClick={onCancel}
-              className="h-11 rounded-full px-4 text-sm text-gray-400 transition-colors hover:text-white"
+              className="h-11 rounded-lg px-4 text-sm text-gray-400 transition-colors hover:text-white"
             >
               Cancel
             </button>

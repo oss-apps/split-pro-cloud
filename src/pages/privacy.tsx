@@ -15,7 +15,7 @@ const Privacy: NextPage<{ feedbackEmail: string; adsEnabled: boolean }> = ({
         path="/privacy"
       />
       <div className="mx-auto max-w-3xl px-5 lg:px-8">
-        <h1 className="mt-16 text-4xl font-semibold tracking-tight text-white sm:text-5xl">
+        <h1 className="mt-14 text-3xl font-semibold tracking-tight text-white sm:text-4xl">
           Privacy Policy
         </h1>
         <p className="text-sm text-gray-400">Last Updated: 06 Mar, 2022</p>

@@ -40,32 +40,23 @@ const BlogPost: React.FC<{ post: Post; related: PostMeta[] }> = ({ post, related
         <article className="mx-auto w-full max-w-3xl xl:mx-0">
           <header>
             {post.tags.length ? (
-              <div className="flex flex-wrap gap-2">
-                {post.tags.map((tag) => (
-                  <span
-                    key={tag}
-                    className="rounded-full border border-cyan-400/20 bg-cyan-400/[0.07] px-2.5 py-1 text-xs text-cyan-200"
-                  >
-                    {tag}
-                  </span>
-                ))}
-              </div>
+              <p className="text-sm text-gray-500">{post.tags.join(' · ')}</p>
             ) : null}
-            <h1 className="mt-5 text-balance text-4xl font-semibold leading-tight tracking-tight text-white sm:text-5xl">
+            <h1 className="mt-3 text-balance text-3xl font-semibold leading-tight tracking-tight text-white sm:text-4xl">
               {post.title}
             </h1>
             {post.description ? (
-              <p className="mt-5 text-pretty text-lg leading-relaxed text-gray-400 sm:text-xl">
+              <p className="mt-4 text-pretty text-lg leading-relaxed text-gray-400">
                 {post.description}
               </p>
             ) : null}
-            <div className="mt-8 flex items-center gap-3 border-b border-white/[0.07] pb-8 text-sm">
+            <div className="mt-8 flex items-center gap-3 border-b border-white/10 pb-8 text-sm">
               <Image
                 src="/logo_circle.png"
                 alt=""
                 width={40}
                 height={40}
-                className="h-10 w-10 rounded-full ring-1 ring-white/10"
+                className="h-10 w-10 rounded-full"
               />
               <div>
                 <p className="font-medium text-gray-200">{post.author}</p>
@@ -77,10 +68,10 @@ const BlogPost: React.FC<{ post: Post; related: PostMeta[] }> = ({ post, related
             </div>
           </header>
           <div
-            className="prose prose-lg prose-invert mt-10 max-w-none prose-headings:scroll-mt-24 prose-headings:font-semibold prose-headings:tracking-tight prose-h2:mt-14 prose-h2:text-[1.65rem] prose-p:leading-[1.8] prose-p:text-gray-300 prose-a:font-normal prose-a:text-cyan-300 prose-a:underline-offset-4 hover:prose-a:text-cyan-200 prose-blockquote:border-cyan-400/50 prose-blockquote:font-normal prose-blockquote:not-italic prose-blockquote:text-gray-300 prose-strong:text-white prose-li:text-gray-300 prose-li:marker:text-gray-500 prose-table:text-base prose-th:text-gray-200 prose-td:text-gray-300 prose-hr:border-white/10"
+            className="prose prose-lg prose-invert mt-10 max-w-none prose-headings:scroll-mt-24 prose-headings:font-semibold prose-headings:tracking-tight prose-h2:mt-14 prose-h2:text-[1.65rem] prose-p:leading-[1.8] prose-p:text-gray-300 prose-a:font-normal prose-a:text-primary prose-a:underline-offset-4 prose-blockquote:border-white/20 prose-blockquote:font-normal prose-blockquote:not-italic prose-blockquote:text-gray-300 prose-strong:text-white prose-li:text-gray-300 prose-li:marker:text-gray-500 prose-table:text-base prose-th:text-gray-200 prose-td:text-gray-300 prose-hr:border-white/10"
             dangerouslySetInnerHTML={{ __html: post.html }}
           />
-          <aside className="mt-16 overflow-hidden rounded-2xl border border-cyan-400/20 bg-gradient-to-br from-cyan-400/[0.1] to-transparent p-8">
+          <aside className="mt-16 rounded-xl border border-white/10 p-6 sm:p-8">
             <p className="text-xl font-semibold text-white">
               Split your next expense with SplitPro
             </p>
@@ -99,7 +90,7 @@ const BlogPost: React.FC<{ post: Post; related: PostMeta[] }> = ({ post, related
               <p className="text-xs font-medium uppercase tracking-[0.14em] text-gray-500">
                 On this page
               </p>
-              <ul className="mt-4 space-y-2.5 border-l border-white/[0.07] text-sm">
+              <ul className="mt-4 space-y-2.5 border-l border-white/10 text-sm">
                 {post.headings.map((heading) => (
                   <li key={heading.id} className={3 === heading.depth ? 'pl-7' : 'pl-4'}>
                     <a

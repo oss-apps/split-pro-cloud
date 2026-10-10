@@ -1,4 +1,4 @@
-import { ArrowRight, Github, Menu, X } from 'lucide-react';
+import { Github, Menu, X } from 'lucide-react';
 import Head from 'next/head';
 import Image from 'next/image';
 import Link from 'next/link';
@@ -22,37 +22,22 @@ const NAV_LINKS = [
 
 export const SiteLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   return (
-    <div className="relative min-h-screen overflow-x-clip bg-background text-foreground">
+    <div className="min-h-screen bg-background text-foreground">
       {process.env.NODE_ENV === 'production' ? (
         <Head>
           <script async defer src="https://scripts.simpleanalyticscdn.com/latest.js"></script>
         </Head>
       ) : null}
-      <SiteBackground />
       <SiteHeader />
-      <div className="relative">{children}</div>
+      <div>{children}</div>
       <SiteFooter />
     </div>
   );
 };
 
-const SiteBackground = () => (
-  <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 -z-0 h-[900px]">
-    <div className="absolute left-1/2 top-[-320px] h-[640px] w-[1100px] -translate-x-1/2 rounded-full bg-cyan-500/[0.13] blur-[120px]" />
-    <div className="absolute right-[-200px] top-[160px] h-[420px] w-[520px] rounded-full bg-violet-500/[0.07] blur-[120px]" />
-    <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.035)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.035)_1px,transparent_1px)] bg-[size:56px_56px] [mask-image:radial-gradient(ellipse_70%_60%_at_50%_0%,black,transparent)]" />
-  </div>
-);
-
 export const Logo: React.FC<{ className?: string }> = ({ className }) => (
   <Link href="/" className={cn('flex items-center gap-2.5', className)}>
-    <Image
-      src="/logo_circle.png"
-      alt=""
-      width={32}
-      height={32}
-      className="h-8 w-8 rounded-full ring-1 ring-white/10"
-    />
+    <Image src="/logo_circle.png" alt="" width={32} height={32} className="h-8 w-8 rounded-full" />
     <span className="text-lg font-semibold tracking-tight text-white">SplitPro</span>
   </Link>
 );
@@ -66,7 +51,7 @@ const SiteHeader = () => {
   }, [router.asPath]);
 
   return (
-    <header className="sticky top-0 z-40 border-b border-white/[0.06] bg-background/70 backdrop-blur-xl">
+    <header className="sticky top-0 z-40 border-b border-white/10 bg-background">
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-5 lg:px-8">
         <Logo />
         <nav className="hidden items-center gap-8 text-sm text-gray-300 md:flex">
@@ -94,35 +79,34 @@ const SiteHeader = () => {
         <div className="flex items-center gap-2">
           <Link
             href="/auth/signin"
-            className="hidden rounded-full px-4 py-2 text-sm text-gray-300 transition-colors hover:text-white sm:block"
+            className="hidden px-3 py-2 text-sm text-gray-300 transition-colors hover:text-white sm:block"
           >
             Sign in
           </Link>
           <Link
             href="/balances"
-            className="group flex items-center gap-1.5 rounded-full bg-white px-4 py-2 text-sm font-medium text-gray-950 transition-colors hover:bg-cyan-100"
+            className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
           >
             Open app
-            <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
           </Link>
           <button
             type="button"
             aria-label={open ? 'Close menu' : 'Open menu'}
             aria-expanded={open}
             onClick={() => setOpen((value) => !value)}
-            className="ml-1 rounded-full p-2 text-gray-300 hover:text-white md:hidden"
+            className="ml-1 rounded-lg p-2 text-gray-300 hover:text-white md:hidden"
           >
             {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </button>
         </div>
       </div>
       {open ? (
-        <nav className="border-t border-white/[0.06] px-5 pb-5 pt-2 md:hidden">
+        <nav className="border-t border-white/10 px-5 pb-5 pt-2 md:hidden">
           {[...NAV_LINKS, { href: '/auth/signin', label: 'Sign in' }].map((link) => (
             <Link
               key={link.href}
               href={link.href}
-              className="block border-b border-white/[0.04] py-3 text-gray-200 last:border-0"
+              className="block border-b border-white/5 py-3 text-gray-200 last:border-0"
             >
               {link.label}
             </Link>
@@ -163,7 +147,7 @@ const FOOTER_COLUMNS = [
 ] as const;
 
 const SiteFooter = () => (
-  <footer className="relative mt-32 border-t border-white/[0.06]">
+  <footer className="mt-24 border-t border-white/10">
     <div className="mx-auto grid max-w-6xl gap-12 px-5 py-16 lg:grid-cols-[1.3fr_repeat(3,1fr)] lg:px-8">
       <div className="max-w-xs">
         <Logo />
@@ -174,9 +158,12 @@ const SiteFooter = () => (
           href={SPONSOR_URL}
           target="_blank"
           rel="noreferrer"
-          className="mt-6 inline-flex items-center gap-2 rounded-full border border-pink-500/30 bg-pink-500/[0.06] px-4 py-2 text-sm text-pink-200 transition-colors hover:border-pink-400/60"
+          className="mt-5 inline-flex items-center gap-2 text-sm text-gray-300 transition-colors hover:text-white"
         >
-          <span aria-hidden>♥</span> Sponsor SplitPro
+          <span aria-hidden className="text-pink-400">
+            ♥
+          </span>{' '}
+          Sponsor SplitPro
         </a>
       </div>
       {FOOTER_COLUMNS.map((column) => (
@@ -205,7 +192,7 @@ const SiteFooter = () => (
         </div>
       ))}
     </div>
-    <div className="border-t border-white/[0.06]">
+    <div className="border-t border-white/10">
       <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 px-5 py-6 text-xs text-gray-500 sm:flex-row lg:px-8">
         <p>
           Built by{' '}

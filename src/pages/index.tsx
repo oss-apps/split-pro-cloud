@@ -1,14 +1,4 @@
-import {
-  Bell,
-  Check,
-  Download,
-  FileUp,
-  GitFork,
-  Globe2,
-  Import,
-  Sparkles,
-  Users,
-} from 'lucide-react';
+import { Bell, Divide, FileUp, Globe2, Import, Users } from 'lucide-react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { GITHUB_URL, QUICK_SPLIT_PATH, SITE_URL } from '~/components/Site/constants';
@@ -22,7 +12,6 @@ import {
 } from '~/components/Site/blocks';
 import { Seo, faqJsonLd } from '~/components/Site/Seo';
 import { SiteLayout } from '~/components/Site/SiteLayout';
-import { cn } from '~/lib/utils';
 
 const FAQS: FaqItem[] = [
   {
@@ -85,24 +74,15 @@ export default function Home() {
       <Hero />
       <Features />
       <Showcase />
-      <section className="mx-auto mt-32 max-w-6xl px-5 lg:px-8">
-        <SectionHeading
-          eyebrow="Quick split"
-          title="Just one trip? Skip the sign-up."
-          description="Add people and expenses, see who owes whom in as few payments as possible, and share it with one link. Nobody needs an account."
-        />
-        <div className="mt-10 flex justify-center">
-          <SecondaryLink href={QUICK_SPLIT_PATH}>Start a quick split</SecondaryLink>
-        </div>
-      </section>
+      <QuickSplitPromo />
       <Why />
-      <section className="mx-auto mt-32 max-w-3xl px-5 lg:px-8">
-        <SectionHeading eyebrow="FAQ" title="Questions, answered" />
-        <div className="mt-10">
+      <section className="mx-auto mt-24 max-w-3xl px-5 lg:px-8">
+        <SectionHeading title="Questions" />
+        <div className="mt-8">
           <Faq items={FAQS} />
         </div>
       </section>
-      <div className="mt-32">
+      <div className="mt-24">
         <CtaBand />
       </div>
     </SiteLayout>
@@ -110,40 +90,25 @@ export default function Home() {
 }
 
 const Hero = () => (
-  <section className="mx-auto grid max-w-6xl items-center gap-16 px-5 pb-8 pt-16 sm:pt-24 lg:grid-cols-[1.15fr_1fr] lg:px-8 lg:pt-28">
+  <section className="mx-auto grid max-w-6xl items-center gap-12 px-5 pt-14 sm:pt-20 lg:grid-cols-[1.2fr_1fr] lg:px-8">
     <div className="text-center lg:text-left">
-      <h1 className="text-balance text-4xl font-semibold leading-[1.1] tracking-tight text-white sm:text-5xl lg:text-6xl">
-        Split expenses with friends,{' '}
-        <span className="bg-gradient-to-r from-cyan-300 via-sky-300 to-emerald-300 bg-clip-text text-transparent">
-          for free
-        </span>
+      <h1 className="text-balance text-4xl font-semibold leading-tight tracking-tight text-white sm:text-5xl">
+        Split expenses with friends, for free
       </h1>
-      <p className="mx-auto mt-6 max-w-xl text-pretty text-lg leading-relaxed text-gray-400 lg:mx-0">
-        SplitPro keeps track of shared costs for trips, homes and nights out, and shows everyone
-        exactly who owes whom. Add as many expenses as you like. The basics never sit behind a
-        paywall.
+      <p className="mx-auto mt-5 max-w-xl text-pretty text-lg leading-relaxed text-gray-400 lg:mx-0">
+        Add what you spent on trips, rent or dinners. SplitPro shows who owes whom. No daily limits,
+        no paywall for the basics.
       </p>
-      <div className="mt-10 flex flex-col items-center gap-3 sm:flex-row sm:justify-center lg:justify-start">
+      <div className="mt-8 flex flex-col items-center gap-3 sm:flex-row sm:justify-center lg:justify-start">
         <PrimaryLink href="/auth/signin">Start splitting for free</PrimaryLink>
         <SecondaryLink href={QUICK_SPLIT_PATH}>Quick split, no sign-up</SecondaryLink>
       </div>
-      <ul className="mt-10 flex flex-wrap items-center justify-center gap-x-6 gap-y-3 text-sm text-gray-400 lg:justify-start">
-        {['Unlimited expenses', '100+ currencies', 'Works on any phone'].map((item) => (
-          <li key={item} className="flex items-center gap-2">
-            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-400/10">
-              <Check className="h-3 w-3 text-emerald-300" />
-            </span>
-            {item}
-          </li>
-        ))}
-      </ul>
+      <p className="mt-6 text-sm text-gray-500">
+        Free · Open source · Works on any phone or computer
+      </p>
     </div>
-    <div className="relative mx-auto w-full max-w-[340px]">
-      <div
-        aria-hidden
-        className="absolute inset-x-6 bottom-10 top-16 rounded-full bg-gradient-to-b from-cyan-400/30 to-violet-500/20 blur-3xl"
-      />
-      <PhoneFrame>
+    <div className="mx-auto w-full max-w-[300px]">
+      <div className="overflow-hidden rounded-[2rem] border border-white/10">
         <Image
           src="/hero.webp"
           alt="SplitPro balances screen showing what each friend owes"
@@ -153,189 +118,94 @@ const Hero = () => (
           sizes="300px"
           className="h-auto w-full"
         />
-      </PhoneFrame>
+      </div>
     </div>
   </section>
 );
 
-const PhoneFrame: React.FC<{ children: React.ReactNode }> = ({ children }) => (
-  <div className="relative rounded-[2.9rem] border border-white/15 bg-gradient-to-b from-gray-800 to-gray-900 p-2.5 shadow-2xl shadow-black/60">
-    <div className="overflow-hidden rounded-[2.35rem] border border-black/60 bg-background">
-      {children}
-    </div>
-  </div>
-);
-
-const SPLIT_TYPES = ['Equal', 'Percentage', 'Shares', 'Exact amounts', 'Adjustments'] as const;
-
-const SPLIT_PREVIEW = [
-  { name: 'Maya', share: 45, color: 'bg-cyan-400' },
-  { name: 'Leo', share: 30, color: 'bg-emerald-400' },
-  { name: 'Nina', share: 25, color: 'bg-violet-400' },
+const FEATURES = [
+  {
+    icon: Divide,
+    title: 'Split any way',
+    description:
+      'Equally, by percentage, by shares or by exact amounts. Totals add up to the cent.',
+  },
+  {
+    icon: Users,
+    title: 'Groups and friends',
+    description: 'A group for every trip or home, or split a one-off cost with a friend.',
+  },
+  {
+    icon: Globe2,
+    title: '100+ currencies',
+    description: 'Add each expense in the currency you paid in. Balances stay separate.',
+  },
+  {
+    icon: Bell,
+    title: 'Works like an app',
+    description: 'Add it to your home screen and get notified when someone adds an expense.',
+  },
+  {
+    icon: Import,
+    title: 'Import from Splitwise',
+    description: 'Bring your friends and groups over with their balances.',
+  },
+  {
+    icon: FileUp,
+    title: 'Receipts',
+    description: 'Attach a photo of the receipt to any expense.',
+  },
 ] as const;
 
 const Features = () => (
-  <section className="mx-auto mt-28 max-w-6xl px-5 lg:px-8">
+  <section className="mx-auto mt-24 max-w-6xl px-5 lg:px-8">
+    <SectionHeading title="Everything you need to split fairly" />
+    <div className="mt-12 grid gap-x-8 gap-y-10 sm:grid-cols-2 lg:grid-cols-3">
+      {FEATURES.map((feature) => (
+        <div key={feature.title}>
+          <feature.icon className="h-5 w-5 text-primary" />
+          <h3 className="mt-3 font-medium text-white">{feature.title}</h3>
+          <p className="mt-1 text-pretty text-sm leading-relaxed text-gray-400">
+            {feature.description}
+          </p>
+        </div>
+      ))}
+    </div>
+  </section>
+);
+
+const Showcase = () => (
+  <section className="mx-auto mt-24 max-w-6xl px-5 lg:px-8">
     <SectionHeading
-      eyebrow="Features"
-      title="Everything you need to split fairly"
-      description="From a weekend away to years of shared rent, SplitPro keeps the numbers straight."
+      title="On your phone or your laptop"
+      description="Add an expense at the table, check the totals later. Everything stays in sync."
     />
-    <div className="mt-14 grid gap-4 md:grid-cols-3">
-      <FeatureCard
-        className="md:col-span-2"
-        icon={<Sparkles className="h-5 w-5" />}
-        title="Every way to split"
-        description="Split equally, by percentage, by shares or by exact amounts, or adjust one person's part. The totals always add up to the cent."
-      >
-        <div className="mt-6 flex flex-wrap gap-2">
-          {SPLIT_TYPES.map((type, index) => (
-            <span
-              key={type}
-              className={cn(
-                'rounded-full border px-3 py-1 text-xs',
-                1 === index
-                  ? 'border-cyan-400/40 bg-cyan-400/10 text-cyan-200'
-                  : 'border-white/10 text-gray-400',
-              )}
-            >
-              {type}
-            </span>
-          ))}
-        </div>
-        <div className="mt-6 space-y-3 rounded-xl border border-white/[0.06] bg-black/20 p-4">
-          {SPLIT_PREVIEW.map((person) => (
-            <div key={person.name} className="flex items-center gap-3 text-sm">
-              <span className="w-12 text-gray-300">{person.name}</span>
-              <div className="h-2 flex-1 overflow-hidden rounded-full bg-white/[0.06]">
-                <div
-                  className={cn('h-full rounded-full', person.color)}
-                  style={{ width: `${person.share}%` }}
-                />
-              </div>
-              <span className="w-10 text-right tabular-nums text-gray-400">{person.share}%</span>
-            </div>
-          ))}
-        </div>
-      </FeatureCard>
-      <FeatureCard
-        icon={<Users className="h-5 w-5" />}
-        title="Groups and friends"
-        description="Keep a group for every trip or home, or split one-off costs with a friend. Balances add up across all of them."
-      />
-      <FeatureCard
-        icon={<Globe2 className="h-5 w-5" />}
-        title="100+ currencies"
-        description="Add each expense in the currency you paid in. Balances stay separate per currency."
-      >
-        <div className="mt-5 flex flex-wrap gap-1.5">
-          {['USD', 'EUR', 'GBP', 'INR', 'JPY', 'AUD', 'CAD', 'SGD'].map((code) => (
-            <span
-              key={code}
-              className="rounded-md bg-white/[0.05] px-2 py-1 font-mono text-[11px] text-gray-400"
-            >
-              {code}
-            </span>
-          ))}
-        </div>
-      </FeatureCard>
-      <FeatureCard
-        className="md:col-span-2"
-        icon={<Bell className="h-5 w-5" />}
-        title="Install it like an app"
-        description="Add SplitPro to your home screen on iPhone or Android and get a notification when someone adds an expense or settles up."
-      >
-        <div className="mt-6 max-w-sm rounded-2xl border border-white/10 bg-gray-900/80 p-3.5 shadow-lg">
-          <div className="flex items-start gap-3">
-            <Image
-              src="/logo_circle.png"
-              alt=""
-              width={36}
-              height={36}
-              className="h-9 w-9 rounded-xl"
-            />
-            <div className="min-w-0 text-sm">
-              <p className="flex items-center justify-between gap-4">
-                <span className="font-medium text-white">SplitPro</span>
-                <span className="text-xs text-gray-500">now</span>
-              </p>
-              <p className="mt-0.5 text-gray-300">Maya added “Dinner at Taberna”</p>
-              <p className="text-gray-400">You owe €18.40</p>
-            </div>
-          </div>
-        </div>
-      </FeatureCard>
-      <FeatureCard
-        icon={<Import className="h-5 w-5" />}
-        title="Import from Splitwise"
-        description="Bring your friends and groups over with their balances, so you don't have to start from zero."
-      />
-      <FeatureCard
-        icon={<FileUp className="h-5 w-5" />}
-        title="Receipts"
-        description="Attach a photo of the receipt to any expense, so there is never a question about what was paid."
-      />
-      <FeatureCard
-        icon={<Download className="h-5 w-5" />}
-        title="Your data, yours"
-        description="Download everything you've added at any time from your account page."
+    <div className="mt-10 overflow-hidden rounded-xl border border-white/10">
+      <Image
+        src="/Desktop.webp"
+        alt="SplitPro on a desktop browser"
+        width={2910}
+        height={1920}
+        sizes="(min-width: 1152px) 1088px, 100vw"
+        className="h-auto w-full"
       />
     </div>
   </section>
 );
 
-const FeatureCard: React.FC<{
-  icon: React.ReactNode;
-  title: string;
-  description: string;
-  className?: string;
-  children?: React.ReactNode;
-}> = ({ icon, title, description, className, children }) => (
-  <div
-    className={cn(
-      'rounded-2xl border border-white/[0.07] bg-gradient-to-b from-white/[0.04] to-white/[0.01] p-6 sm:p-7',
-      className,
-    )}
-  >
-    <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-cyan-400/20 bg-cyan-400/10 text-cyan-300">
-      {icon}
-    </div>
-    <h3 className="mt-5 text-lg font-medium text-white">{title}</h3>
-    <p className="mt-2 text-pretty leading-relaxed text-gray-400">{description}</p>
-    {children}
-  </div>
-);
-
-const Showcase = () => (
-  <section className="mx-auto mt-32 max-w-6xl px-5 lg:px-8">
-    <SectionHeading
-      eyebrow="Phone or laptop"
-      title="Made for your phone. Just as good on a big screen."
-      description="Add an expense at the table, then check the totals on your laptop later. Everything stays in sync."
-    />
-    <div className="relative mt-14">
-      <div
-        aria-hidden
-        className="absolute inset-x-10 -bottom-6 top-10 rounded-[3rem] bg-cyan-500/10 blur-3xl"
-      />
-      <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-gray-900 shadow-2xl shadow-black/60">
-        <div className="flex items-center gap-2 border-b border-white/[0.06] bg-gray-900 px-4 py-3">
-          <span className="h-3 w-3 rounded-full bg-white/10" />
-          <span className="h-3 w-3 rounded-full bg-white/10" />
-          <span className="h-3 w-3 rounded-full bg-white/10" />
-          <span className="mx-auto rounded-md bg-white/[0.05] px-10 py-1 text-xs text-gray-500">
-            splitpro.app
-          </span>
-        </div>
-        <Image
-          src="/Desktop.webp"
-          alt="SplitPro on a desktop browser"
-          width={2910}
-          height={1920}
-          sizes="(min-width: 1152px) 1088px, 100vw"
-          className="h-auto w-full"
-        />
+const QuickSplitPromo = () => (
+  <section className="mx-auto mt-24 max-w-6xl px-5 lg:px-8">
+    <div className="flex flex-col gap-6 rounded-xl border border-white/10 p-6 sm:flex-row sm:items-center sm:justify-between sm:p-8">
+      <div className="max-w-xl">
+        <h2 className="text-xl font-semibold text-white">Just one trip? Skip the sign-up.</h2>
+        <p className="mt-2 text-gray-400">
+          Add names and expenses, see who owes whom, and share one link with the group. Nobody needs
+          an account.
+        </p>
       </div>
+      <SecondaryLink href={QUICK_SPLIT_PATH} className="shrink-0">
+        Start a quick split
+      </SecondaryLink>
     </div>
   </section>
 );
@@ -347,52 +217,53 @@ const COMPARISON = [
 ] as const;
 
 const Why = () => (
-  <section className="mx-auto mt-32 grid max-w-6xl items-center gap-10 px-5 lg:grid-cols-2 lg:px-8">
+  <section className="mx-auto mt-24 grid max-w-6xl items-center gap-10 px-5 lg:grid-cols-2 lg:px-8">
     <div>
       <SectionHeading
         align="left"
-        eyebrow="Why SplitPro"
         title="Adding an expense shouldn't cost money"
-        description="Most expense apps start free and then cap the one thing you came for. SplitPro is open source, so the core of the app stays free and nobody can quietly take it away."
+        description="Many expense apps start free, then limit the one thing you came for. SplitPro is open source, so the core stays free."
       />
-      <div className="mt-8 flex flex-wrap gap-3">
-        <SecondaryLink href="/blog/need-for-splitwise-alternative">Read the story</SecondaryLink>
+      <div className="mt-6 flex flex-wrap gap-x-6 gap-y-2 text-sm">
+        <Link href="/blog/need-for-splitwise-alternative" className="text-primary hover:underline">
+          Read the story
+        </Link>
         <a
           href={GITHUB_URL}
           target="_blank"
           rel="noreferrer"
-          className="inline-flex items-center gap-2 rounded-full px-4 py-3 text-sm text-gray-300 hover:text-white"
+          className="text-gray-400 hover:text-white"
         >
-          <GitFork className="h-4 w-4" /> View the source
+          View the source on GitHub
         </a>
       </div>
     </div>
-    <div className="overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.02]">
-      <div className="grid grid-cols-[1.6fr_1fr_1fr] border-b border-white/[0.08] px-6 py-4 text-sm">
-        <span className="text-gray-500"></span>
-        <span className="font-medium text-cyan-300">SplitPro</span>
-        <span className="text-gray-400">Splitwise free</span>
+    <div className="overflow-hidden rounded-xl border border-white/10 text-sm">
+      <div className="grid grid-cols-[1.6fr_1fr_1fr] border-b border-white/10 px-5 py-3 text-gray-400">
+        <span />
+        <span className="font-medium text-white">SplitPro</span>
+        <span>Splitwise free</span>
       </div>
       {COMPARISON.map((row) => (
         <div
           key={row.label}
-          className="grid grid-cols-[1.6fr_1fr_1fr] items-center border-b border-white/[0.05] px-6 py-4 text-sm last:border-0"
+          className="grid grid-cols-[1.6fr_1fr_1fr] items-center border-b border-white/5 px-5 py-3 last:border-0"
         >
           <span className="pr-4 text-gray-300">{row.label}</span>
-          <span className="font-medium text-white">{row.splitpro}</span>
+          <span className="text-white">{row.splitpro}</span>
           <span className="text-gray-500">{row.other}</span>
         </div>
       ))}
-      <p className="border-t border-white/[0.05] bg-black/20 px-6 py-3 text-xs text-gray-500">
+      <p className="border-t border-white/10 px-5 py-3 text-xs text-gray-500">
         Splitwise limits are from{' '}
-        <Link
+        <a
           href="https://kb.splitwise.com/pro/what-is-splitwise-pro"
           className="underline underline-offset-2 hover:text-gray-300"
           target="_blank"
           rel="noreferrer"
         >
           its help center
-        </Link>{' '}
+        </a>{' '}
         as of October 2026.
       </p>
     </div>

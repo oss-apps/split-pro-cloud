@@ -74,7 +74,7 @@ const QuickSplitGroupPage = () => {
               </p>
               <Link
                 href={QUICK_SPLIT_PATH}
-                className="mt-6 inline-flex h-11 items-center rounded-full bg-cyan-400 px-6 text-sm font-semibold text-gray-950 transition-colors hover:bg-cyan-300"
+                className="mt-6 inline-flex h-11 items-center rounded-lg bg-primary px-5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
               >
                 Start a new split
               </Link>
@@ -86,17 +86,17 @@ const QuickSplitGroupPage = () => {
               <button
                 type="button"
                 onClick={() => splitQuery.refetch().catch(console.error)}
-                className="mt-6 inline-flex h-11 items-center rounded-full border border-white/10 px-6 text-sm text-gray-200 transition-colors hover:border-white/20"
+                className="mt-6 inline-flex h-11 items-center rounded-lg border border-white/15 px-5 text-sm text-gray-200 transition-colors hover:bg-white/5"
               >
                 Try again
               </button>
             </Panel>
           ) : (
-            <div className="h-[520px] animate-pulse rounded-2xl border border-white/[0.06] bg-white/[0.02]" />
+            <div className="h-[520px] animate-pulse rounded-xl border border-white/10" />
           )}
         </div>
       </section>
-      <div className="mt-28">
+      <div className="mt-24">
         <CtaBand
           title="Splitting with the same people often?"
           description="A free SplitPro account keeps a running tab for every group, with notifications, receipts and more."

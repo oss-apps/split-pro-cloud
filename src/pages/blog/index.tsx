@@ -1,5 +1,5 @@
 import { type GetStaticProps } from 'next';
-import { CtaBand, Eyebrow } from '~/components/Site/blocks';
+import { CtaBand } from '~/components/Site/blocks';
 import { SITE_URL } from '~/components/Site/constants';
 import { PostCard } from '~/components/Site/PostCard';
 import { Seo } from '~/components/Site/Seo';
@@ -10,7 +10,6 @@ const DESCRIPTION =
   'Guides on splitting rent, trips and shared costs fairly, moving off Splitwise, and how SplitPro works.';
 
 const BlogIndex: React.FC<{ posts: PostMeta[] }> = ({ posts }) => {
-  const [featured, ...rest] = posts;
   return (
     <SiteLayout>
       <Seo
@@ -30,22 +29,20 @@ const BlogIndex: React.FC<{ posts: PostMeta[] }> = ({ posts }) => {
           })),
         }}
       />
-      <section className="mx-auto max-w-6xl px-5 pt-16 sm:pt-24 lg:px-8">
+      <section className="mx-auto max-w-6xl px-5 pt-14 sm:pt-20 lg:px-8">
         <div className="max-w-2xl">
-          <Eyebrow>Blog</Eyebrow>
-          <h1 className="mt-6 text-balance text-4xl font-semibold tracking-tight text-white sm:text-5xl">
-            Sharing money, without the awkward part
+          <h1 className="text-balance text-3xl font-semibold tracking-tight text-white sm:text-4xl">
+            Blog
           </h1>
-          <p className="mt-5 text-pretty text-lg leading-relaxed text-gray-400">{DESCRIPTION}</p>
+          <p className="mt-3 text-pretty text-lg leading-relaxed text-gray-400">{DESCRIPTION}</p>
         </div>
-        <div className="mt-14 grid gap-5 md:grid-cols-3">
-          {featured ? <PostCard post={featured} featured /> : null}
-          {rest.map((post) => (
+        <div className="mt-10 grid gap-4 md:grid-cols-2">
+          {posts.map((post) => (
             <PostCard key={post.slug} post={post} />
           ))}
         </div>
       </section>
-      <div className="mt-32">
+      <div className="mt-24">
         <CtaBand />
       </div>
     </SiteLayout>
