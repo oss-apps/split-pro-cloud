@@ -1,11 +1,12 @@
-import { ArrowRight, Check, Pencil, Plus, Trash2, UserPlus, X } from 'lucide-react';
+import { ArrowRight, Check, Pencil, Plus, Trash2, X } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { z } from 'zod';
-import { QUICK_SPLIT_PATH, SITE_URL } from '~/components/Site/constants';
+import { toast } from 'sonner';
+import { QUICK_SPLIT_PATH } from '~/components/Site/constants';
 import {
   AmountInput,
   Chip,
+  CommitInput,
   CurrencySelect,
   EmptyHint,
   FieldLabel,
@@ -14,8 +15,6 @@ import {
   PersonAvatar,
   Segmented,
   ShareActions,
-  TextInput,
-  ToolPage,
 } from '~/components/Tools/ToolUi';
 import { cn } from '~/lib/utils';
 import {
@@ -32,267 +31,44 @@ import {
   computeTransfers,
   isExpenseValid,
 } from '~/lib/tools/settleUp';
-import { newId, useShareableState } from '~/lib/tools/useShareableState';
+import type { QuickSplitData } from '~/server/api/routers/quickSplit';
+import { api } from '~/utils/api';
 
-const STORAGE_KEY = 'splitpro.quick-split';
-const MAX_PEOPLE = 20;
-const MAX_EXPENSES = 300;
+export const MAX_PEOPLE = 20;
+export const MAX_EXPENSES = 300;
 
-const DESCRIPTION =
-  'Split costs for a trip, a dinner or a weekend away without signing up. Add who paid for what, see who owes whom in as few payments as possible, and share it all with one link.';
+const errorMessage = (error: { message: string; data?: { zodError?: unknown } | null }) =>
+  error.data?.zodError ? 'Please check the details and try again.' : error.message;
 
-const id = z.string().min(1).max(12);
-
-const StateSchema = z.object({
-  v: z.literal(1),
-  name: z.string().max(60),
-  currency: z.string().length(3),
-  people: z
-    .array(z.object({ id, name: z.string().max(40) }))
-    .min(2)
-    .max(MAX_PEOPLE),
-  expenses: z
-    .array(
-      z.object({
-        id,
-        title: z.string().max(80),
-        amount: z.number().int().min(0).max(1e13),
-        paidBy: id,
-        splitAmong: z.array(id).max(MAX_PEOPLE),
-        exact: z.array(z.number().int().min(0).max(1e13)).max(MAX_PEOPLE).optional(),
-        payment: z.boolean().optional(),
-      }),
-    )
-    .max(MAX_EXPENSES),
-});
-
-type State = z.infer<typeof StateSchema>;
-
-const EXAMPLE: State = {
-  v: 1,
-  name: 'Cabin weekend',
-  currency: 'USD',
-  people: [
-    { id: 'a', name: 'Alex' },
-    { id: 'b', name: 'Priya' },
-    { id: 'c', name: 'Jordan' },
-    { id: 'd', name: 'Sam' },
-  ],
-  expenses: [
-    { id: 'e1', title: 'Cabin', amount: 48000, paidBy: 'a', splitAmong: ['a', 'b', 'c', 'd'] },
-    { id: 'e2', title: 'Groceries', amount: 12640, paidBy: 'b', splitAmong: ['a', 'b', 'c', 'd'] },
-    { id: 'e3', title: 'Gas', amount: 7200, paidBy: 'c', splitAmong: ['a', 'c', 'd'] },
-    {
-      id: 'e4',
-      title: 'Dinner on Saturday',
-      amount: 18600,
-      paidBy: 'd',
-      splitAmong: ['a', 'b', 'c', 'd'],
+/**
+ * Every change is its own request, and each returns the whole split, so the cache is replaced with
+ * the server's version. Any in-flight poll is cancelled first so it can't overwrite a fresh result.
+ */
+const useQuickSplitActions = (id: string) => {
+  const utils = api.useUtils();
+  const options = {
+    onMutate: () => utils.quickSplit.get.cancel({ id }),
+    onSuccess: (data: QuickSplitData) => utils.quickSplit.get.setData({ id }, data),
+    onError: (error: { message: string; data?: { zodError?: unknown } | null }) => {
+      toast.error(errorMessage(error));
+      utils.quickSplit.get.invalidate({ id }).catch(console.error);
     },
-  ],
-};
-
-const FAQS = [
-  {
-    question: 'Do my friends need to sign up?',
-    answer:
-      'No. Nobody needs an account. Share the link in your group chat and everyone can open it, see the balances and add expenses.',
-  },
-  {
-    question: 'Where is my split saved?',
-    answer:
-      'In the link itself, and in your browser so it is still there next time you open this page. Nothing is stored on our servers: the part of the link after the # sign never leaves your browser.',
-  },
-  {
-    question: 'Someone added an expense. Why don’t I see it?',
-    answer:
-      'Because the split lives in the link, each change makes a new link. Whoever adds something should share the link again, and everyone uses the newest one. For a group that keeps adding expenses over weeks, a free SplitPro account keeps everyone in sync automatically.',
-  },
-  {
-    question: 'How does it keep the number of payments low?',
-    answer:
-      'It works out what each person paid minus what they owe, then repeatedly matches whoever owes the most with whoever is owed the most. Every payment settles at least one person, so a group of n people never needs more than n − 1 payments.',
-  },
-  {
-    question: 'How are odd cents handled?',
-    answer:
-      'Everything is calculated in whole cents. When a bill does not divide evenly, the leftover cents go to the first people in the split, so the shares always add up to exactly what was paid.',
-  },
-] as const;
-
-const QuickSplitPage = () => {
-  const { state, ready, setState, shareUrl, clear } = useShareableState(StateSchema, STORAGE_KEY);
-
-  return (
-    <ToolPage
-      path={QUICK_SPLIT_PATH}
-      name="Quick split"
-      title="Split a trip with friends. No sign-up."
-      seoTitle="Quick split: split group expenses online without signing up | SplitPro"
-      description={DESCRIPTION}
-      faqs={FAQS}
-      guide={<Guide />}
-    >
-      {!ready ? (
-        <div className="h-[520px] animate-pulse rounded-2xl border border-white/[0.06] bg-white/[0.02]" />
-      ) : state ? (
-        <GroupView
-          state={state}
-          setState={setState}
-          shareUrl={shareUrl}
-          onNew={() => {
-            if (
-              window.confirm('Start a new split? Anyone with the link can still open this one.')
-            ) {
-              clear();
-            }
-          }}
-        />
-      ) : (
-        <Setup onStart={setState} />
-      )}
-    </ToolPage>
-  );
-};
-
-const Setup: React.FC<{ onStart: (state: State) => void }> = ({ onStart }) => {
-  const [name, setName] = useState('');
-  const [currency, setCurrency] = useState('USD');
-  const [names, setNames] = useState(['', '', '']);
-
-  const filled = names.map((n) => n.trim()).filter(Boolean);
-  const canStart = 2 <= filled.length;
-
-  const start = () => {
-    if (!canStart) {
-      return;
-    }
-    onStart({
-      v: 1,
-      name: name.trim(),
-      currency,
-      people: filled.map((personName) => ({ id: newId(), name: personName })),
-      expenses: [],
-    });
   };
 
-  const preview = useMemo(() => {
-    const balances = computeBalances(EXAMPLE.people, EXAMPLE.expenses);
-    return computeTransfers(balances);
-  }, []);
-
-  return (
-    <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
-      <Panel>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            start();
-          }}
-        >
-          <p className="text-lg font-medium text-white">Start a split</p>
-          <p className="mt-1 text-sm text-gray-400">Takes ten seconds. You can add people later.</p>
-
-          <div className="mt-6 grid gap-4 sm:grid-cols-[1fr_12rem]">
-            <div>
-              <FieldLabel htmlFor="group-name">What is it for?</FieldLabel>
-              <TextInput
-                id="group-name"
-                placeholder="Lisbon trip"
-                maxLength={60}
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-              />
-            </div>
-            <div>
-              <FieldLabel htmlFor="group-currency">Currency</FieldLabel>
-              <CurrencySelect id="group-currency" value={currency} onChange={setCurrency} />
-            </div>
-          </div>
-
-          <FieldLabel>Who is splitting?</FieldLabel>
-          <div className="grid gap-2 sm:grid-cols-2">
-            {names.map((personName, index) => (
-              <div key={index} className="relative">
-                <span className="pointer-events-none absolute left-1.5 top-1/2 -translate-y-1/2">
-                  <PersonAvatar name={personName || String(index + 1)} index={index} size="sm" />
-                </span>
-                <TextInput
-                  aria-label={`Person ${index + 1}`}
-                  placeholder={0 === index ? 'Your name' : `Friend ${index}`}
-                  maxLength={40}
-                  value={personName}
-                  onChange={(e) =>
-                    setNames((all) => all.map((n, i) => (i === index ? e.target.value : n)))
-                  }
-                  className="pl-10"
-                />
-              </div>
-            ))}
-            {names.length < MAX_PEOPLE ? (
-              <button
-                type="button"
-                onClick={() => setNames((all) => [...all, ''])}
-                className="flex h-10 items-center justify-center gap-2 rounded-lg border border-dashed border-white/15 text-sm text-gray-400 transition-colors hover:border-cyan-400/40 hover:text-white"
-              >
-                <UserPlus className="h-4 w-4" /> Add someone
-              </button>
-            ) : null}
-          </div>
-
-          <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
-            <button
-              type="submit"
-              disabled={!canStart}
-              className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-cyan-400 px-6 text-sm font-semibold text-gray-950 transition-colors hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              Start splitting <ArrowRight className="h-4 w-4" />
-            </button>
-            <button
-              type="button"
-              onClick={() => onStart(EXAMPLE)}
-              className="h-11 rounded-full px-4 text-sm text-gray-400 transition-colors hover:text-white"
-            >
-              or open an example
-            </button>
-          </div>
-          {!canStart ? (
-            <p className="mt-3 text-xs text-gray-500">Add at least two names to start.</p>
-          ) : null}
-        </form>
-      </Panel>
-
-      <div aria-hidden className="hidden lg:block">
-        <div className="rounded-2xl border border-white/[0.06] bg-gradient-to-b from-cyan-400/[0.06] to-transparent p-6">
-          <p className="text-sm text-gray-500">{EXAMPLE.name}</p>
-          <p className="mt-1 text-sm text-gray-400">Who pays whom</p>
-          <div className="mt-4 space-y-2">
-            {preview.map((t) => (
-              <TransferRow
-                key={`${t.from}-${t.to}`}
-                from={EXAMPLE.people.find((p) => p.id === t.from)?.name ?? ''}
-                to={EXAMPLE.people.find((p) => p.id === t.to)?.name ?? ''}
-                fromIndex={EXAMPLE.people.findIndex((p) => p.id === t.from)}
-                amount={formatMoney(t.amount, EXAMPLE.currency)}
-              />
-            ))}
-          </div>
-          <p className="mt-5 text-sm leading-relaxed text-gray-500">
-            Four people, four expenses, three payments. Everyone opens the same link to see it.
-          </p>
-        </div>
-      </div>
-    </div>
-  );
+  return {
+    update: api.quickSplit.update.useMutation(options),
+    addPerson: api.quickSplit.addPerson.useMutation(options),
+    renamePerson: api.quickSplit.renamePerson.useMutation(options),
+    removePerson: api.quickSplit.removePerson.useMutation(options),
+    saveExpense: api.quickSplit.saveExpense.useMutation(options),
+    recordPayment: api.quickSplit.recordPayment.useMutation(options),
+    deleteExpense: api.quickSplit.deleteExpense.useMutation(options),
+  };
 };
 
-const GroupView: React.FC<{
-  state: State;
-  setState: (update: (previous: State) => State) => void;
-  shareUrl: () => Promise<string>;
-  onNew: () => void;
-}> = ({ state, setState, shareUrl, onNew }) => {
-  const { name, currency, people, expenses } = state;
+export const GroupView: React.FC<{ split: QuickSplitData }> = ({ split }) => {
+  const { id, name, currency, people, expenses } = split;
+  const actions = useQuickSplitActions(id);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formKey, setFormKey] = useState(0);
   const [showPeople, setShowPeople] = useState(false);
@@ -312,30 +88,46 @@ const GroupView: React.FC<{
 
   const money = (amount: number) => formatMoney(amount, currency);
   const nameOf = (personId: string) => {
-    const name = people.find((p) => p.id === personId)?.name.trim();
-    return name ? name : 'Someone';
+    const personName = people.find((p) => p.id === personId)?.name.trim();
+    return personName ? personName : 'Someone';
   };
   const indexOf = (personId: string) => people.findIndex((p) => p.id === personId);
   const editing = expenses.find((e) => e.id === editingId);
 
-  const saveExpense = (expense: SharedExpense) => {
-    setState((s) => ({
-      ...s,
-      expenses: s.expenses.some((e) => e.id === expense.id)
-        ? s.expenses.map((e) => (e.id === expense.id ? expense : e))
-        : [...s.expenses, expense],
-    }));
+  const resetForm = () => {
     setEditingId(null);
     setFormKey((k) => k + 1);
   };
 
-  const removeExpense = (expenseId: string) => {
-    setState((s) => ({ ...s, expenses: s.expenses.filter((e) => e.id !== expenseId) }));
-    if (editingId === expenseId) {
-      setEditingId(null);
-      setFormKey((k) => k + 1);
+  useEffect(() => {
+    if (editingId && !editing) {
+      resetForm();
+      toast('Someone else deleted the expense you were editing.');
     }
+  }, [editingId, editing]);
+
+  const saveExpense = (expense: SharedExpense) =>
+    actions.saveExpense.mutate(
+      {
+        id,
+        expenseId: editing?.id,
+        title: expense.title,
+        amount: expense.amount,
+        paidBy: expense.paidBy,
+        splitAmong: expense.splitAmong,
+        exact: expense.exact,
+      },
+      { onSuccess: resetForm },
+    );
+
+  const removeExpense = (expenseId: string) => {
+    if (editingId === expenseId) {
+      resetForm();
+    }
+    actions.deleteExpense.mutate({ id, expenseId });
   };
+
+  const shareUrl = async () => `${window.location.origin}${QUICK_SPLIT_PATH}/${id}`;
 
   const summary = (url: string) =>
     [
@@ -353,12 +145,13 @@ const GroupView: React.FC<{
       <Panel className="p-4 sm:p-5">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0 flex-1">
-            <input
+            <CommitInput
               aria-label="Name of this split"
               value={name}
               maxLength={60}
               placeholder="Untitled split"
-              onChange={(e) => setState((s) => ({ ...s, name: e.target.value }))}
+              allowEmpty
+              onCommit={(next) => actions.update.mutate({ id, name: next })}
               className="w-full truncate bg-transparent text-2xl font-semibold tracking-tight text-white outline-none placeholder:text-gray-600"
             />
             <button
@@ -390,20 +183,10 @@ const GroupView: React.FC<{
               locked={involved}
               max={MAX_PEOPLE}
               onRename={(personId, personName) =>
-                setState((s) => ({
-                  ...s,
-                  people: s.people.map((p) => (p.id === personId ? { ...p, name: personName } : p)),
-                }))
+                actions.renamePerson.mutate({ id, personId, name: personName })
               }
-              onAdd={(personName) =>
-                setState((s) => ({
-                  ...s,
-                  people: [...s.people, { id: newId(), name: personName }],
-                }))
-              }
-              onRemove={(personId) =>
-                setState((s) => ({ ...s, people: s.people.filter((p) => p.id !== personId) }))
-              }
+              onAdd={(personName) => actions.addPerson.mutate({ id, name: personName })}
+              onRemove={(personId) => actions.removePerson.mutate({ id, personId })}
             />
             <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="sm:w-56">
@@ -414,17 +197,16 @@ const GroupView: React.FC<{
                 ) : (
                   <CurrencySelect
                     value={currency}
-                    onChange={(value) => setState((s) => ({ ...s, currency: value }))}
+                    onChange={(value) => actions.update.mutate({ id, currency: value })}
                   />
                 )}
               </div>
-              <button
-                type="button"
-                onClick={onNew}
+              <Link
+                href={QUICK_SPLIT_PATH}
                 className="self-start text-sm text-gray-500 transition-colors hover:text-gray-200"
               >
                 Start a new split
-              </button>
+              </Link>
             </div>
           </div>
         ) : null}
@@ -438,15 +220,9 @@ const GroupView: React.FC<{
             currency={currency}
             initial={editing}
             disabled={!editing && expenses.length >= MAX_EXPENSES}
+            saving={actions.saveExpense.isLoading}
             onSubmit={saveExpense}
-            onCancel={
-              editing
-                ? () => {
-                    setEditingId(null);
-                    setFormKey((k) => k + 1);
-                  }
-                : undefined
-            }
+            onCancel={editing ? resetForm : undefined}
           />
         </div>
 
@@ -478,21 +254,9 @@ const GroupView: React.FC<{
                     to={nameOf(t.to)}
                     fromIndex={indexOf(t.from)}
                     amount={money(t.amount)}
+                    busy={actions.recordPayment.isLoading}
                     onPaid={() =>
-                      setState((s) => ({
-                        ...s,
-                        expenses: [
-                          ...s.expenses,
-                          {
-                            id: newId(),
-                            title: '',
-                            amount: t.amount,
-                            paidBy: t.from,
-                            splitAmong: [t.to],
-                            payment: true,
-                          },
-                        ],
-                      }))
+                      actions.recordPayment.mutate({ id, from: t.from, to: t.to, amount: t.amount })
                     }
                   />
                 ))
@@ -508,9 +272,12 @@ const GroupView: React.FC<{
                 </EmptyHint>
               )}
             </div>
-            <p className="mt-5 text-xs leading-relaxed text-gray-500">
-              The link holds the whole split. After anyone adds something, they share the link again
-              and everyone uses the newest one.
+            <p className="mt-5 flex items-center gap-2 text-xs leading-relaxed text-gray-500">
+              <span className="relative flex h-2 w-2 shrink-0">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60 motion-reduce:animate-none" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
+              </span>
+              Live. Everyone with the link sees changes within a few seconds.
             </p>
           </Panel>
 
@@ -570,6 +337,10 @@ const GroupView: React.FC<{
                   nameOf={nameOf}
                   indexOf={indexOf}
                   active={expense.id === editingId}
+                  busy={
+                    actions.deleteExpense.isLoading &&
+                    actions.deleteExpense.variables?.expenseId === expense.id
+                  }
                   onEdit={
                     expense.payment
                       ? undefined
@@ -591,13 +362,14 @@ const GroupView: React.FC<{
   );
 };
 
-const TransferRow: React.FC<{
+export const TransferRow: React.FC<{
   from: string;
   to: string;
   fromIndex: number;
   amount: string;
+  busy?: boolean;
   onPaid?: () => void;
-}> = ({ from, to, fromIndex, amount, onPaid }) => (
+}> = ({ from, to, fromIndex, amount, busy, onPaid }) => (
   <div className="flex items-center gap-3 rounded-xl border border-white/[0.06] bg-black/25 px-3 py-2.5">
     <PersonAvatar name={from} index={fromIndex} />
     <div className="min-w-0 flex-1 text-sm">
@@ -612,7 +384,8 @@ const TransferRow: React.FC<{
       <button
         type="button"
         onClick={onPaid}
-        className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-white/10 px-3 text-xs text-gray-300 transition-colors hover:border-emerald-400/40 hover:text-emerald-200"
+        disabled={busy}
+        className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-white/10 px-3 text-xs text-gray-300 transition-colors hover:border-emerald-400/40 hover:text-emerald-200 disabled:opacity-50"
       >
         <Check className="h-3.5 w-3.5" /> Mark paid
       </button>
@@ -628,23 +401,26 @@ const ExpenseRow: React.FC<{
   nameOf: (id: string) => string;
   indexOf: (id: string) => number;
   active: boolean;
+  busy: boolean;
   onEdit?: () => void;
   onRemove: () => void;
-}> = ({ expense, money, nameOf, indexOf, active, onEdit, onRemove }) => {
+}> = ({ expense, money, nameOf, indexOf, active, busy, onEdit, onRemove }) => {
   const payer = nameOf(expense.paidBy);
   const detail = expense.payment
     ? 'Payment'
     : expense.exact
       ? `${payer} paid · exact amounts`
-      : expense.splitAmong.length === 1
+      : 1 === expense.splitAmong.length
         ? `${payer} paid · for ${nameOf(expense.splitAmong[0] ?? '')}`
         : `${payer} paid · split ${expense.splitAmong.length} ways`;
+  const title = expense.title.trim();
 
   return (
     <li
       className={cn(
         'group flex items-center gap-3 rounded-xl px-2 py-3 transition-colors',
         active && 'bg-cyan-400/[0.06]',
+        busy && 'opacity-50',
       )}
     >
       {expense.payment ? (
@@ -658,7 +434,9 @@ const ExpenseRow: React.FC<{
         <p className="truncate text-sm text-white">
           {expense.payment
             ? `${payer} paid ${nameOf(expense.splitAmong[0] ?? '')}`
-            : expense.title.trim() || 'Untitled expense'}
+            : title
+              ? title
+              : 'Untitled expense'}
         </p>
         <p className="truncate text-xs text-gray-500">{detail}</p>
       </div>
@@ -672,11 +450,15 @@ const ExpenseRow: React.FC<{
       </span>
       <div className="flex shrink-0 items-center opacity-100 transition-opacity sm:opacity-0 sm:focus-within:opacity-100 sm:group-hover:opacity-100">
         {onEdit ? (
-          <IconButton label="Edit" onClick={onEdit}>
+          <IconButton label="Edit" onClick={onEdit} disabled={busy}>
             <Pencil className="h-3.5 w-3.5" />
           </IconButton>
         ) : null}
-        <IconButton label={expense.payment ? 'Undo payment' : 'Delete'} onClick={onRemove}>
+        <IconButton
+          label={expense.payment ? 'Undo payment' : 'Delete'}
+          onClick={onRemove}
+          disabled={busy}
+        >
           {expense.payment ? <X className="h-3.5 w-3.5" /> : <Trash2 className="h-3.5 w-3.5" />}
         </IconButton>
       </div>
@@ -684,17 +466,19 @@ const ExpenseRow: React.FC<{
   );
 };
 
-const IconButton: React.FC<{ label: string; onClick: () => void; children: React.ReactNode }> = ({
-  label,
-  onClick,
-  children,
-}) => (
+const IconButton: React.FC<{
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  children: React.ReactNode;
+}> = ({ label, onClick, disabled, children }) => (
   <button
     type="button"
     aria-label={label}
     title={label}
     onClick={onClick}
-    className="rounded-full p-2 text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-200"
+    disabled={disabled}
+    className="rounded-full p-2 text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-200 disabled:pointer-events-none"
   >
     {children}
   </button>
@@ -707,9 +491,10 @@ const ExpenseForm: React.FC<{
   currency: string;
   initial?: SharedExpense;
   disabled: boolean;
+  saving: boolean;
   onSubmit: (expense: SharedExpense) => void;
   onCancel?: () => void;
-}> = ({ people, currency, initial, disabled, onSubmit, onCancel }) => {
+}> = ({ people, currency, initial, disabled, saving, onSubmit, onCancel }) => {
   const [title, setTitle] = useState(initial?.title ?? '');
   const [amountInput, setAmountInput] = useState(toInputAmount(initial?.amount ?? 0, currency));
   const [paidBy, setPaidBy] = useState(initial?.paidBy ?? people[0]?.id ?? '');
@@ -726,12 +511,14 @@ const ExpenseForm: React.FC<{
     ),
   );
   const titleRef = useRef<HTMLInputElement>(null);
+  const initialId = initial?.id;
 
+  // Keyed on the id: polling replaces the expense object every few seconds.
   useEffect(() => {
-    if (initial) {
+    if (initialId) {
       titleRef.current?.focus({ preventScroll: true });
     }
-  }, [initial]);
+  }, [initialId]);
 
   const amount = parseAmount(amountInput, currency);
   const money = (value: number) => formatMoney(value, currency);
@@ -744,7 +531,7 @@ const ExpenseForm: React.FC<{
   );
 
   const expense: SharedExpense = {
-    id: initial?.id ?? newId(),
+    id: initialId ?? 'new',
     title: title.trim(),
     amount: 'exact' === mode ? assigned : amount,
     paidBy,
@@ -766,7 +553,7 @@ const ExpenseForm: React.FC<{
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          if (valid) {
+          if (valid && !saving) {
             onSubmit(expense);
           }
         }}
@@ -828,7 +615,7 @@ const ExpenseForm: React.FC<{
                 )}
               >
                 <PersonAvatar name={p.name} index={index} size="sm" />
-                {p.name.trim() || 'Unnamed'}
+                {p.name}
               </button>
             ))}
           </div>
@@ -874,7 +661,7 @@ const ExpenseForm: React.FC<{
                     onClick={() => toggle(p.id)}
                   >
                     {splitAmong.includes(p.id) ? <Check className="h-3 w-3" /> : null}
-                    {p.name.trim() || 'Unnamed'}
+                    {p.name}
                   </Chip>
                 ))}
               </div>
@@ -892,7 +679,7 @@ const ExpenseForm: React.FC<{
                 <div key={p.id} className="flex items-center gap-3">
                   <span className="flex min-w-0 flex-1 items-center gap-2 text-sm text-gray-200">
                     <PersonAvatar name={p.name} index={index} size="sm" />
-                    <span className="truncate">{p.name.trim() || 'Unnamed'}</span>
+                    <span className="truncate">{p.name}</span>
                   </span>
                   <div className="relative w-32">
                     <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-500">
@@ -925,16 +712,16 @@ const ExpenseForm: React.FC<{
         <div className="mt-6 flex items-center gap-3">
           <button
             type="submit"
-            disabled={!valid}
+            disabled={!valid || saving}
             className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-full bg-cyan-400 px-6 text-sm font-semibold text-gray-950 transition-colors hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-40 sm:flex-none"
           >
             {initial ? (
               <>
-                <Check className="h-4 w-4" /> Save changes
+                <Check className="h-4 w-4" /> {saving ? 'Saving…' : 'Save changes'}
               </>
             ) : (
               <>
-                <Plus className="h-4 w-4" /> Add expense
+                <Plus className="h-4 w-4" /> {saving ? 'Adding…' : 'Add expense'}
               </>
             )}
           </button>
@@ -952,45 +739,3 @@ const ExpenseForm: React.FC<{
     </Panel>
   );
 };
-
-const Guide = () => (
-  <>
-    <h2>How to split a trip without an app</h2>
-    <ol>
-      <li>
-        <strong>Start a split</strong> and add everyone’s name. Nobody needs an account.
-      </li>
-      <li>
-        <strong>Add each expense</strong> as it happens: what it was, how much, and who paid. It is
-        split equally by default. Untick anyone who wasn’t part of it, or switch to exact amounts.
-      </li>
-      <li>
-        <strong>Share the link</strong> in your group chat. Everyone sees the same balances and can
-        add their own expenses.
-      </li>
-      <li>
-        <strong>Settle up</strong> with the payments on the right, and tap “Mark paid” as people pay
-        each other back.
-      </li>
-    </ol>
-    <h2>Why there are fewer payments than receipts</h2>
-    <p>
-      If Priya paid for groceries and Sam paid for dinner, you might expect everyone to pay each of
-      them back. That works, but it creates a lot of small transfers. Quick split nets everything
-      first, so someone who paid a little and owes a little might not need to pay anyone at all.
-    </p>
-    <p>
-      We explain the idea step by step in{' '}
-      <Link href="/blog/simplify-debts-explained">how “simplify debts” works</Link>, and share
-      habits that keep group trips calm in{' '}
-      <Link href="/blog/how-to-split-trip-expenses">how to split trip expenses</Link>.
-    </p>
-    <p>
-      Splitting with the same people every month? A{' '}
-      <Link href={`${SITE_URL}/auth/signin`}>free SplitPro account</Link> keeps a running tab for
-      the group and keeps everyone in sync.
-    </p>
-  </>
-);
-
-export default QuickSplitPage;

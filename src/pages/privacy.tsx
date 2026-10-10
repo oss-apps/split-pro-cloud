@@ -36,6 +36,12 @@ const Privacy: NextPage<{ feedbackEmail: string; adsEnabled: boolean }> = ({
           We automatically collect information about how you interact with the Service, such as
           pages visited and features used.
         </p>
+        <p className="mt-4 text-lg text-gray-300">Quick splits</p>
+        <p className="mt-0.5 text-lg text-gray-400">
+          When you use Quick split without an account, we store the split&apos;s name, the names you
+          enter and the expenses, so that everyone with the link sees the same split. Anyone with
+          the link can view and edit it.
+        </p>
 
         <p className="mt-16 text-xl font-semibold">How We Use Your Information</p>
         <div className="mt-1 text-lg text-gray-400">

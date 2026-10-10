@@ -227,3 +227,43 @@ model RateLimit {
 
     @@index([expiresAt])
 }
+
+// Public splits that work without an account. Anyone with the link can view and edit one, so the
+// id is long and random. Amounts are in the currency's minor unit, like Expense.amount.
+model QuickSplit {
+    id        String              @id
+    name      String
+    currency  String
+    createdAt DateTime            @default(now())
+    updatedAt DateTime            @updatedAt
+    people    QuickSplitPerson[]
+    expenses  QuickSplitExpense[]
+}
+
+model QuickSplitPerson {
+    id        String     @id @default(cuid())
+    splitId   String
+    name      String
+    createdAt DateTime   @default(now())
+    split     QuickSplit @relation(fields: [splitId], references: [id], onDelete: Cascade)
+
+    @@index([splitId])
+}
+
+model QuickSplitExpense {
+    id         String     @id @default(cuid())
+    splitId    String
+    title      String
+    amount     Int
+    paidBy     String
+    // Person ids sharing the expense. `exact` is empty for an equal split, otherwise the amount
+    // each person in `splitAmong` owes, in the same order.
+    splitAmong String[]
+    exact      Int[]
+    isPayment  Boolean    @default(false)
+    createdAt  DateTime   @default(now())
+    updatedAt  DateTime   @updatedAt
+    split      QuickSplit @relation(fields: [splitId], references: [id], onDelete: Cascade)
+
+    @@index([splitId, createdAt])
+}

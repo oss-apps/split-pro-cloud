@@ -1,5 +1,5 @@
 import { Check, Copy, Plus, Share2, X } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { CURRENCIES } from '~/lib/currency';
 import { cn } from '~/lib/utils';
 import { CtaBand, Faq, type FaqItem } from '../Site/blocks';
@@ -169,6 +169,59 @@ export const PersonAvatar: React.FC<{ name: string; index: number; size?: 'sm' |
   </span>
 );
 
+/**
+ * A text field that saves on blur or Enter instead of on every keystroke, and follows `value` while
+ * it isn't focused, so updates from other people don't overwrite what someone is typing.
+ */
+export const CommitInput: React.FC<
+  Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'> & {
+    value: string;
+    onCommit: (value: string) => void;
+    allowEmpty?: boolean;
+  }
+> = ({ value, onCommit, allowEmpty = false, ...props }) => {
+  const [draft, setDraft] = useState(value);
+  const focused = useRef(false);
+
+  useEffect(() => {
+    if (!focused.current) {
+      setDraft(value);
+    }
+  }, [value]);
+
+  const commit = () => {
+    const next = draft.trim();
+    if (next === value || (!next && !allowEmpty)) {
+      setDraft(value);
+      return;
+    }
+    onCommit(next);
+  };
+
+  return (
+    <input
+      {...props}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onFocus={() => (focused.current = true)}
+      onBlur={() => {
+        focused.current = false;
+        commit();
+      }}
+      onKeyDown={(e) => {
+        if ('Enter' === e.key) {
+          e.currentTarget.blur();
+        }
+        if ('Escape' === e.key) {
+          setDraft(value);
+          focused.current = false;
+          e.currentTarget.blur();
+        }
+      }}
+    />
+  );
+};
+
 export const PeopleEditor: React.FC<{
   people: readonly { id: string; name: string }[];
   onRename: (id: string, name: string) => void;
@@ -197,10 +250,11 @@ export const PeopleEditor: React.FC<{
             className="flex items-center gap-2 rounded-xl border border-white/[0.06] bg-black/20 py-1.5 pl-1.5 pr-2"
           >
             <PersonAvatar name={person.name} index={index} />
-            <input
+            <CommitInput
               aria-label={`Name of person ${index + 1}`}
               value={person.name}
-              onChange={(e) => onRename(person.id, e.target.value)}
+              maxLength={40}
+              onCommit={(name) => onRename(person.id, name)}
               className="min-w-0 flex-1 bg-transparent text-sm text-white outline-none"
             />
             <button

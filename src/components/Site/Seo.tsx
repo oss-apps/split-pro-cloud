@@ -8,6 +8,7 @@ interface SeoProps {
   image?: string;
   type?: 'website' | 'article';
   jsonLd?: object | object[];
+  noindex?: boolean;
 }
 
 /**
@@ -21,6 +22,7 @@ export const Seo: React.FC<SeoProps> = ({
   image = DEFAULT_OG_IMAGE,
   type = 'website',
   jsonLd,
+  noindex = false,
 }) => {
   const url = `${SITE_URL}${'/' === path ? '' : path}`;
   const schemas = jsonLd ? (Array.isArray(jsonLd) ? jsonLd : [jsonLd]) : [];
@@ -30,6 +32,7 @@ export const Seo: React.FC<SeoProps> = ({
       <title key="title">{title}</title>
       <meta key="description" name="description" content={description} />
       <link key="canonical" rel="canonical" href={url} />
+      {noindex ? <meta key="robots" name="robots" content="noindex" /> : null}
 
       <meta key="og:type" property="og:type" content={type} />
       <meta key="og:title" property="og:title" content={title} />
