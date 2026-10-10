@@ -26,6 +26,7 @@ import { db } from '~/server/db';
 
 interface CreateContextOptions {
   session: Session | null;
+  ip?: string;
 }
 
 /**
@@ -41,8 +42,16 @@ interface CreateContextOptions {
 const createInnerTRPCContext = (opts: CreateContextOptions) => {
   return {
     session: opts.session,
+    ip: opts.ip ?? 'unknown',
     db,
   };
+};
+
+// splitpro.app sits behind Cloudflare, which sets cf-connecting-ip; fall back to the proxy chain.
+const getClientIp = (req: CreateNextContextOptions['req']) => {
+  const header = req.headers['cf-connecting-ip'] ?? req.headers['x-forwarded-for'];
+  const value = Array.isArray(header) ? header[0] : header;
+  return value?.split(',')[0]?.trim() ?? req.socket.remoteAddress ?? 'unknown';
 };
 
 /**
@@ -59,6 +68,7 @@ export const createTRPCContext = async (opts: CreateNextContextOptions) => {
 
   return createInnerTRPCContext({
     session,
+    ip: getClientIp(req),
   });
 };
 

@@ -1,5 +1,6 @@
 import { groupRouter } from '~/server/api/routers/group';
 import { createTRPCRouter } from '~/server/api/trpc';
+import { quickSplitRouter } from './routers/quickSplit';
 import { userRouter } from './routers/user';
 
 /**
@@ -9,6 +10,7 @@ import { userRouter } from './routers/user';
  */
 export const appRouter = createTRPCRouter({
   group: groupRouter,
+  quickSplit: quickSplitRouter,
   user: userRouter,
 });
 
