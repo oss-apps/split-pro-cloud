@@ -52,6 +52,15 @@ function getSignInErrorMessage(error: string) {
   return error;
 }
 
+// The URL is attacker-controlled, so only show messages for known error codes
+function getQueryErrorMessage(error: string) {
+  if (/^RateLimited:\d+$/.test(error) || 'Verification' === error) {
+    return getSignInErrorMessage(error);
+  }
+
+  return 'Sign in failed. Please try again.';
+}
+
 const otpSchema = z.object({
   otp: z
     .string({ required_error: 'OTP is required' })
@@ -253,7 +262,7 @@ const Home: NextPage<{ feedbackEmail: string; providers: ClientSafeProvider[] }>
                 </Form>
                 {queryError ? (
                   <p className="mt-6 w-[300px] text-center text-sm text-red-500">
-                    {getSignInErrorMessage(queryError)}
+                    {getQueryErrorMessage(queryError)}
                   </p>
                 ) : null}
               </>
