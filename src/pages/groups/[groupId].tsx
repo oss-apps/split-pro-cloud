@@ -41,6 +41,7 @@ import {
 } from '~/components/ui/alert-dialog';
 import { toast } from 'sonner';
 import GroupMyBalance from '~/components/group/GroupMyBalance';
+import { GroupSettleUp } from '~/components/group/GroupSettleUp';
 
 const BalancePage: NextPageWithUser<{
   enableSendingInvites: boolean;
@@ -343,6 +344,14 @@ const BalancePage: NextPageWithUser<{
                   Add Expense
                 </Button>
               </Link>
+              {groupDetailQuery.data ? (
+                <GroupSettleUp
+                  groupId={groupId}
+                  currentUser={user}
+                  groupBalances={groupDetailQuery.data.groupBalances}
+                  members={groupDetailQuery.data.groupUsers.map((gu) => gu.user)}
+                />
+              ) : null}
               <Button size="sm" className="gap-1 text-sm" variant="secondary">
                 {groupDetailQuery.data ? (
                   <AddMembers
@@ -376,6 +385,9 @@ const BalancePage: NextPageWithUser<{
           const youPaid = e.paidBy === user.id;
           const yourExpense = e.expenseParticipants.find((p) => p.userId === user.id);
           const isSettlement = e.splitType === SplitType.SETTLEMENT;
+          const receiver = isSettlement
+            ? e.expenseParticipants.find((p) => p.userId !== e.paidBy)
+            : undefined;
           const yourExpenseAmount = youPaid
             ? yourExpense?.amount ?? 0
             : -(yourExpense?.amount ?? 0);
@@ -409,8 +421,11 @@ const BalancePage: NextPageWithUser<{
                     className={`flex text-center ${isSettlement ? 'text-sm text-gray-400' : 'text-xs text-gray-500'}`}
                   >
                     <span className="text-[10px]">{isSettlement ? '  🎉  ' : null}</span>
-                    {youPaid ? 'You' : e.paidByUser.name ?? e.paidByUser.email} paid {e.currency}{' '}
-                    {toUIString(e.amount)}{' '}
+                    {youPaid ? 'You' : e.paidByUser.name ?? e.paidByUser.email} paid{' '}
+                    {receiver
+                      ? `${receiver.userId === user.id ? 'you' : receiver.user.name ?? receiver.user.email} `
+                      : null}
+                    {e.currency} {toUIString(e.amount)}{' '}
                   </p>
                 </div>
               </div>

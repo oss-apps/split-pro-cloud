@@ -195,7 +195,9 @@ export const groupRouter = createTRPCRouter({
           expenseDate: 'desc',
         },
         include: {
-          expenseParticipants: true,
+          expenseParticipants: {
+            include: { user: { select: { id: true, name: true, email: true } } },
+          },
           paidByUser: true,
           deletedByUser: true,
         },

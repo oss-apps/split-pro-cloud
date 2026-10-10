@@ -14,6 +14,37 @@ const PROPORTIONAL_SPLIT_TYPES: SplitType[] = [
 export class InvalidExpenseError extends Error {}
 
 /**
+ * A group settlement is a payment from the payer to exactly one other member: the payer is owed
+ * the full amount (+amount) and the other person owes it (-amount).
+ */
+export const assertGroupSettlement = (
+  amount: number,
+  paidBy: number,
+  participants: { userId: number; amount: number }[],
+) => {
+  const storedAmount = toInteger(amount);
+  const payer = participants.find((participant) => participant.userId === paidBy);
+  const receivers = participants.filter((participant) => participant.userId !== paidBy);
+  const [receiver] = receivers;
+
+  if (2 !== participants.length || !payer || !receiver || 1 !== receivers.length) {
+    throw new InvalidExpenseError(
+      'A group settlement must be between the payer and one other member',
+    );
+  }
+
+  if (!Number.isFinite(storedAmount) || 0 >= storedAmount) {
+    throw new InvalidExpenseError('A settlement amount must be more than zero');
+  }
+
+  if (storedAmount !== toInteger(payer.amount) || -storedAmount !== toInteger(receiver.amount)) {
+    throw new InvalidExpenseError(
+      'A settlement must move the full amount from one person to the other',
+    );
+  }
+};
+
+/**
  * Validates and normalizes participant amounts before they change any balance.
  *
  * Stored participant amounts are what each person is owed (positive) or owes (negative), so they

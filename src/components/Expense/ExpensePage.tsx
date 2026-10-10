@@ -1,4 +1,4 @@
-import { type ExpenseParticipant, type Expense, type User } from '@prisma/client';
+import { type ExpenseParticipant, type Expense, type User, SplitType } from '@prisma/client';
 import { type User as NextUser } from 'next-auth';
 import { format, isSameDay } from 'date-fns';
 import React from 'react';
@@ -25,6 +25,7 @@ type ExpenseDetailsProps = {
 
 const ExpenseDetails: React.FC<ExpenseDetailsProps> = ({ user, expense, storagePublicUrl }) => {
   const youPaid = expense.paidBy === user.id;
+  const isSettlement = SplitType.SETTLEMENT === expense.splitType;
 
   const CategoryIcon = CategoryIcons[expense.category] ?? Banknote;
 
@@ -108,16 +109,28 @@ const ExpenseDetails: React.FC<ExpenseDetailsProps> = ({ user, expense, storageP
         </p>
       </div>
       <div className="ml-14 mt-4 flex flex-col gap-4 px-6">
-        {expense.expenseParticipants.map((p) => (
-          <div key={p.userId} className="flex items-center gap-2 text-sm text-gray-500">
-            <UserAvatar user={p.user} size={25} />
-            <p>
-              {user.id === p.userId ? 'You Owe' : `${p.user.name ?? p.user.email} owes`}{' '}
-              {expense.currency}{' '}
-              {toUIString((expense.paidBy === p.userId ? expense.amount ?? 0 : 0) - p.amount)}
-            </p>
-          </div>
-        ))}
+        {expense.expenseParticipants.map((p) =>
+          isSettlement ? (
+            p.userId === expense.paidBy ? null : (
+              <div key={p.userId} className="flex items-center gap-2 text-sm text-gray-500">
+                <UserAvatar user={p.user} size={25} />
+                <p>
+                  {user.id === p.userId ? 'You' : p.user.name ?? p.user.email} received{' '}
+                  {expense.currency} {toUIString(expense.amount)}
+                </p>
+              </div>
+            )
+          ) : (
+            <div key={p.userId} className="flex items-center gap-2 text-sm text-gray-500">
+              <UserAvatar user={p.user} size={25} />
+              <p>
+                {user.id === p.userId ? 'You Owe' : `${p.user.name ?? p.user.email} owes`}{' '}
+                {expense.currency}{' '}
+                {toUIString((expense.paidBy === p.userId ? expense.amount ?? 0 : 0) - p.amount)}
+              </p>
+            </div>
+          ),
+        )}
       </div>
     </div>
   );

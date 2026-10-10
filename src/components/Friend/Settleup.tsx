@@ -1,72 +1,147 @@
 import React from 'react';
+import clsx from 'clsx';
 import { Button } from '../ui/button';
-import { AppDrawer, Drawer, DrawerClose, DrawerContent, DrawerTrigger } from '../ui/drawer';
-import { type User, type Balance, SplitType } from '@prisma/client';
+import { AppDrawer, DrawerClose } from '../ui/drawer';
+import { type User } from '@prisma/client';
 import { type User as NextUser } from 'next-auth';
 import { FriendBalance } from './FirendBalance';
-import { Input } from '../ui/input';
-import { UserAvatar } from '../ui/avatar';
-import { ArrowRightIcon } from 'lucide-react';
+import { SettleUpPayment } from './SettleUpPayment';
 import { api } from '~/utils/api';
 import { toast } from 'sonner';
-import { toFixedNumber } from '~/utils/numbers';
+import { toFixedNumber, toUIString } from '~/utils/numbers';
+import {
+  type SettleUpDestination,
+  type SettleUpSelection,
+  buildSettleUpPayment,
+  getDefaultSelection,
+  getSettleUpDestinations,
+  getSettleableCurrencies,
+  resolveSelection,
+} from '~/utils/settleUp';
+
+const describeAmount = (amount: number, currency: string) =>
+  0 === amount
+    ? 'settled'
+    : `${0 < amount ? 'you get' : 'you owe'} ${currency} ${toUIString(amount)}`;
 
 export const SettleUp: React.FC<{
-  balances: Array<Balance>;
   friend: User;
   currentUser: NextUser;
-}> = ({ balances, friend, currentUser }) => {
-  const [balanceToSettle, setBallanceToSettle] = React.useState<Balance | undefined>(
-    balances.length > 1 ? undefined : balances[0],
-  );
-  const [amount, setAmount] = React.useState<string>(
-    balances.length > 1 ? '' : toFixedNumber(Math.abs(balances[0]?.amount ?? 0)).toString(),
-  );
+}> = ({ friend, currentUser }) => {
+  const breakdownQuery = api.user.getBalanceBreakdownWithFriend.useQuery({ friendId: friend.id });
+  const currencies = getSettleableCurrencies(breakdownQuery.data ?? []);
 
-  const isCurrentUserPaying = (balanceToSettle?.amount ?? 0) < 0;
+  // Keep only ids, so what is shown and paid always comes from the latest balances.
+  const [currency, setCurrency] = React.useState<string | undefined>();
+  const [selection, setSelection] = React.useState<SettleUpSelection | undefined>();
+  const [amount, setAmount] = React.useState('');
+  const [selectionChanged, setSelectionChanged] = React.useState(false);
 
-  function onSelectBalance(balance: Balance) {
-    setBallanceToSettle(balance);
-    setAmount(toFixedNumber(Math.abs(balance.amount)).toString());
+  const breakdown = currencies.find((b) => b.currency === currency);
+  const destinations = breakdown ? getSettleUpDestinations(breakdown) : [];
+  const resolved = resolveSelection(destinations, selection);
+  const selectedDestination = 'ok' === resolved.status ? resolved.destination : undefined;
+  // With only "All balances" there is nothing to choose, unless that choice was dropped.
+  const showDestinations = destinations.some((d) => 'all' !== d.id) || !selectedDestination;
+  const value = parseFloat(amount);
+  const canSave = !!breakdown && !!selectedDestination && Number.isFinite(value) && 0 < value;
+
+  // Balances can change while the drawer is open. Never pay a different destination than the one
+  // that was picked: drop the choice and ask again.
+  React.useEffect(() => {
+    if ('stale' === resolved.status) {
+      setSelection(undefined);
+      setAmount('');
+      setSelectionChanged(true);
+    }
+  }, [resolved.status]);
+
+  function selectDestination(destination: SettleUpDestination | SettleUpSelection | undefined) {
+    setSelection(destination ? { id: destination.id, amount: destination.amount } : undefined);
+    setAmount(destination ? toFixedNumber(Math.abs(destination.amount)).toString() : '');
+    setSelectionChanged(false);
+  }
+
+  function onSelectCurrency(currencyBreakdown: (typeof currencies)[number]) {
+    setCurrency(currencyBreakdown.currency);
+    selectDestination(getDefaultSelection(getSettleUpDestinations(currencyBreakdown)));
+  }
+
+  function clearCurrency() {
+    setCurrency(undefined);
+    selectDestination(undefined);
+  }
+
+  // The drawer stays mounted, so start every visit from the latest balances.
+  function onOpen() {
+    const [onlyCurrency] = currencies;
+    if (1 === currencies.length && onlyCurrency) {
+      onSelectCurrency(onlyCurrency);
+    } else {
+      clearCurrency();
+    }
   }
 
   const addExpenseMutation = api.user.addOrEditExpense.useMutation();
+  const addGroupExpenseMutation = api.group.addOrEditExpense.useMutation();
   const utils = api.useUtils();
 
   function saveExpense() {
-    if (!balanceToSettle || !amount || !parseFloat(amount)) {
+    if (!canSave || !breakdown || !selectedDestination) {
       return;
     }
 
-    addExpenseMutation.mutate(
-      {
-        name: 'Settle up',
-        currency: balanceToSettle.currency,
-        amount: parseFloat(amount),
-        splitType: SplitType.SETTLEMENT,
-        participants: [
-          {
-            userId: currentUser.id,
-            amount: isCurrentUserPaying ? parseFloat(amount) : -parseFloat(amount),
-          },
-          {
-            userId: friend.id,
-            amount: isCurrentUserPaying ? -parseFloat(amount) : parseFloat(amount),
-          },
-        ],
-        paidBy: isCurrentUserPaying ? currentUser.id : friend.id,
-        category: 'general',
+    const callbacks = {
+      onSuccess: () => {
+        utils.user.invalidate().catch(console.error);
+        utils.group.invalidate().catch(console.error);
       },
-      {
-        onSuccess: () => {
-          utils.user.invalidate().catch(console.error);
-        },
-        onError: (error) => {
-          toast.error(error.message || 'Error while saving expense');
-        },
+      onError: (error: { message: string }) => {
+        toast.error(error.message || 'Error while saving expense');
       },
-    );
+    };
+
+    // All balances is a personal payment. Paying the whole total also clears every group, which
+    // the server records so the payment can be undone.
+    const settlement = buildSettleUpPayment({
+      destination: selectedDestination,
+      currency: breakdown.currency,
+      value,
+      currentUserId: currentUser.id,
+      friendId: friend.id,
+    });
+    if ('group' === settlement.kind) {
+      addGroupExpenseMutation.mutate(settlement.payment, callbacks);
+    } else {
+      addExpenseMutation.mutate(settlement.payment, callbacks);
+    }
   }
+
+  const backButton = (className: string, variant: 'ghost' | 'secondary') =>
+    1 < currencies.length ? (
+      <Button size="sm" variant={variant} className={className} onClick={clearCurrency}>
+        Back
+      </Button>
+    ) : (
+      <DrawerClose>
+        <Button size="sm" variant={variant} className={className}>
+          Back
+        </Button>
+      </DrawerClose>
+    );
+
+  const saveButton = (className: string, variant?: 'ghost') =>
+    canSave ? (
+      <DrawerClose>
+        <Button size="sm" variant={variant} className={className} onClick={() => saveExpense()}>
+          Save
+        </Button>
+      </DrawerClose>
+    ) : (
+      <Button size="sm" variant={variant} className={className} disabled>
+        Save
+      </Button>
+    );
 
   return (
     <>
@@ -75,16 +150,15 @@ export const SettleUp: React.FC<{
           <Button
             size="sm"
             className="flex w-[150px] items-center gap-2 rounded-md border bg-cyan-500 px-3  text-sm font-normal text-black focus:bg-cyan-600 focus:ring-0 focus-visible:outline-none lg:w-[180px] "
-            disabled={!balances.length}
+            disabled={!currencies.length}
           >
             Settle up
           </Button>
         }
-        disableTrigger={!balances?.length}
+        disableTrigger={!currencies.length}
+        onTriggerClick={onOpen}
         leftAction={''}
-        leftActionOnClick={() => {
-          setBallanceToSettle(undefined);
-        }}
+        leftActionOnClick={clearCurrency}
         title=""
         className="h-[70vh]"
         actionTitle=""
@@ -92,124 +166,106 @@ export const SettleUp: React.FC<{
       >
         <div>
           <div className="flex items-center justify-between px-2">
-            <div>
-              {balanceToSettle ? (
-                balances.length > 1 ? (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className=" text-cyan-500 lg:hidden"
-                    onClick={() => setBallanceToSettle(undefined)}
-                  >
-                    Back
-                  </Button>
-                ) : (
-                  <DrawerClose>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className=" text-cyan-500 lg:hidden"
-                      onClick={() => (balances.length > 1 ? setBallanceToSettle(undefined) : null)}
-                    >
-                      Back
-                    </Button>
-                  </DrawerClose>
-                )
-              ) : (
-                <div></div>
-              )}
-            </div>
+            <div>{breakdown ? backButton(' text-cyan-500 lg:hidden', 'ghost') : <div></div>}</div>
             <div className="mb-2 mt-4 text-center">
-              {balanceToSettle ? 'Settle up' : 'Select currency'}
+              {breakdown ? 'Settle up' : 'Select currency'}
             </div>
-            {balanceToSettle ? (
-              <DrawerClose>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className=" mx-auto text-cyan-500 lg:hidden"
-                  onClick={() => saveExpense()}
-                >
-                  Save
-                </Button>
-              </DrawerClose>
-            ) : (
-              <div></div>
-            )}
+            {breakdown ? saveButton(' mx-auto text-cyan-500 lg:hidden', 'ghost') : <div></div>}
           </div>
-          {!balanceToSettle ? (
+          {!breakdown ? (
             <div>
-              {balances?.map((b) => (
+              {selectionChanged ? (
+                <p className="px-4 py-2 text-sm text-orange-600">
+                  Balances changed. Choose what to settle again.
+                </p>
+              ) : null}
+              {currencies.map((b) => (
                 <div
-                  key={`${b.friendId}-${b.currency}`}
-                  onClick={() => onSelectBalance(b)}
+                  key={b.currency}
+                  onClick={() => onSelectCurrency(b)}
                   className="cursor-pointer px-4 py-2"
                 >
-                  <FriendBalance user={friend} balance={b} />
+                  {0 === b.total ? (
+                    <div className="flex items-center justify-between">
+                      <p className="text-foreground">{b.currency}</p>
+                      <p className="text-right text-xs text-gray-500">
+                        Settled overall, open in groups
+                      </p>
+                    </div>
+                  ) : (
+                    <FriendBalance
+                      user={friend}
+                      balance={{ amount: b.total, currency: b.currency }}
+                    />
+                  )}
                 </div>
               ))}
             </div>
           ) : (
-            <div className="mt-10 flex flex-col items-center gap-6">
-              <div className="flex flex-col items-center">
-                <div className="flex items-center gap-5">
-                  <UserAvatar user={isCurrentUserPaying ? currentUser : friend} />
-                  <ArrowRightIcon className="h-6 w-6 text-gray-600" />
-                  <UserAvatar user={isCurrentUserPaying ? friend : currentUser} />
+            <div
+              className={clsx(
+                'flex flex-col items-center gap-6',
+                showDestinations ? 'mt-6' : 'mt-10',
+              )}
+            >
+              {showDestinations ? (
+                <div className="w-full px-2">
+                  <p className="mb-2 text-sm text-gray-400">Where does this payment go?</p>
+                  <div className="flex flex-col gap-2">
+                    {destinations.map((d) => (
+                      <button
+                        key={d.id}
+                        type="button"
+                        disabled={d.disabled}
+                        onClick={() => selectDestination(d)}
+                        className={clsx(
+                          'flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-left',
+                          selectedDestination?.id === d.id ? 'border-cyan-500' : 'border-gray-800',
+                          d.disabled && 'opacity-50',
+                        )}
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-sm">{d.label}</p>
+                          {d.hint ? <p className="text-xs text-gray-500">{d.hint}</p> : null}
+                        </div>
+                        <div
+                          className={clsx(
+                            'shrink-0 text-right text-sm',
+                            0 < d.amount ? 'text-green-500' : 'text-orange-600',
+                          )}
+                        >
+                          {describeAmount(d.amount, breakdown.currency)}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                  {0 !== breakdown.nonGroup ? (
+                    <p className="mt-2 text-xs text-gray-500">
+                      Outside groups: {describeAmount(breakdown.nonGroup, breakdown.currency)}
+                    </p>
+                  ) : null}
+                  {selectionChanged ? (
+                    <p className="mt-2 text-sm text-orange-600">
+                      Balances changed. Choose where this payment goes again.
+                    </p>
+                  ) : null}
                 </div>
-                <p className="mt-2 text-center text-sm text-gray-400">
-                  {isCurrentUserPaying
-                    ? `You're paying ${friend.name ?? friend.email}`
-                    : `${friend.name ?? friend.email} is paying you`}
-                </p>
-              </div>
-              <div className="mt-3 flex  items-center gap-2">
-                <p className="text-lg">{balanceToSettle.currency}</p>
-                <Input
-                  type="number"
-                  value={amount}
-                  inputMode="decimal"
-                  className="mx-auto  w-[150px] text-lg"
-                  onChange={(e) => setAmount(e.target.value)}
+              ) : null}
+              {selectedDestination ? (
+                <SettleUpPayment
+                  currentUser={currentUser}
+                  friend={friend}
+                  isCurrentUserPaying={0 > selectedDestination.amount}
+                  currency={breakdown.currency}
+                  amount={amount}
+                  onAmountChange={setAmount}
                 />
-              </div>
+              ) : null}
             </div>
           )}
           <div className="mt-8 hidden items-center justify-center gap-4 px-2 lg:flex">
-            <div>
-              {balanceToSettle ? (
-                balances.length > 1 ? (
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => setBallanceToSettle(undefined)}
-                  >
-                    Back
-                  </Button>
-                ) : (
-                  <DrawerClose>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => (balances.length > 1 ? setBallanceToSettle(undefined) : null)}
-                    >
-                      Back
-                    </Button>
-                  </DrawerClose>
-                )
-              ) : (
-                <div></div>
-              )}
-            </div>
-            {balanceToSettle ? (
-              <DrawerClose>
-                <Button size="sm" className=" mx-auto " onClick={() => saveExpense()}>
-                  Save
-                </Button>
-              </DrawerClose>
-            ) : (
-              <div></div>
-            )}
+            <div>{breakdown ? backButton('', 'secondary') : <div></div>}</div>
+            {breakdown ? saveButton(' mx-auto ') : <div></div>}
           </div>
         </div>
       </AppDrawer>

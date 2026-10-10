@@ -94,8 +94,26 @@ const ActivityPage: NextPageWithUser = ({ user }) => {
                                 ? 'You'
                                 : e.expense.paidByUser.name ?? e.expense.paidByUser.email}
                             </span>
-                            {' paid for '}
-                            <span className=" font-semibold text-gray-300">{e.expense.name}</span>
+                            {e.expense.splitType === SplitType.SETTLEMENT ? (
+                              <>
+                                {' settled up'}
+                                {e.expense.group ? (
+                                  <>
+                                    {' in '}
+                                    <span className=" font-semibold text-gray-300">
+                                      {e.expense.group.name}
+                                    </span>
+                                  </>
+                                ) : null}
+                              </>
+                            ) : (
+                              <>
+                                {' paid for '}
+                                <span className=" font-semibold text-gray-300">
+                                  {e.expense.name}
+                                </span>
+                              </>
+                            )}
                           </p>
                         )}
 
