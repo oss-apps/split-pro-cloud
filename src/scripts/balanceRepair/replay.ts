@@ -18,6 +18,7 @@ export type ReplayExpense = {
   createdAt: number;
   updatedAt: number;
   deletedAt: number | null;
+  /** `updatedBy` is set. */
   edited: boolean;
   allocationVersion: number | null;
   participants: ReplayParticipant[];
@@ -28,7 +29,6 @@ export type StoredBalance = {
   friendId: number;
   currency: string;
   amount: number;
-  createdAt: number;
   importedFromSplitwise: boolean;
 };
 
@@ -40,19 +40,6 @@ export type StoredGroupBalance = {
   amount: number;
 };
 
-export type ReplayInput = {
-  expenses: ReplayExpense[];
-  balances: StoredBalance[];
-  groupBalances: StoredGroupBalance[];
-  /** `${groupId}:${userId}` for current members, used when restoring settlement allocations. */
-  memberships: Set<string>;
-  existingGroupIds: Set<number>;
-  /** When PR #2 went live. Events from then on follow its rules. `Infinity` if not deployed. */
-  cutoff: number;
-  /** PR #2's `SettlementAllocation` rows. */
-  allocations: StoredAllocation[];
-};
-
 export type StoredAllocation = {
   settlementExpenseId: string;
   groupId: number;
@@ -60,6 +47,16 @@ export type StoredAllocation = {
   userId: number;
   friendId: number;
   amount: number;
+};
+
+export type ReplayInput = {
+  expenses: ReplayExpense[];
+  balances: StoredBalance[];
+  groupBalances: StoredGroupBalance[];
+  /** PR #2's `SettlementAllocation` rows. */
+  allocations: StoredAllocation[];
+  /** When PR #2 went live. Events from then on follow its rules. `Infinity` if not deployed. */
+  cutoff: number;
 };
 
 /**
@@ -89,6 +86,15 @@ export const parsePairKey = (key: string) => {
   return { currency, lo: Number(lo), hi: Number(hi) };
 };
 
+export const otherParticipants = (expense: ReplayExpense) =>
+  expense.participants.filter((participant) => participant.userId !== expense.paidBy);
+
+/** Pairs an expense moves, as canonical keys. */
+export const expensePairKeys = (expense: ReplayExpense) =>
+  otherParticipants(expense).map((participant) =>
+    pairKey(expense.currency, expense.paidBy, participant.userId),
+  );
+
 const getPair = (state: ReplayState, key: string) => {
   const existing = state.get(key);
   if (existing) {
@@ -98,9 +104,6 @@ const getPair = (state: ReplayState, key: string) => {
   state.set(key, created);
   return created;
 };
-
-const otherParticipants = (expense: ReplayExpense) =>
-  expense.participants.filter((participant) => participant.userId !== expense.paidBy);
 
 /** Applies (1) or reverts (-1) an expense, exactly like the upserts in splitService. */
 const applyExpense = (state: ReplayState, expense: ReplayExpense, direction: 1 | -1) => {
@@ -141,110 +144,38 @@ const applyLegacyZeroing = (state: ReplayState, expense: ReplayExpense) => {
     });
 };
 
-export type Allocation = { key: string; groupId: number; amount: number };
-
 /**
  * PR #2's rule (`captureSettlementAllocations`): a personal settlement clears the group rows of
  * each settled pair whose overall balance is now exactly 0, and nothing else.
  */
 const captureSettlement = (state: ReplayState, expense: ReplayExpense) => {
-  const allocations: Allocation[] = [];
   const friendIds = [...new Set(otherParticipants(expense).map((p) => p.userId))];
 
   friendIds.forEach((friendId) => {
-    const key = pairKey(expense.currency, expense.paidBy, friendId);
-    const pair = state.get(key);
+    const pair = state.get(pairKey(expense.currency, expense.paidBy, friendId));
     if (!pair?.exists || 0 !== pair.amount) {
       return;
     }
-    pair.groups.forEach((amount, groupId) => {
-      if (0 === amount) {
-        return;
-      }
-      allocations.push({ key, groupId, amount });
-      pair.groups.set(groupId, 0);
-    });
+    pair.groups.forEach((_amount, groupId) => pair.groups.set(groupId, 0));
   });
-
-  return allocations;
 };
 
-const isPersonalSettlement = (expense: ReplayExpense) =>
+export const isPersonalSettlement = (expense: ReplayExpense) =>
   expense.isSettlement && null === expense.groupId;
 
 type ReplayEvent =
-  | { time: number; order: 0; kind: 'import'; key: string; offset: number }
   | { time: number; order: 1; kind: 'create'; expense: ReplayExpense }
-  | { time: number; order: 2; kind: 'edit'; expense: ReplayExpense }
   | { time: number; order: 3; kind: 'delete'; expense: ReplayExpense };
 
-/** Pairs whose stored Balance came (partly) from a Splitwise import, with the import time. */
-export type ImportOffsets = Map<string, { time: number; offset: number; timeKnown: boolean }>;
-
-/** Rows created within this long of an expense may have been created by that expense. */
-const ROW_CREATION_SLACK_MS = 5_000;
-
 /**
- * The final `Balance` is linear in the live expenses, so a Splitwise offset is whatever the
- * stored balance has on top of them. Only rows flagged `importedFromSplitwise` get an offset.
- * The import time is the row's `createdAt` only if no expense on the pair came first; otherwise
- * the import updated an existing row and its time is unknown.
+ * Replays every expense in time order: create at `createdAt`, delete at `deletedAt`, with the
+ * stored participants. Only sets without deleted or edited expenses are ever trusted, so
+ * deletes are replayed the simple way (revert, never restore settlement allocations).
  */
-export const getImportOffsets = (input: ReplayInput): ImportOffsets => {
-  const liveSums = new Map<string, number>();
-  const firstExpense = new Map<string, number>();
-  input.expenses.forEach((expense) =>
-    otherParticipants(expense).forEach((participant) => {
-      const key = pairKey(expense.currency, expense.paidBy, participant.userId);
-      firstExpense.set(key, Math.min(firstExpense.get(key) ?? Infinity, expense.createdAt));
-      if (null === expense.deletedAt) {
-        const delta = pairSign(expense.paidBy, participant.userId) * -participant.amount;
-        liveSums.set(key, (liveSums.get(key) ?? 0) + delta);
-      }
-    }),
-  );
-
-  const offsets: ImportOffsets = new Map();
-  input.balances
-    .filter((balance) => balance.importedFromSplitwise && balance.userId < balance.friendId)
-    .forEach((balance) => {
-      const key = pairKey(balance.currency, balance.userId, balance.friendId);
-      offsets.set(key, {
-        time: balance.createdAt,
-        offset: balance.amount - (liveSums.get(key) ?? 0),
-        timeKnown: (firstExpense.get(key) ?? Infinity) > balance.createdAt + ROW_CREATION_SLACK_MS,
-      });
-    });
-  return offsets;
-};
-
-export type ReplayResult = {
-  state: ReplayState;
-  /** Settlements whose allocations were captured after the cutoff, by expense id. */
-  allocations: Map<string, Allocation[]>;
-};
-
-/**
- * Replays every expense in time order: create at `createdAt`, delete at `deletedAt`.
- * Edited expenses are replayed as if they always had their final amounts, with the old rule
- * re-run at `updatedAt` as the edit did. That assumption is unverifiable, so callers must not
- * trust sets that contain edits.
- */
-export const replay = (
-  input: ReplayInput,
-  rule: ReplayRule,
-  importOffsets: ImportOffsets = getImportOffsets(input),
-): ReplayResult => {
+export const replay = (input: ReplayInput, rule: ReplayRule): ReplayState => {
   const events: ReplayEvent[] = [];
-  importOffsets.forEach(({ time, offset }, key) =>
-    events.push({ time, order: 0, kind: 'import', key, offset }),
-  );
   input.expenses.forEach((expense) => {
     events.push({ time: expense.createdAt, order: 1, kind: 'create', expense });
-    // Once deleted, `updatedAt` is the delete time, so an earlier edit has no known time.
-    if (expense.edited && null === expense.deletedAt) {
-      events.push({ time: expense.updatedAt, order: 2, kind: 'edit', expense });
-    }
     if (null !== expense.deletedAt) {
       events.push({ time: expense.deletedAt, order: 3, kind: 'delete', expense });
     }
@@ -256,78 +187,26 @@ export const replay = (
     if (a.order !== b.order) {
       return a.order - b.order;
     }
-    const aId = 'import' === a.kind ? a.key : a.expense.id;
-    const bId = 'import' === b.kind ? b.key : b.expense.id;
-    return aId < bId ? -1 : aId > bId ? 1 : 0;
+    return a.expense.id < b.expense.id ? -1 : a.expense.id > b.expense.id ? 1 : 0;
   });
 
   const state: ReplayState = new Map();
-  const allocations = new Map<string, Allocation[]>();
 
-  events.forEach((event) => {
-    if ('import' === event.kind) {
-      const pair = getPair(state, event.key);
-      pair.amount += event.offset;
-      pair.exists = true;
+  events.forEach(({ kind, expense, time }) => {
+    if ('delete' === kind) {
+      applyExpense(state, expense, -1);
       return;
     }
 
-    const { expense } = event;
-    const beforeCutoff = event.time < input.cutoff;
-
-    if ('create' === event.kind) {
-      applyExpense(state, expense, 1);
-      if (beforeCutoff) {
-        if ('legacy' === rule) {
-          applyLegacyZeroing(state, expense);
-        } else if (isPersonalSettlement(expense)) {
-          captureSettlement(state, expense);
-        }
-      } else if (isPersonalSettlement(expense) && 1 === expense.allocationVersion) {
-        const captured = captureSettlement(state, expense);
-        if (captured.length) {
-          allocations.set(expense.id, captured);
-        }
-      }
-      return;
+    applyExpense(state, expense, 1);
+    if (time < input.cutoff && 'legacy' === rule) {
+      applyLegacyZeroing(state, expense);
+    } else if (isPersonalSettlement(expense)) {
+      captureSettlement(state, expense);
     }
-
-    if ('edit' === event.kind) {
-      // The old edit reverted and re-applied the expense, then ran the zero rule again. PR #2
-      // edits that keep the amounts only change metadata.
-      if (beforeCutoff) {
-        if ('legacy' === rule) {
-          applyLegacyZeroing(state, expense);
-        } else if (isPersonalSettlement(expense)) {
-          captureSettlement(state, expense);
-        }
-      }
-      return;
-    }
-
-    if (!beforeCutoff) {
-      // PR #2 puts captured group rows back when a settlement is deleted, for current members.
-      allocations.get(expense.id)?.forEach((allocation) => {
-        const { lo, hi } = parsePairKey(allocation.key);
-        const restorable =
-          input.existingGroupIds.has(allocation.groupId) &&
-          input.memberships.has(`${allocation.groupId}:${lo}`) &&
-          input.memberships.has(`${allocation.groupId}:${hi}`);
-        if (!restorable) {
-          return;
-        }
-        const pair = getPair(state, allocation.key);
-        pair.groups.set(
-          allocation.groupId,
-          (pair.groups.get(allocation.groupId) ?? 0) + allocation.amount,
-        );
-      });
-      allocations.delete(expense.id);
-    }
-    applyExpense(state, expense, -1);
   });
 
-  return { state, allocations };
+  return state;
 };
 
 /** Stored balances in the same canonical shape as the replay state. */
@@ -360,9 +239,6 @@ export const buildSets = (input: ReplayInput) => {
     let root = key;
     while (parent.get(root) !== root) {
       root = parent.get(root) ?? root;
-      if (!parent.has(root)) {
-        parent.set(root, root);
-      }
     }
     let node = key;
     while (node !== root) {
@@ -391,9 +267,7 @@ export const buildSets = (input: ReplayInput) => {
   };
 
   input.expenses.forEach((expense) => {
-    const keys = otherParticipants(expense).map((participant) =>
-      pairKey(expense.currency, expense.paidBy, participant.userId),
-    );
+    const keys = expensePairKeys(expense);
     keys.forEach(add);
     keys.slice(1).forEach((key) => union(keys[0]!, key));
   });
@@ -414,160 +288,10 @@ export const buildSets = (input: ReplayInput) => {
       sets.set(root, [key]);
     }
   });
+  sets.forEach((keys) => keys.sort());
   const setOf = new Map<string, SetId>();
   sets.forEach((keys, setId) => keys.forEach((key) => setOf.set(key, setId)));
   return { sets, setOf };
-};
-
-export type EditClassification = {
-  expenseId: string;
-  status: 'neutral' | 'edited-settlement' | 'settlement-in-window';
-  /** Pairs whose sets cannot be trusted because of this edit. Empty when neutral. */
-  taintedKeys: string[];
-};
-
-/**
- * Earlier versions of edited expenses are not stored. The corrected rule only reads balances
- * when a personal settlement is created (or a settlement is edited), so an edit cannot change
- * the corrected result unless such a settlement happened, between two people who could have
- * been on the earlier version, between the expense's creation and its last edit. Before that
- * window the expense did not exist; after it only the stored version did.
- *
- * People who could have been on a group expense: anyone with a GroupBalance row in the group
- * (every participant gets one, and rows are never removed) plus current members. For a
- * personal expense: the stored participants. Edited settlements are never neutral.
- */
-export const classifyEdits = (input: ReplayInput): EditClassification[] => {
-  const usersByGroup = new Map<number, Set<number>>();
-  const addGroupUser = (groupId: number, userId: number) => {
-    const users = usersByGroup.get(groupId) ?? new Set<number>();
-    users.add(userId);
-    usersByGroup.set(groupId, users);
-  };
-  input.groupBalances.forEach((balance) => {
-    addGroupUser(balance.groupId, balance.userId);
-    addGroupUser(balance.groupId, balance.friendId);
-  });
-  input.memberships.forEach((membership) => {
-    const [groupId = '0', userId = '0'] = membership.split(':');
-    addGroupUser(Number(groupId), Number(userId));
-  });
-
-  type SettlementEvent = { time: number; otherId: number; key: string };
-  const settlementEvents = new Map<number, SettlementEvent[]>();
-  input.expenses.filter(isPersonalSettlement).forEach((settlement) =>
-    otherParticipants(settlement).forEach((participant) => {
-      const key = pairKey(settlement.currency, settlement.paidBy, participant.userId);
-      const times = [settlement.createdAt];
-      if (settlement.edited && null === settlement.deletedAt) {
-        times.push(settlement.updatedAt);
-      }
-      times.forEach((time) => {
-        [
-          [settlement.paidBy, participant.userId],
-          [participant.userId, settlement.paidBy],
-        ].forEach(([userId = 0, otherId = 0]) => {
-          const events = settlementEvents.get(userId) ?? [];
-          events.push({ time, otherId, key });
-          settlementEvents.set(userId, events);
-        });
-      });
-    }),
-  );
-
-  return input.expenses
-    .filter((expense) => expense.edited)
-    .map((expense): EditClassification => {
-      const ownKeys = otherParticipants(expense).map((participant) =>
-        pairKey(expense.currency, expense.paidBy, participant.userId),
-      );
-      if (expense.isSettlement) {
-        return { expenseId: expense.id, status: 'edited-settlement', taintedKeys: ownKeys };
-      }
-
-      const candidates = new Set<number>([
-        expense.paidBy,
-        ...expense.participants.map((participant) => participant.userId),
-        ...(null === expense.groupId ? [] : [...(usersByGroup.get(expense.groupId) ?? [])]),
-      ]);
-      // A deleted expense's last edit happened at some point before the delete.
-      const windowEnd = expense.deletedAt ?? expense.updatedAt;
-      const inWindow = [...candidates].flatMap((userId) =>
-        (settlementEvents.get(userId) ?? []).filter(
-          (event) =>
-            candidates.has(event.otherId) &&
-            event.time >= expense.createdAt &&
-            event.time <= windowEnd,
-        ),
-      );
-
-      if (!inWindow.length) {
-        return { expenseId: expense.id, status: 'neutral', taintedKeys: [] };
-      }
-      return {
-        expenseId: expense.id,
-        status: 'settlement-in-window',
-        taintedKeys: [...new Set([...ownKeys, ...inWindow.map((event) => event.key)])],
-      };
-    });
-};
-
-const allocationEntries = (allocations: Map<string, Allocation[]>) =>
-  [...allocations.entries()].flatMap(([expenseId, rows]) =>
-    rows.map((row) => ({
-      id: `${expenseId}#${row.groupId}#${row.key}`,
-      key: row.key,
-      amount: row.amount,
-    })),
-  );
-
-/**
- * Per set: stored allocations (lower-id side) that the legacy replay does not produce exactly,
- * and allocations that the corrected replay would capture differently.
- */
-export const compareAllocations = (
-  stored: StoredAllocation[],
-  legacy: Map<string, Allocation[]>,
-  corrected: Map<string, Allocation[]>,
-  setOf: Map<string, SetId>,
-) => {
-  const result = new Map<SetId, { notReproduced: number; changed: number }>();
-  const bump = (key: string, field: 'notReproduced' | 'changed') => {
-    const setId = setOf.get(key);
-    if (!setId) {
-      return;
-    }
-    const entry = result.get(setId) ?? { notReproduced: 0, changed: 0 };
-    entry[field] += 1;
-    result.set(setId, entry);
-  };
-  const toMap = (rows: { id: string; key: string; amount: number }[]) =>
-    new Map(rows.map((row) => [row.id, row]));
-
-  const storedRows = toMap(
-    stored
-      .filter((row) => row.userId < row.friendId)
-      .map((row) => {
-        const key = pairKey(row.currency, row.userId, row.friendId);
-        return { id: `${row.settlementExpenseId}#${row.groupId}#${key}`, key, amount: row.amount };
-      }),
-  );
-  const legacyRows = toMap(allocationEntries(legacy));
-  const correctedRows = toMap(allocationEntries(corrected));
-
-  new Set([...storedRows.keys(), ...legacyRows.keys()]).forEach((id) => {
-    const row = storedRows.get(id) ?? legacyRows.get(id);
-    if (row && storedRows.get(id)?.amount !== legacyRows.get(id)?.amount) {
-      bump(row.key, 'notReproduced');
-    }
-  });
-  new Set([...legacyRows.keys(), ...correctedRows.keys()]).forEach((id) => {
-    const row = legacyRows.get(id) ?? correctedRows.get(id);
-    if (row && legacyRows.get(id)?.amount !== correctedRows.get(id)?.amount) {
-      bump(row.key, 'changed');
-    }
-  });
-  return result;
 };
 
 export type GroupRowChange = {
@@ -580,7 +304,7 @@ export type GroupRowChange = {
 const groupIdsOf = (...pairs: (PairState | undefined)[]) =>
   [...new Set(pairs.flatMap((pair) => [...(pair?.groups.keys() ?? [])]))].sort((a, b) => a - b);
 
-export type SetVerdict = 'repair' | 'nothing-to-do' | 'edited' | 'not-reproduced';
+export type SetVerdict = 'repair' | 'nothing-to-do' | 'skipped' | 'not-reproduced';
 
 export type SetAnalysis = {
   setId: SetId;
@@ -588,19 +312,19 @@ export type SetAnalysis = {
   pairCount: number;
   groupIds: number[];
   verdict: SetVerdict;
-  /** Why the set cannot be trusted. */
+  /** Why the set is skipped or not reproduced. */
   reasons: string[];
-  /** Facts that do not block a repair on their own. */
-  notes: string[];
-  editedExpenses: number;
-  /** The legacy replay matches every stored row (for edited sets: if edits kept their amounts). */
+  /** The legacy replay matches every stored Balance and GroupBalance row of the set. */
   reproducesLegacy: boolean;
+  /** Rows the corrected rule would change, whatever the verdict. */
+  wouldChange: GroupRowChange[];
+  /** Rows to write. Empty unless the verdict is `repair`. */
   changes: GroupRowChange[];
 };
 
 /**
- * Classifies one set. Only sets where the legacy replay reproduces every stored row exactly
- * are trusted, and only their GroupBalance rows are changed (to the corrected replay).
+ * Classifies one set. A set is repaired only if no pair in it has an eligibility issue and the
+ * legacy replay reproduces every stored row exactly. Only GroupBalance rows are ever changed.
  */
 export const analyseSet = ({
   setId,
@@ -608,27 +332,20 @@ export const analyseSet = ({
   stored,
   legacy,
   corrected,
-  editedExpenses,
-  importOffsets,
-  allocations = { notReproduced: 0, changed: 0 },
+  issues,
 }: {
   setId: SetId;
   keys: string[];
   stored: ReplayState;
   legacy: ReplayState;
   corrected: ReplayState;
-  editedExpenses: number;
-  importOffsets: ImportOffsets;
-  /** Settlement allocations the legacy replay misses, and ones the corrected replay changes. */
-  allocations?: { notReproduced: number; changed: number };
+  /** Eligibility issues per pair key (see `getPairIssues`). */
+  issues: Map<string, Set<string>>;
 }): SetAnalysis => {
-  const reasons: string[] = [];
-  const notes: string[] = [];
   const groupIds = new Set<number>();
-  let balanceDrift = 0;
+  let balanceMismatch = 0;
   let groupMismatch = 0;
-  let existenceMismatch = 0;
-  const changes: GroupRowChange[] = [];
+  const wouldChange: GroupRowChange[] = [];
 
   keys.forEach((key) => {
     const storedPair = stored.get(key);
@@ -641,9 +358,7 @@ export const analyseSet = ({
       );
     }
     if ((storedPair?.amount ?? 0) !== (legacyPair?.amount ?? 0)) {
-      balanceDrift += 1;
-    } else if (!!storedPair?.exists !== !!legacyPair?.exists) {
-      existenceMismatch += 1;
+      balanceMismatch += 1;
     }
 
     groupIdsOf(storedPair, legacyPair, correctedPair).forEach((groupId) => {
@@ -654,49 +369,22 @@ export const analyseSet = ({
       }
       const correctedAmount = correctedPair?.groups.get(groupId) ?? 0;
       if (storedAmount !== correctedAmount) {
-        changes.push({ key, groupId, stored: storedAmount, corrected: correctedAmount });
+        wouldChange.push({ key, groupId, stored: storedAmount, corrected: correctedAmount });
       }
     });
   });
 
-  const imported = keys.filter((key) => importOffsets.has(key)).length;
-  const importTimeUnknown = keys.filter(
-    (key) => false === importOffsets.get(key)?.timeKnown,
-  ).length;
-  // A Balance row that the replay expects but storage lacks (or vice versa) at amount 0 is a
-  // `deleteFriend`, which only removes zero rows. The corrected rule never reads row existence
-  // for anything but the settling pair, so this alone does not make a set untrustworthy.
-  const reproduces =
-    0 === balanceDrift &&
-    0 === groupMismatch &&
-    0 === allocations.notReproduced &&
-    0 === importTimeUnknown;
-
-  if (balanceDrift) {
-    reasons.push(`balance-drift:${balanceDrift}`);
-  }
-  if (groupMismatch) {
-    reasons.push(`group-rows-not-reproduced:${groupMismatch}`);
-  }
-  if (importTimeUnknown) {
-    // The offset was added to an existing balance at an unknown time, which settle-ups may read.
-    reasons.push(`splitwise-import-time-unknown:${importTimeUnknown}`);
-  }
-  if (allocations.notReproduced) {
-    reasons.push(`allocations-not-reproduced:${allocations.notReproduced}`);
-  }
-  if (allocations.changed) {
-    // Repairing would leave PR #2's records of what a settlement cleared out of date.
-    reasons.push(`settlement-allocations-would-change:${allocations.changed}`);
-  }
-  if (existenceMismatch) {
-    notes.push(`balance-row-deleted:${existenceMismatch}`);
-  }
-  if (imported) {
-    notes.push(`splitwise-import:${imported}`);
-  }
-  if (editedExpenses) {
-    reasons.push(`edited-expenses:${editedExpenses}`);
+  const issueCounts = new Map<string, number>();
+  keys.forEach((key) =>
+    issues.get(key)?.forEach((issue) => issueCounts.set(issue, (issueCounts.get(issue) ?? 0) + 1)),
+  );
+  const reproduces = 0 === balanceMismatch && 0 === groupMismatch;
+  const reasons = [...issueCounts.entries()].map(([issue, count]) => `${issue}:${count}`).sort();
+  if (!reproduces) {
+    reasons.push(
+      ...(balanceMismatch ? [`legacy-balance-mismatch:${balanceMismatch}`] : []),
+      ...(groupMismatch ? [`legacy-group-mismatch:${groupMismatch}`] : []),
+    );
   }
 
   const base = {
@@ -705,20 +393,18 @@ export const analyseSet = ({
     pairCount: keys.length,
     groupIds: [...groupIds].sort((a, b) => a - b),
     reasons,
-    notes,
-    editedExpenses,
     reproducesLegacy: reproduces,
+    wouldChange,
   };
 
-  // Includes a second run after a repair, where stored already equals the corrected replay.
-  if (0 === changes.length) {
+  if (0 === wouldChange.length) {
     return { ...base, verdict: 'nothing-to-do', changes: [] };
   }
-  if (editedExpenses) {
-    return { ...base, verdict: 'edited', changes: [] };
+  if (issueCounts.size) {
+    return { ...base, verdict: 'skipped', changes: [] };
   }
-  if (!reproduces || allocations.changed) {
+  if (!reproduces) {
     return { ...base, verdict: 'not-reproduced', changes: [] };
   }
-  return { ...base, verdict: 'repair', changes };
+  return { ...base, verdict: 'repair', changes: wouldChange };
 };

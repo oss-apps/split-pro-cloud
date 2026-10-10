@@ -7,21 +7,17 @@
  *
  * Options: --out <dir> (report directory), --cutoff <ISO time> (override when PR #2 went live).
  * Reads DATABASE_URL. Prints and writes ids and amounts only, never names or emails.
+ * Only GroupBalance rows are ever written. Settlements and Balance are reported, never changed.
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PrismaClient } from '@prisma/client';
 
-import {
-  type ApplyOutcome,
-  applySetRepair,
-  applySettlementFixes,
-  undoRun,
-} from './balanceRepair/apply';
+import { type ApplyOutcome, applySetRepair, undoRun } from './balanceRepair/apply';
 import { loadSnapshot } from './balanceRepair/load';
 import { buildPlan, getSetRows } from './balanceRepair/plan';
-import { type SetAnalysis, parsePairKey } from './balanceRepair/replay';
+import { parsePairKey } from './balanceRepair/replay';
 
 type Options = {
   apply: boolean;
@@ -94,14 +90,18 @@ const toCsv = (rows: Record<string, string | number | boolean | null>[]) => {
   );
 };
 
-const countBy = <T>(items: T[], getKey: (item: T) => string) =>
+const countBy = <T>(items: T[], getKey: (item: T) => string | string[]) =>
   items.reduce<Record<string, number>>((acc, item) => {
-    const key = getKey(item);
-    acc[key] = (acc[key] ?? 0) + 1;
+    const keys = getKey(item);
+    (Array.isArray(keys) ? keys : [keys]).forEach((key) => {
+      acc[key] = (acc[key] ?? 0) + 1;
+    });
     return acc;
   }, {});
 
-const seconds = (start: number) => `${((Date.now() - start) / 1000).toFixed(1)}s`;
+const seconds = (start: number) => (Date.now() - start) / 1000;
+
+const reasonName = (reason: string) => reason.split(':')[0] ?? reason;
 
 const main = async () => {
   const options = parseArgs(process.argv.slice(2));
@@ -133,7 +133,7 @@ const main = async () => {
       mkdirSync(outDir, { recursive: true });
       writeFileSync(join(outDir, 'undo-results.csv'), toCsv(outcomes));
       console.info(
-        `Undo of ${options.undo}: ${JSON.stringify(countBy(outcomes, (o) => o.status))} in ${seconds(started)}`,
+        `Undo of ${options.undo}: ${JSON.stringify(countBy(outcomes, (o) => o.status))} in ${seconds(started)}s`,
       );
       console.info(`Report: ${outDir}`);
       return;
@@ -148,46 +148,21 @@ const main = async () => {
     const plan = buildPlan(snapshot, snapshot.expenseAmounts);
     const planned = Date.now();
 
-    const analysisById = new Map(plan.analyses.map((analysis) => [analysis.setId, analysis]));
-    const setOfMismatch = (key: string) => analysisById.get(plan.setOf.get(key) ?? '');
-    const mismatchVerdict = (analysis: SetAnalysis | undefined) =>
-      !analysis
-        ? 'unknown'
-        : 'nothing-to-do' === analysis.verdict
-          ? analysis.reproducesLegacy && 0 === analysis.editedExpenses
-            ? 'verified-settle-up-clear'
-            : 'unverified-no-change'
-          : analysis.verdict;
-    const mismatchesByVerdict = countBy(plan.groupMismatches, (m) =>
-      mismatchVerdict(setOfMismatch(m.key)),
-    );
     const repairSets = plan.analyses.filter((a) => 'repair' === a.verdict);
     const changes = repairSets.flatMap((a) => a.changes);
+    const wouldChangeSets = plan.analyses.filter((a) => a.wouldChange.length);
     const rawByRow = new Map(plan.groupMismatches.map((m) => [`${m.key}#${m.groupId}`, m.raw]));
-    const changesMatchingRaw = changes.filter(
-      (c) => (rawByRow.get(`${c.key}#${c.groupId}`) ?? c.stored) === c.corrected,
-    ).length;
-    const mismatchGroups = new Set(plan.groupMismatches.map((m) => m.groupId));
-    const groupsTouched = new Set(changes.map((c) => c.groupId));
-    const resolvedGroups = [...mismatchGroups].filter((groupId) =>
-      plan.groupMismatches
-        .filter((m) => m.groupId === groupId)
-        .every((m) => {
-          const verdict = mismatchVerdict(setOfMismatch(m.key));
-          return 'repair' === verdict || 'verified-settle-up-clear' === verdict;
-        }),
-    );
+    const verdictBySet = new Map(plan.analyses.map((a) => [a.setId, a.verdict]));
+    const verdictOfKey = (key: string) => verdictBySet.get(plan.setOf.get(key) ?? '') ?? 'unknown';
+
     // Rows are counted on both mirrored sides, matching a plain query over "GroupBalance".
-    const summary = {
+    const summary: Record<string, unknown> = {
       runId,
       mode,
       database: database.name,
       snapshotAt: snapshot.loadedAt.toISOString(),
       pr2Cutoff: Number.isFinite(snapshot.cutoff) ? new Date(snapshot.cutoff).toISOString() : null,
-      timings: {
-        loadSeconds: (loaded - started) / 1000,
-        planSeconds: (planned - loaded) / 1000,
-      },
+      timings: { loadSeconds: (loaded - started) / 1000, planSeconds: (planned - loaded) / 1000 },
       audit: {
         mirrorBreaks: plan.mirror,
         balanceDriftPairs: plan.balanceDrift.length,
@@ -196,65 +171,64 @@ const main = async () => {
         groupBalanceRowsOffRawSum: plan.groupMismatches.length * 2,
         groupBalanceRowsZeroed: plan.groupMismatches.filter((m) => 'zeroed' === m.kind).length * 2,
         groupBalanceRowsOther: plan.groupMismatches.filter((m) => 'other' === m.kind).length * 2,
-        groupsOffRawSum: mismatchGroups.size,
+        groupsOffRawSum: new Set(plan.groupMismatches.map((m) => m.groupId)).size,
       },
-      phase1Settlements: {
-        total: plan.settlementFixes.length,
-        auto: plan.settlementFixes.filter((f) => 'auto' === f.status).length,
-        byReason: countBy(plan.settlementFixes, (f) => f.reason),
-        withGroup: plan.settlementFixes.filter((f) => null !== f.groupId).length,
+      settlementsReportOnly: {
+        nonCanonical: plan.settlementFindings.length,
+        byReason: countBy(plan.settlementFindings, (f) => f.reason),
+        withLaterActivity: plan.settlementFindings.filter(
+          (f) => f.laterExpenses + f.laterSettlements > 0,
+        ).length,
+        withDeletedSettlements: plan.settlementFindings.filter((f) => f.deletedSettlements > 0)
+          .length,
       },
-      edits: {
-        total: plan.edits.length,
-        byStatus: countBy(plan.edits, (e) => e.status),
-      },
-      phase2Sets: {
-        total: plan.analyses.length,
+      groupRepair: {
+        sets: plan.analyses.length,
         byVerdict: countBy(plan.analyses, (a) => a.verdict),
+        setsTheCorrectedRuleWouldChange: wouldChangeSets.length,
+        rowsTheCorrectedRuleWouldChange: wouldChangeSets.reduce(
+          (n, a) => n + a.wouldChange.length * 2,
+          0,
+        ),
+        // A set can have several reasons, so these overlap.
+        skipReasonsBySets: countBy(
+          wouldChangeSets.filter((a) => 'skipped' === a.verdict),
+          (a) => a.reasons.map(reasonName),
+        ),
+        skipReasonsByRows: wouldChangeSets
+          .filter((a) => 'skipped' === a.verdict)
+          .reduce<Record<string, number>>((acc, a) => {
+            a.reasons.map(reasonName).forEach((r) => {
+              acc[r] = (acc[r] ?? 0) + a.wouldChange.length * 2;
+            });
+            return acc;
+          }, {}),
         notReproducedReasons: countBy(
           plan.analyses.filter((a) => 'not-reproduced' === a.verdict),
-          (a) => a.reasons.map((r) => r.split(':')[0]).join('+'),
+          (a) => a.reasons.map(reasonName).join('+'),
         ),
-        editedSetsThatReproduceIfEditsKeptAmounts: plan.analyses.filter(
-          (a) => 'edited' === a.verdict && a.reproducesLegacy,
-        ).length,
         offRawRowsByVerdict: Object.fromEntries(
-          Object.entries(mismatchesByVerdict).map(([verdict, count]) => [verdict, count * 2]),
+          Object.entries(countBy(plan.groupMismatches, (m) => verdictOfKey(m.key))).map(
+            ([verdict, count]) => [verdict, count * 2],
+          ),
         ),
-        rowsToChange: changes.length * 2,
-        rowsToChangeThatEndAtRawSum: changesMatchingRaw * 2,
-        groupsTouched: groupsTouched.size,
-        // Every off-raw row of the group is either repaired or a verified settle-up clear.
-        groupsFullyExplainedAfterRepair: resolvedGroups.length,
-        groupsFullyExplainedThatNeedRepair: resolvedGroups.filter((g) => groupsTouched.has(g))
-          .length,
+        repairSets: repairSets.length,
+        repairRows: changes.length * 2,
+        repairRowsThatEndAtRawSum:
+          changes.filter((c) => (rawByRow.get(`${c.key}#${c.groupId}`) ?? c.stored) === c.corrected)
+            .length * 2,
+        repairGroups: new Set(changes.map((c) => c.groupId)).size,
+        balanceRowsTouched: 0,
       },
     };
 
     mkdirSync(outDir, { recursive: true });
-    writeFileSync(
-      join(outDir, 'settlements.csv'),
-      toCsv(
-        plan.settlementFixes.map((fix) => ({
-          expenseId: fix.expenseId,
-          paidBy: fix.paidBy,
-          otherId: fix.otherId,
-          currency: fix.currency,
-          groupId: fix.groupId,
-          amount: fix.amount,
-          payerAmount: fix.payerAmount,
-          otherAmount: fix.otherAmount,
-          balanceCorrectionForOther: fix.delta,
-          status: fix.status,
-          reason: fix.reason,
-        })),
-      ),
-    );
+    writeFileSync(join(outDir, 'settlements.csv'), toCsv(plan.settlementFindings));
     writeFileSync(
       join(outDir, 'sets.csv'),
       toCsv(
         plan.analyses
-          .filter((a) => 'nothing-to-do' !== a.verdict || !a.reproducesLegacy)
+          .filter((a) => a.wouldChange.length || 'not-reproduced' === a.verdict)
           .map((a) => ({
             setId: a.setId,
             currency: a.currency,
@@ -262,65 +236,57 @@ const main = async () => {
             groups: a.groupIds.join(' '),
             verdict: a.verdict,
             reproducesLegacy: a.reproducesLegacy,
+            rowsTheCorrectedRuleWouldChange: a.wouldChange.length * 2,
             rowsToChange: a.changes.length * 2,
             reasons: a.reasons.join(' '),
-            notes: a.notes.join(' '),
           })),
       ),
     );
     writeFileSync(
       join(outDir, 'group-changes.csv'),
       toCsv(
-        repairSets.flatMap((a) =>
-          a.changes.map((c) => {
-            const { currency, lo, hi } = parsePairKey(c.key);
-            return {
-              setId: a.setId,
-              groupId: c.groupId,
-              currency,
-              userId: lo,
-              friendId: hi,
-              stored: c.stored,
-              corrected: c.corrected,
-              delta: c.corrected - c.stored,
-            };
-          }),
-        ),
+        plan.analyses
+          .filter((a) => a.wouldChange.length)
+          .flatMap((a) =>
+            a.wouldChange.map((c) => {
+              const { currency, lo, hi } = parsePairKey(c.key);
+              return {
+                setId: a.setId,
+                verdict: verdictBySet.get(a.setId) ?? '',
+                groupId: c.groupId,
+                currency,
+                userId: lo,
+                friendId: hi,
+                stored: c.stored,
+                corrected: c.corrected,
+                delta: c.corrected - c.stored,
+              };
+            }),
+          ),
       ),
     );
 
-    const outcomes: ApplyOutcome[] = [];
     if (options.apply) {
       const applyStarted = Date.now();
-      outcomes.push(
-        ...(await applySettlementFixes(
-          db,
-          runId,
-          plan.settlementFixes.filter((f) => 'auto' === f.status),
-          plan.stored,
-        )),
-      );
+      const outcomes: ApplyOutcome[] = [];
       for (const analysis of repairSets) {
         const keys = plan.sets.get(analysis.setId) ?? [];
         outcomes.push(
-          await applySetRepair(
-            db,
-            runId,
-            analysis.setId,
+          await applySetRepair(db, runId, snapshot.loadedAt, {
+            setId: analysis.setId,
             keys,
-            getSetRows(keys, plan.stored),
-            analysis.changes,
-          ),
+            rows: getSetRows(keys, plan.stored),
+            changes: analysis.changes,
+            expenseIds: plan.expenseIdsBySet.get(analysis.setId) ?? [],
+          }),
         );
       }
       writeFileSync(join(outDir, 'apply-results.csv'), toCsv(outcomes));
-      Object.assign(summary, {
-        apply: {
-          duration: seconds(applyStarted),
-          byStatus: countBy(outcomes, (o) => o.status),
-          rowsWritten: outcomes.reduce((sum, o) => sum + o.rows, 0),
-        },
-      });
+      summary.apply = {
+        seconds: seconds(applyStarted),
+        byStatus: countBy(outcomes, (o) => o.status),
+        rowsWritten: outcomes.reduce((sum, o) => sum + o.rows, 0),
+      };
     }
 
     writeFileSync(join(outDir, 'summary.json'), JSON.stringify(summary, null, 2) + '\n');

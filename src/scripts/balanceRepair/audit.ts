@@ -110,7 +110,7 @@ export const getGroupMismatches = (input: ReplayInput, raw: RawSums): GroupMisma
   raw.group.forEach((groups, key) =>
     groups.forEach((_amount, groupId) => {
       const rowId = `${key}#${groupId}`;
-      if (!stored.has(rowId) && input.existingGroupIds.has(groupId)) {
+      if (!stored.has(rowId)) {
         stored.set(rowId, 0);
       }
     }),

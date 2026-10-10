@@ -1,0 +1,163 @@
+import {
+  type ReplayExpense,
+  type ReplayInput,
+  isPersonalSettlement,
+  otherParticipants,
+  pairKey,
+  pairSign,
+} from './replay';
+
+/** `updatedAt` this far past `createdAt` means the expense was written again after creation. */
+export const EDIT_SLACK_MS = 5_000;
+
+/** The expense may have had an earlier version that is not stored. */
+export const hasHiddenVersion = (expense: ReplayExpense) =>
+  expense.edited ||
+  (null === expense.deletedAt && expense.updatedAt > expense.createdAt + EDIT_SLACK_MS);
+
+export type PairIssue =
+  | 'deleted-expense'
+  | 'edited-expense'
+  | 'edited-expense-other-currency'
+  | 'settlement-during-other-edit'
+  | 'splitwise-import'
+  | 'balance-not-explained'
+  | 'settlement-allocation';
+
+export type EditWindow = { start: number; end: number };
+
+/** From creation until the last edit (or the delete, which came after it). */
+export const getEditWindows = (expenses: ReplayExpense[]): EditWindow[] =>
+  expenses
+    .filter(hasHiddenVersion)
+    .map((expense) => ({ start: expense.createdAt, end: expense.deletedAt ?? expense.updatedAt }));
+
+/** Returns a test for "some edit window contains this time". */
+const insideAnyWindow = (windows: EditWindow[]) => {
+  const sorted = [...windows].sort((a, b) => a.start - b.start);
+  const maxEnd: number[] = [];
+  sorted.forEach((window, index) => {
+    maxEnd.push(Math.max(window.end, maxEnd[index - 1] ?? -Infinity));
+  });
+  return (time: number) => {
+    let low = 0;
+    let high = sorted.length - 1;
+    let last = -1;
+    while (low <= high) {
+      const middle = (low + high) >> 1;
+      if (sorted[middle]!.start <= time) {
+        last = middle;
+        low = middle + 1;
+      } else {
+        high = middle - 1;
+      }
+    }
+    return last >= 0 && maxEnd[last]! >= time;
+  };
+};
+
+const userPair = (a: number, b: number) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+
+/**
+ * Why a (currency, pair) cannot be repaired. Only pairs whose whole history is on record
+ * qualify:
+ * - every expense between them, personal or group, is live and was never edited;
+ * - no Splitwise import, and the stored Balance equals the sum of the live expenses exactly
+ *   (so nothing unexplained, such as expenses of a deleted group);
+ * - no PR #2 settlement allocation;
+ * - an edit may have changed currency, so an edited expense between the two people also
+ *   disqualifies their other currencies;
+ * - an edit elsewhere may have moved an expense off this pair. That can only change the
+ *   corrected result if a personal settlement between the two was created while the earlier
+ *   version existed, so any settlement inside any edit window disqualifies the pair.
+ */
+export const getPairIssues = (
+  input: ReplayInput,
+  editWindows: EditWindow[] = getEditWindows(input.expenses),
+) => {
+  const issues = new Map<string, Set<PairIssue>>();
+  const add = (key: string, issue: PairIssue) => {
+    const set = issues.get(key) ?? new Set<PairIssue>();
+    set.add(issue);
+    issues.set(key, set);
+  };
+
+  const keysByUserPair = new Map<string, Set<string>>();
+  const track = (key: string, a: number, b: number) => {
+    const keys = keysByUserPair.get(userPair(a, b)) ?? new Set<string>();
+    keys.add(key);
+    keysByUserPair.set(userPair(a, b), keys);
+  };
+  const addForUsers = (a: number, b: number, issue: PairIssue) =>
+    keysByUserPair.get(userPair(a, b))?.forEach((key) => add(key, issue));
+
+  const rawSums = new Map<string, number>();
+  const editedUserPairs: [number, number][] = [];
+  input.expenses.forEach((expense) =>
+    otherParticipants(expense).forEach((participant) => {
+      const key = pairKey(expense.currency, expense.paidBy, participant.userId);
+      track(key, expense.paidBy, participant.userId);
+      if (null !== expense.deletedAt) {
+        add(key, 'deleted-expense');
+        return;
+      }
+      if (hasHiddenVersion(expense)) {
+        add(key, 'edited-expense');
+        editedUserPairs.push([expense.paidBy, participant.userId]);
+      }
+      const delta = pairSign(expense.paidBy, participant.userId) * -participant.amount;
+      rawSums.set(key, (rawSums.get(key) ?? 0) + delta);
+    }),
+  );
+
+  const storedBalances = new Map<string, number>();
+  input.balances.forEach((balance) => {
+    const key = pairKey(balance.currency, balance.userId, balance.friendId);
+    track(key, balance.userId, balance.friendId);
+    if (balance.importedFromSplitwise) {
+      add(key, 'splitwise-import');
+    }
+    if (balance.userId < balance.friendId) {
+      storedBalances.set(key, balance.amount);
+    }
+  });
+  input.groupBalances.forEach((balance) =>
+    track(
+      pairKey(balance.currency, balance.userId, balance.friendId),
+      balance.userId,
+      balance.friendId,
+    ),
+  );
+
+  new Set([...storedBalances.keys(), ...rawSums.keys()]).forEach((key) => {
+    if ((storedBalances.get(key) ?? 0) !== (rawSums.get(key) ?? 0)) {
+      add(key, 'balance-not-explained');
+    }
+  });
+
+  input.allocations.forEach((allocation) =>
+    add(
+      pairKey(allocation.currency, allocation.userId, allocation.friendId),
+      'settlement-allocation',
+    ),
+  );
+
+  editedUserPairs.forEach(([a, b]) =>
+    keysByUserPair.get(userPair(a, b))?.forEach((key) => {
+      if (!issues.get(key)?.has('edited-expense')) {
+        add(key, 'edited-expense-other-currency');
+      }
+    }),
+  );
+
+  const inEditWindow = insideAnyWindow(editWindows);
+  input.expenses
+    .filter((expense) => isPersonalSettlement(expense) && inEditWindow(expense.createdAt))
+    .forEach((settlement) =>
+      otherParticipants(settlement).forEach((participant) =>
+        addForUsers(settlement.paidBy, participant.userId, 'settlement-during-other-edit'),
+      ),
+    );
+
+  return issues;
+};

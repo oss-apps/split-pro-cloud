@@ -199,20 +199,21 @@ model SettlementAllocation {
 model BalanceRepairLog {
     id        Int      @id @default(autoincrement())
     runId     String
-    /// "settlement:<expenseId>" or "set:<setId>": the unit applied in one transaction.
+    /// "set:<setId>": the unit applied in one transaction.
     scope     String
-    /// "Balance", "GroupBalance" or "ExpenseParticipant"
+    /// Always "GroupBalance": the repair never writes anything else.
     table     String
     groupId   Int?
     currency  String?
     expenseId String?
     userId    Int
     friendId  Int?
-    /// null when the row did not exist
+    /// null when the row did not exist; undo deletes it again
     before    Int?
     delta     Int
     after     Int?
     reason    String
+    /// When the run (or undo) wrote this row, from the database clock
     createdAt DateTime @default(now())
 
     @@index([runId, scope])

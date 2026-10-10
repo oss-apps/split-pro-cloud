@@ -1,6 +1,6 @@
-import { type ReplayExpense, pairKey } from './replay';
+import { type ReplayExpense, otherParticipants, pairKey } from './replay';
 
-export type SettlementFix = {
+export type SettlementFinding = {
   expenseId: string;
   paidBy: number;
   otherId: number;
@@ -9,43 +9,45 @@ export type SettlementFix = {
   amount: number;
   payerAmount: number | null;
   otherAmount: number;
-  updatedAt: number;
-  /**
-   * Correction to `Balance(otherId, paidBy)` (and the group row if any). `Balance(paidBy,
-   * otherId)` moves by the negation.
-   */
-  delta: number;
-  status: 'auto' | 'manual';
+  edited: boolean;
+  /** Change to Balance(other, payer) that the canonical form would make. Never applied. */
+  canonicalDelta: number;
+  laterSettlements: number;
+  laterExpenses: number;
+  deletedSettlements: number;
   reason: string;
 };
 
 /**
- * Settlements whose participants are not the canonical payer = +amount, other = -amount
- * (`Settleup.tsx` and PR #2's `toBalancedParticipants`). The old expense editor flipped the
- * signs a second time when a settlement was saved through it.
+ * Report only. Settlements whose participants are not the canonical payer = +amount,
+ * other = -amount. The stored rows do not show what the user meant (most have the other
+ * participant at 0, not a sign flip), and users have often settled or added expenses since, so
+ * none of these is ever rewritten by the script.
  */
-export const planSettlementFixes = (
+export const findSettlementAnomalies = (
   expenses: ReplayExpense[],
   expenseAmounts: Map<string, number>,
-): SettlementFix[] => {
-  const settlementsByPair = new Map<string, ReplayExpense[]>();
-  expenses
-    .filter((expense) => expense.isSettlement && null === expense.deletedAt)
-    .forEach((expense) =>
-      expense.participants
-        .filter((participant) => participant.userId !== expense.paidBy)
-        .forEach((participant) => {
-          const key = pairKey(expense.currency, expense.paidBy, participant.userId);
-          settlementsByPair.set(key, [...(settlementsByPair.get(key) ?? []), expense]);
-        }),
-    );
+): SettlementFinding[] => {
+  const byPair = new Map<string, ReplayExpense[]>();
+  expenses.forEach((expense) =>
+    new Set(
+      otherParticipants(expense).map((p) => pairKey(expense.currency, expense.paidBy, p.userId)),
+    ).forEach((key) => {
+      const list = byPair.get(key);
+      if (list) {
+        list.push(expense);
+      } else {
+        byPair.set(key, [expense]);
+      }
+    }),
+  );
 
   return expenses
     .filter((expense) => expense.isSettlement && null === expense.deletedAt)
-    .flatMap((expense): SettlementFix[] => {
+    .flatMap((expense): SettlementFinding[] => {
       const amount = expenseAmounts.get(expense.id) ?? 0;
       const payer = expense.participants.find((p) => p.userId === expense.paidBy);
-      const others = expense.participants.filter((p) => p.userId !== expense.paidBy);
+      const others = otherParticipants(expense);
       const isCanonical =
         payer?.amount === amount && others.every((participant) => participant.amount === -amount);
 
@@ -54,10 +56,13 @@ export const planSettlementFixes = (
       }
 
       return others.map((other) => {
-        const key = pairKey(expense.currency, expense.paidBy, other.userId);
-        const laterSettlement = (settlementsByPair.get(key) ?? []).some(
-          (candidate) => candidate.id !== expense.id && candidate.createdAt > expense.updatedAt,
+        const related = (
+          byPair.get(pairKey(expense.currency, expense.paidBy, other.userId)) ?? []
+        ).filter((candidate) => candidate.id !== expense.id);
+        const later = related.filter(
+          (candidate) => null === candidate.deletedAt && candidate.createdAt > expense.updatedAt,
         );
+        const laterSettlements = later.filter((candidate) => candidate.isSettlement).length;
         const reason =
           1 !== others.length
             ? 'not-two-people'
@@ -65,9 +70,9 @@ export const planSettlementFixes = (
               ? 'non-positive-amount'
               : !expense.edited
                 ? 'not-edited'
-                : laterSettlement
-                  ? 'later-settlement-between-pair'
-                  : 'edited-settlement-sign-flip';
+                : 0 === other.amount
+                  ? 'other-amount-zero'
+                  : 'other-amount-wrong';
 
         return {
           expenseId: expense.id,
@@ -78,9 +83,11 @@ export const planSettlementFixes = (
           amount,
           payerAmount: payer?.amount ?? null,
           otherAmount: other.amount,
-          updatedAt: expense.updatedAt,
-          delta: -amount - other.amount,
-          status: 'edited-settlement-sign-flip' === reason ? 'auto' : 'manual',
+          edited: expense.edited,
+          canonicalDelta: -amount - other.amount,
+          laterSettlements,
+          laterExpenses: later.length - laterSettlements,
+          deletedSettlements: related.filter((c) => c.isSettlement && null !== c.deletedAt).length,
           reason,
         };
       });
