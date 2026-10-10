@@ -15,6 +15,7 @@ import { type Group, type GroupUser } from '@prisma/client';
 import { CheckIcon, SendIcon, UserPlus } from 'lucide-react';
 import { Input } from '../ui/input';
 import { z } from 'zod';
+import { toast } from 'sonner';
 import { env } from '~/env';
 import { isStorageConfigured } from '~/server/storage';
 
@@ -73,6 +74,9 @@ const AddMembers: React.FC<{
       {
         onSuccess: () => {
           utils.group.getGroupDetails.invalidate({ groupId: group.id }).catch(console.error);
+        },
+        onError: (error) => {
+          toast.error(error.message);
         },
       },
     );

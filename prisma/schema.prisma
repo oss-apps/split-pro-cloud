@@ -63,6 +63,8 @@ model User {
     addedExpenses       Expense[]            @relation("AddedByUser")
     deletedExpenses     Expense[]            @relation("DeletedByUser")
     updatedExpenses     Expense[]            @relation("UpdatedByUser")
+    friendships         Friendship[]         @relation("UserFriendships")
+    friendOf            Friendship[]         @relation("FriendFriendships")
 }
 
 model VerificationToken {
@@ -85,6 +87,17 @@ model Balance {
     friend                User     @relation(name: "FriendBalance", fields: [friendId], references: [id], onDelete: Cascade)
 
     @@id([userId, currency, friendId])
+}
+
+model Friendship {
+    userId    Int
+    friendId  Int
+    createdAt DateTime @default(now())
+    user      User     @relation(name: "UserFriendships", fields: [userId], references: [id], onDelete: Cascade)
+    friend    User     @relation(name: "FriendFriendships", fields: [friendId], references: [id], onDelete: Cascade)
+
+    @@id([userId, friendId])
+    @@index([friendId])
 }
 
 model Group {
