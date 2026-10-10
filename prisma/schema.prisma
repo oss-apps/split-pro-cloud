@@ -136,6 +136,7 @@ model GroupBalance {
     friend    User     @relation(name: "GroupFriendBalance", fields: [firendId], references: [id], onDelete: Cascade)
 
     @@id([groupId, currency, firendId, userId])
+    @@index([currency, userId, firendId])
 }
 
 enum SplitType {

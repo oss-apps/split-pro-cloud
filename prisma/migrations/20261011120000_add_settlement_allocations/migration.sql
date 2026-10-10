@@ -20,3 +20,6 @@ CREATE INDEX "SettlementAllocation_groupId_currency_friendId_userId_idx" ON "Set
 -- AddForeignKey
 -- groupId intentionally has no foreign key so deleting a settled group keeps settlement provenance.
 ALTER TABLE "SettlementAllocation" ADD CONSTRAINT "SettlementAllocation_settlementExpenseId_fkey" FOREIGN KEY ("settlementExpenseId") REFERENCES "Expense"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- CreateIndex
+CREATE INDEX "GroupBalance_currency_userId_firendId_idx" ON "GroupBalance"("currency", "userId", "firendId");
