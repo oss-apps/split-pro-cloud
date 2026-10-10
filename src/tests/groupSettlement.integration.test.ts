@@ -32,6 +32,7 @@ const setup = async () => {
   const callerFor = (user: { id: number; name: string | null; email: string | null }) =>
     appRouter.createCaller({
       db,
+      ip: 'test',
       session: {
         expires: new Date(Date.now() + 60_000).toISOString(),
         user: { id: user.id, name: user.name, email: user.email, currency: 'USD' },
@@ -683,5 +684,154 @@ void test(
     });
 
     await cleanUp([trip.id, flat.id, old.id], userIds);
+  },
+);
+
+void test(
+  'the friend drawer never clears offsetting groups by accident, and offers zero-total currencies',
+  { skip: !databaseUrl },
+  async () => {
+    const {
+      SplitType,
+      addUserExpense,
+      createGroupExpense,
+      deleteExpense,
+      createUser,
+      createGroup,
+      callerFor,
+      getBalance,
+      getGroupBalance,
+      assertMirrored,
+      cleanUp,
+    } = await setup();
+    const {
+      buildSettleUpPayment,
+      getDefaultSelection,
+      getSettleUpDestinations,
+      getSettleableCurrencies,
+      resolveSelection,
+    } = await import('~/utils/settleUp');
+    const [alice, bob] = await Promise.all([createUser('Alice'), createUser('Bob')]);
+    const userIds = [alice.id, bob.id];
+    const trip = await createGroup('Trip', alice.id, userIds);
+    const flat = await createGroup('Flat', alice.id, userIds);
+    const aliceCaller = callerFor(alice);
+    const bobCaller = callerFor(bob);
+    const add = (groupId: number | null, paidBy: number, owedBy: number, amount: number) =>
+      (groupId ? createGroupExpense.bind(null, groupId) : addUserExpense)(
+        paidBy,
+        'Owed',
+        'general',
+        amount,
+        SplitType.EXACT,
+        'USD',
+        [
+          { userId: paidBy, amount },
+          { userId: owedBy, amount: -amount },
+        ],
+        paidBy,
+        new Date('2026-01-01'),
+      );
+    const aliceDestinations = async () => {
+      const [usd] = getSettleableCurrencies(
+        await aliceCaller.user.getBalanceBreakdownWithFriend({ friendId: bob.id }),
+      );
+      return usd ? getSettleUpDestinations(usd) : [];
+    };
+    /** Submits what the drawer submits for a destination, as Alice. */
+    const pay = async (id: 'all' | number, value: number) => {
+      const resolved = resolveSelection(await aliceDestinations(), {
+        id,
+        amount: (await aliceDestinations()).find((d) => d.id === id)?.amount ?? 0,
+      });
+      assert.equal(resolved.status, 'ok');
+      if ('ok' !== resolved.status) {
+        throw new Error('unreachable');
+      }
+      const settlement = buildSettleUpPayment({
+        destination: resolved.destination,
+        currency: 'USD',
+        value,
+        currentUserId: alice.id,
+        friendId: bob.id,
+      });
+      return 'group' === settlement.kind
+        ? aliceCaller.group.addOrEditExpense(settlement.payment)
+        : aliceCaller.user.addOrEditExpense(settlement.payment);
+    };
+    const state = async () => ({
+      total: await getBalance(alice.id, bob.id),
+      trip: await getGroupBalance(trip.id, alice.id, bob.id),
+      flat: await getGroupBalance(flat.id, alice.id, bob.id),
+    });
+
+    // Bob owes Alice 10 in the trip, Alice owes Bob 10 in the flat, Bob owes Alice 5 outside.
+    await add(trip.id, alice.id, bob.id, 10);
+    await add(flat.id, bob.id, alice.id, 10);
+    await add(null, alice.id, bob.id, 5);
+    const initial = { total: 500, trip: 1000, flat: -1000 };
+    assert.deepEqual(await state(), initial);
+
+    // There is no separate non-group payment: only all balances and each group.
+    assert.deepEqual(
+      (await aliceDestinations()).map((d) => [d.id, d.amount]),
+      [
+        ['all', 500],
+        [trip.id, 1000],
+        [flat.id, -1000],
+      ],
+    );
+
+    // Paying one group leaves the other group alone, even when it brings the total to zero.
+    const tripPayment = await pay(trip.id, 5);
+    assert.deepEqual(await state(), { total: 0, trip: 500, flat: -1000 });
+    await assertMirrored(userIds);
+
+    // USD is settled overall, so friend balances hide it, but its groups can still be settled.
+    assert.deepEqual(await aliceCaller.user.getBalancesWithFriend({ friendId: bob.id }), []);
+    const zeroTotal = await aliceDestinations();
+    assert.deepEqual(
+      zeroTotal.map((d) => [d.id, d.amount]),
+      [
+        [trip.id, 500],
+        [flat.id, -1000],
+      ],
+    );
+    assert.equal(getDefaultSelection(zeroTotal), undefined);
+    await pay(flat.id, 4);
+    assert.deepEqual(await state(), { total: 400, trip: 500, flat: -600 });
+
+    // A selection made before Bob settles the trip from elsewhere is dropped, not redirected.
+    const tripSelection = { id: trip.id, amount: 500 };
+    const bobTrip = await bobCaller.group.addOrEditExpense({
+      groupId: trip.id,
+      name: 'Settle up',
+      currency: 'USD',
+      amount: 5,
+      splitType: SplitType.SETTLEMENT,
+      participants: [
+        { userId: bob.id, amount: 5 },
+        { userId: alice.id, amount: -5 },
+      ],
+      paidBy: bob.id,
+      category: 'general',
+    });
+    assert.deepEqual(resolveSelection(await aliceDestinations(), tripSelection), {
+      status: 'stale',
+    });
+
+    // Or when the trip now goes the other way.
+    await add(trip.id, bob.id, alice.id, 3);
+    assert.deepEqual(resolveSelection(await aliceDestinations(), tripSelection), {
+      status: 'stale',
+    });
+
+    // Deleting the group payments puts both groups back.
+    await deleteExpense(bobTrip.id, bob.id);
+    await deleteExpense(tripPayment.id, alice.id);
+    assert.deepEqual(await state(), { total: 600, trip: 700, flat: -600 });
+    await assertMirrored(userIds);
+
+    await cleanUp([trip.id, flat.id], userIds);
   },
 );

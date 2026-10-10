@@ -112,13 +112,8 @@ const FriendPage: NextPageWithUser = ({ user }) => {
               </div>
             </div>
             <div className="mb-4 mt-6 flex justify-center gap-2 px-2 ">
-              {balances.data ? (
-                <SettleUp
-                  balances={balances.data}
-                  key={`${friendQuery.data?.id}-${balances.data.length}`}
-                  friend={friendQuery.data}
-                  currentUser={user}
-                />
+              {friendQuery.data ? (
+                <SettleUp key={friendQuery.data.id} friend={friendQuery.data} currentUser={user} />
               ) : (
                 <Button
                   size="sm"

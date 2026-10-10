@@ -24,11 +24,36 @@ export const GroupSettleUp: React.FC<{
     .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
   const [firstBalance] = balances;
 
-  const [balanceToSettle, setBalanceToSettle] = React.useState<GroupBalance | undefined>();
+  // Keep only what was picked, so what is shown and paid always comes from the latest balances.
+  const [selection, setSelection] = React.useState<
+    Pick<GroupBalance, 'firendId' | 'currency' | 'amount'> | undefined
+  >();
   const [amount, setAmount] = React.useState('');
+  const [selectionChanged, setSelectionChanged] = React.useState(false);
 
+  const currentBalance = selection
+    ? balances.find((b) => b.firendId === selection.firendId && b.currency === selection.currency)
+    : undefined;
+  // A balance that is gone or now goes the other way is never paid with the old direction.
+  const isStale =
+    !!selection &&
+    (!currentBalance || Math.sign(currentBalance.amount) !== Math.sign(selection.amount));
+  const balanceToSettle = isStale ? undefined : currentBalance;
   const friend = balanceToSettle ? membersById.get(balanceToSettle.firendId) : undefined;
   const isCurrentUserPaying = (balanceToSettle?.amount ?? 0) < 0;
+
+  React.useEffect(() => {
+    if (isStale) {
+      setSelection(undefined);
+      setAmount('');
+      setSelectionChanged(true);
+    }
+  }, [isStale]);
+
+  function setBalanceToSettle(balance: GroupBalance | undefined) {
+    setSelection(balance);
+    setSelectionChanged(false);
+  }
 
   function onSelectBalance(balance: GroupBalance) {
     setBalanceToSettle(balance);
@@ -137,6 +162,11 @@ export const GroupSettleUp: React.FC<{
         {!balanceToSettle || !friend ? (
           balances.length ? (
             <div>
+              {selectionChanged ? (
+                <p className="px-4 py-2 text-sm text-orange-600">
+                  Balances changed. Choose who to settle up with again.
+                </p>
+              ) : null}
               {balances.map((b) => {
                 const member = membersById.get(b.firendId);
 
