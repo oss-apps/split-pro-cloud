@@ -39,7 +39,10 @@ const SplitProPrismaAdapter = (...args: Parameters<typeof PrismaAdapter>): Adapt
   return {
     ...prismaAdapter,
     createUser: async (user: Omit<AdapterUser, 'id'>): Promise<AdapterUser> => {
-      const prismaCreateUser = prismaAdapter.createUser;
+      // next-auth types this via the optional @auth/core peer, which resolves to `any` without it
+      const prismaCreateUser = prismaAdapter.createUser as
+        | ((user: Omit<AdapterUser, 'id'>) => Promise<AdapterUser>)
+        | undefined;
 
       if (env.INVITE_ONLY) {
         throw new Error('This instance is Invite Only');

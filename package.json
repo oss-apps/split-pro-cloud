@@ -59,10 +59,10 @@
     "lucide-react": "^0.312.0",
     "nanoid": "^5.0.6",
     "next": "^15.5.27",
-    "next-auth": "^4.24.5",
+    "next-auth": "^4.24.15",
     "next-pwa": "^5.6.0",
     "next-themes": "^0.2.1",
-    "nodemailer": "^6.9.8",
+    "nodemailer": "^10.1.0",
     "react": "18.2.0",
     "react-day-picker": "^8.10.0",
     "react-dom": "18.2.0",
@@ -81,7 +81,7 @@
     "@types/eslint": "^8.44.7",
     "@types/next-pwa": "^5.6.9",
     "@types/node": "^18.17.0",
-    "@types/nodemailer": "^6.4.15",
+    "@types/nodemailer": "^8.0.2",
     "@types/react": "^18.2.37",
     "@types/react-dom": "^18.2.15",
     "@types/web-push": "^3.6.3",
@@ -104,5 +104,12 @@
   "prisma": {
     "seed": "tsx prisma/seed.ts"
   },
-  "packageManager": "pnpm@8.9.2"
+  "packageManager": "pnpm@8.9.2",
+  "pnpm": {
+    "peerDependencyRules": {
+      "allowedVersions": {
+        "next-auth>nodemailer": "10"
+      }
+    }
+  }
 }
