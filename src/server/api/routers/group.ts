@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { createTRPCRouter, groupProcedure, protectedProcedure } from '~/server/api/trpc';
 import { db } from '~/server/db';
 import { createGroupExpense, deleteExpense, editExpense } from '../services/splitService';
+import { assertCanSaveGroupExpense, assertKnownUsers } from '../services/accessControl';
 import { TRPCError } from '@trpc/server';
 import { nanoid } from 'nanoid';
 
@@ -139,23 +140,7 @@ export const groupRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ input, ctx }) => {
-      if (input.expenseId) {
-        const expenseParticipant = await db.expenseParticipant.findUnique({
-          where: {
-            expenseId_userId: {
-              expenseId: input.expenseId,
-              userId: ctx.session.user.id,
-            },
-          },
-        });
-
-        if (!expenseParticipant) {
-          throw new TRPCError({
-            code: 'UNAUTHORIZED',
-            message: 'You are not the participant of the expense',
-          });
-        }
-      }
+      await assertCanSaveGroupExpense(ctx.session.user.id, input.groupId, input);
 
       try {
         const expense = input.expenseId
@@ -220,6 +205,7 @@ export const groupRouter = createTRPCRouter({
       const expense = await db.expense.findUnique({
         where: {
           id: input.expenseId,
+          groupId: input.groupId,
         },
         include: {
           expenseParticipants: {
@@ -234,6 +220,10 @@ export const groupRouter = createTRPCRouter({
           updatedByUser: true,
         },
       });
+
+      if (!expense) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Expense not found' });
+      }
 
       return expense;
     }),
@@ -274,12 +264,15 @@ export const groupRouter = createTRPCRouter({
   addMembers: groupProcedure
     .input(z.object({ userIds: z.array(z.number()) }))
     .mutation(async ({ input, ctx }) => {
-      console.log(input.userIds);
+      const userIds = [...new Set(input.userIds)];
+      await assertKnownUsers(ctx.session.user.id, userIds);
+
       const groupUsers = await ctx.db.groupUser.createMany({
-        data: input.userIds.map((userId) => ({
+        data: userIds.map((userId) => ({
           groupId: input.groupId,
           userId,
         })),
+        skipDuplicates: true,
       });
 
       return groupUsers;
