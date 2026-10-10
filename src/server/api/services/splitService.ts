@@ -4,7 +4,7 @@ import { nanoid } from 'nanoid';
 import { db } from '~/server/db';
 import { type SplitwiseGroup, type SplitwiseUser } from '~/types';
 import { toFixedNumber, toInteger } from '~/utils/numbers';
-import { InvalidExpenseError, toBalancedParticipants } from '~/utils/splits';
+import { InvalidExpenseError, assertGroupSettlement, toBalancedParticipants } from '~/utils/splits';
 import { captureSettlementAllocations, restoreSettlementAllocations } from './balanceProjection';
 import { runBalanceTransaction } from './balanceTransaction';
 import { sendExpensePushNotification } from './notificationService';
@@ -32,8 +32,14 @@ const toStoredParticipants = (participants: { userId: number; amount: number }[]
     amount: toInteger(participant.amount),
   }));
 
-const getBalancedParticipants = (input: ExpenseInput) => {
+const getBalancedParticipants = (groupId: number | null, input: ExpenseInput) => {
   try {
+    // Personal settlements keep accepting any sign and are normalized below. Group settlements are
+    // new, so they must already have the canonical shape.
+    if (null !== groupId && SplitType.SETTLEMENT === input.splitType) {
+      assertGroupSettlement(input.amount, input.paidBy, input.participants);
+    }
+
     return toStoredParticipants(
       toBalancedParticipants(input.amount, input.paidBy, input.participants, input.splitType),
     );
@@ -166,8 +172,9 @@ export async function joinGroup(userId: number, publicGroupId: string) {
 }
 
 const createExpense = async (groupId: number | null, input: ExpenseInput) => {
-  const participants = getBalancedParticipants(input);
-  const isSettlement = SplitType.SETTLEMENT === input.splitType;
+  const participants = getBalancedParticipants(groupId, input);
+  // Only personal settlements clear group balances, so only they track allocations.
+  const tracksAllocations = SplitType.SETTLEMENT === input.splitType && null === groupId;
 
   const expense = await runBalanceTransaction(async (tx) => {
     const expense = await tx.expense.create({
@@ -183,7 +190,7 @@ const createExpense = async (groupId: number | null, input: ExpenseInput) => {
         fileKey: input.fileKey,
         addedBy: input.currentUserId,
         expenseDate: input.expenseDate,
-        settlementAllocationVersion: isSettlement ? SETTLEMENT_ALLOCATION_VERSION : null,
+        settlementAllocationVersion: tracksAllocations ? SETTLEMENT_ALLOCATION_VERSION : null,
       },
     });
 
@@ -195,7 +202,7 @@ const createExpense = async (groupId: number | null, input: ExpenseInput) => {
 
     // A personal settlement that clears a pair also clears their group balances, and records
     // what it cleared so editing or deleting the settlement can put it back.
-    if (isSettlement && null === groupId) {
+    if (tracksAllocations) {
       await captureSettlementAllocations(
         tx,
         expense.id,
@@ -359,15 +366,16 @@ export async function editExpense(
       return { id: expenseId };
     }
 
-    const newParticipants = getBalancedParticipants(input);
+    const newParticipants = getBalancedParticipants(expense.groupId, input);
     const isSettlement = SplitType.SETTLEMENT === splitType;
     // Settlements created before allocations existed keep their original semantics: they only
-    // ever change `Balance`, never `GroupBalance`.
-    const settlementAllocationVersion = !isSettlement
-      ? null
-      : SplitType.SETTLEMENT === expense.splitType
-        ? expense.settlementAllocationVersion
-        : SETTLEMENT_ALLOCATION_VERSION;
+    // ever change `Balance`, never `GroupBalance`. Group settlements never track allocations.
+    const settlementAllocationVersion =
+      !isSettlement || null !== expense.groupId
+        ? null
+        : SplitType.SETTLEMENT === expense.splitType
+          ? expense.settlementAllocationVersion
+          : SETTLEMENT_ALLOCATION_VERSION;
 
     await restoreSettlementAllocations(tx, expenseId);
     await updateBalances(

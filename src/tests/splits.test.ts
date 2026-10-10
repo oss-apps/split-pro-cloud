@@ -4,7 +4,7 @@ import { SplitType, type User } from '@prisma/client';
 
 import { calculateParticipantSplit, type Participant, useAddExpenseStore } from '~/store/addStore';
 import { toInteger } from '~/utils/numbers';
-import { toBalancedParticipants } from '~/utils/splits';
+import { assertGroupSettlement, toBalancedParticipants } from '~/utils/splits';
 
 const createUser = (id: number): User => ({
   id,
@@ -336,5 +336,75 @@ void describe('split type conversion', () => {
       [-5, 5],
     );
     assert.equal(useAddExpenseStore.getState().canSplitScreenClosed, true);
+  });
+});
+
+void describe('assertGroupSettlement', () => {
+  void it('accepts a payment from the payer to one other member', () => {
+    assert.doesNotThrow(() =>
+      assertGroupSettlement(12.34, 1, [
+        { userId: 1, amount: 12.34 },
+        { userId: 2, amount: -12.34 },
+      ]),
+    );
+  });
+
+  void it('rejects anything but the payer and one other member', () => {
+    assert.throws(
+      () =>
+        assertGroupSettlement(10, 1, [
+          { userId: 1, amount: 10 },
+          { userId: 2, amount: -5 },
+          { userId: 3, amount: -5 },
+        ]),
+      /between the payer and one other member/,
+    );
+    assert.throws(
+      () => assertGroupSettlement(10, 1, [{ userId: 2, amount: -10 }]),
+      /between the payer and one other member/,
+    );
+    assert.throws(
+      () =>
+        assertGroupSettlement(10, 1, [
+          { userId: 2, amount: 10 },
+          { userId: 3, amount: -10 },
+        ]),
+      /between the payer and one other member/,
+    );
+  });
+
+  void it('rejects wrong signs, partial amounts and non-positive amounts', () => {
+    assert.throws(
+      () =>
+        assertGroupSettlement(10, 1, [
+          { userId: 1, amount: -10 },
+          { userId: 2, amount: 10 },
+        ]),
+      /full amount/,
+    );
+    assert.throws(
+      () =>
+        assertGroupSettlement(10, 1, [
+          { userId: 1, amount: 10 },
+          { userId: 2, amount: -9.99 },
+        ]),
+      /full amount/,
+    );
+    assert.throws(
+      () =>
+        assertGroupSettlement(-10, 1, [
+          { userId: 1, amount: -10 },
+          { userId: 2, amount: 10 },
+        ]),
+      /more than zero/,
+    );
+    assert.throws(
+      () =>
+        assertGroupSettlement(0, 1, [
+          { userId: 1, amount: 0 },
+          { userId: 2, amount: 0 },
+        ]),
+      /more than zero/,
+    );
   });
 });

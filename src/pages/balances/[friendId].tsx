@@ -194,7 +194,8 @@ const FriendPage: NextPageWithUser = ({ user }) => {
                           </span>
                           <span>
                             {youPaid ? 'You' : friendQuery.data?.name} paid {e.currency}{' '}
-                            {toUIString(e.amount)}{' '}
+                            {toUIString(e.amount)}
+                            {isSettlement && e.group ? ` in ${e.group.name}` : ''}{' '}
                           </span>
                         </p>
                       </div>

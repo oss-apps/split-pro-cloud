@@ -27,6 +27,7 @@ import { toFixedNumber, toUIString } from '~/utils/numbers';
 import { SplitwiseGroupSchema, SplitwiseUserSchema } from '~/types';
 import { env } from '~/env';
 import { runBalanceTransaction } from '../services/balanceTransaction';
+import { getBalanceBreakdownWithFriend } from '../services/balanceBreakdown';
 
 export const userRouter = createTRPCRouter({
   me: protectedProcedure.query(async ({ ctx }) => {
@@ -268,6 +269,7 @@ export const userRouter = createTRPCRouter({
               ],
             },
           },
+          group: { select: { name: true } },
         },
       });
 
@@ -289,6 +291,10 @@ export const userRouter = createTRPCRouter({
 
       return balances;
     }),
+
+  getBalanceBreakdownWithFriend: protectedProcedure
+    .input(z.object({ friendId: z.number() }))
+    .query(({ input, ctx }) => getBalanceBreakdownWithFriend(ctx.session.user.id, input.friendId)),
 
   getExpenseDetails: protectedProcedure
     .input(z.object({ expenseId: z.string() }))
@@ -363,6 +369,7 @@ export const userRouter = createTRPCRouter({
                 id: true,
               },
             },
+            group: { select: { name: true } },
           },
         },
       },
