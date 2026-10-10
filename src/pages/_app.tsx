@@ -24,12 +24,16 @@ const MyApp: AppType<{ session: Session | null }> = ({
   return (
     <main className={clsx(poppins.className, 'h-full')}>
       <Head>
-        <title>SplitPro: Split Expenses with your friends for free</title>
+        <title key="title">SplitPro: Split Expenses with your friends for free</title>
         <link rel="icon" href="/favicon.ico" />
         <meta name="application-name" content="SplitPro" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-title" content="SplitPro" />
-        <meta name="description" content="Split Expenses with your friends for free" />
+        <meta
+          key="description"
+          name="description"
+          content="Split Expenses with your friends for free"
+        />
         <meta name="format-detection" content="telephone=no" />
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="msapplication-config" content="/icons/browserconfig.xml" />
@@ -50,18 +54,30 @@ const MyApp: AppType<{ session: Session | null }> = ({
         <link rel="mask-icon" href="/icons/safari-pinned-tab.svg" color="#5bbad5" />
         <link rel="shortcut icon" href="/favicon.ico" />
 
-        <meta name="twitter:card" content="summary" />
-        <meta name="twitter:url" content="https://splitpro.app" />
-        <meta name="twitter:title" content="SplitPro" />
-        <meta name="twitter:description" content="Split Expenses with your friends for free" />
-        <meta name="twitter:image" content="https://splitpro.app/og_banner.png" />
+        <meta key="twitter:card" name="twitter:card" content="summary_large_image" />
+        <meta key="twitter:url" name="twitter:url" content="https://splitpro.app" />
+        <meta key="twitter:title" name="twitter:title" content="SplitPro" />
+        <meta
+          key="twitter:description"
+          name="twitter:description"
+          content="Split Expenses with your friends for free"
+        />
+        <meta
+          key="twitter:image"
+          name="twitter:image"
+          content="https://splitpro.app/og_banner.png"
+        />
         <meta name="twitter:creator" content="@KM_Koushik_" />
-        <meta property="og:type" content="website" />
-        <meta property="og:title" content="SplitPro" />
-        <meta property="og:description" content="Split Expenses with your friends for free" />
-        <meta property="og:site_name" content="SplitPro" />
-        <meta property="og:url" content="https://splitpro.app" />
-        <meta property="og:image" content="https://splitpro.app/og_banner.png" />
+        <meta key="og:type" property="og:type" content="website" />
+        <meta key="og:title" property="og:title" content="SplitPro" />
+        <meta
+          key="og:description"
+          property="og:description"
+          content="Split Expenses with your friends for free"
+        />
+        <meta key="og:site_name" property="og:site_name" content="SplitPro" />
+        <meta key="og:url" property="og:url" content="https://splitpro.app" />
+        <meta key="og:image" property="og:image" content="https://splitpro.app/og_banner.png" />
       </Head>
       <SessionProvider session={session}>
         <ThemeProvider attribute="class" defaultTheme="dark">
