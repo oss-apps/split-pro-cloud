@@ -7,13 +7,12 @@ export const MonthHeader: React.FC<{ date: Date }> = ({ date }) => (
   </p>
 );
 
-export const DateColumn: React.FC<{ date: Date }> = ({ date }) => {
-  const { month, day } = getDateColumn(date);
-
-  return (
-    <div className="text-xs text-gray-500">
-      <div className="text-center">{month}</div>
-      <div className="text-center">{day}</div>
-    </div>
-  );
-};
+export const DateColumn: React.FC<{ date: Date }> = ({ date }) => (
+  <div className="text-xs text-gray-500">
+    {getDateColumn(date).map((part) => (
+      <div className="text-center" key={part}>
+        {part}
+      </div>
+    ))}
+  </div>
+);

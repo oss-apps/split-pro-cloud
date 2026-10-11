@@ -7,6 +7,7 @@ import { useAddExpenseStore } from '~/store/addStore';
 import {
   formatMonthHeader,
   formatShortDate,
+  getDateColumn,
   isNewMonth,
   parseDateInput,
   toDateInputValue,
@@ -40,6 +41,11 @@ void describe('expense list dates', () => {
     assert.equal(formatMonthHeader(new Date(2025, 11, 3), now, 'en-US'), 'December 2025');
     assert.equal(formatShortDate(new Date(2026, 2, 3), now, 'en-GB'), '3 Mar');
     assert.equal(formatShortDate(new Date(2025, 11, 3), now, 'en-GB'), '3 Dec 2025');
+  });
+
+  void it('orders the date column like the locale', () => {
+    assert.deepEqual(getDateColumn(new Date(2026, 2, 3), 'en-US'), ['Mar', '3']);
+    assert.deepEqual(getDateColumn(new Date(2026, 2, 3), 'en-GB'), ['3', 'Mar']);
   });
 });
 

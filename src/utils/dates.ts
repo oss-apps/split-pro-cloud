@@ -25,11 +25,12 @@ export const formatShortDate = (date: Date, now = new Date(), locale?: string) =
     ...(isSameYear(date, now) ? {} : { year: 'numeric' }),
   }).format(date);
 
-/** Month and day as two short parts, for the date column of expense lists. */
-export const getDateColumn = (date: Date, locale?: string) => ({
-  month: new Intl.DateTimeFormat(locale, { month: 'short' }).format(date),
-  day: new Intl.DateTimeFormat(locale, { day: 'numeric' }).format(date),
-});
+/** Month and day as two short lines for the date column of expense lists, in locale order. */
+export const getDateColumn = (date: Date, locale?: string) =>
+  new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric' })
+    .formatToParts(date)
+    .filter((part) => 'month' === part.type || 'day' === part.type)
+    .map((part) => part.value);
 
 /** A local `yyyy-MM-dd`, the value of a date input. */
 export const toDateInputValue = (date: Date) => format(date, 'yyyy-MM-dd');
