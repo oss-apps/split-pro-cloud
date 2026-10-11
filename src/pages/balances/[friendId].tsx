@@ -23,6 +23,7 @@ import { motion } from 'framer-motion';
 import { DeleteFriend } from '~/components/Friend/DeleteFriend';
 import { Export } from '~/components/Friend/Export';
 import { DateColumn, MonthHeader } from '~/components/Expense/ExpenseListDate';
+import { RepeatIcon } from '~/components/Expense/RepeatIcon';
 import { isNewMonth } from '~/utils/dates';
 
 const FriendPage: NextPageWithUser = ({ user }) => {
@@ -181,8 +182,9 @@ const FriendPage: NextPageWithUser = ({ user }) => {
                         </div>
                         <div>
                           {!isSettlement ? (
-                            <p className=" max-w-[180px] truncate text-sm lg:max-w-md lg:text-base">
-                              {e.name}
+                            <p className="flex items-center gap-1 text-sm lg:text-base">
+                              <span className="max-w-[180px] truncate lg:max-w-md">{e.name}</span>
+                              {e.recurringId ? <RepeatIcon /> : null}
                             </p>
                           ) : null}
                           <p

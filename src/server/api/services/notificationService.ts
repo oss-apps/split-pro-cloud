@@ -125,3 +125,45 @@ export async function sendDefaultSplitPushNotification(
 
   await Promise.all(subscriptions.map((s) => pushNotification(s.subscription, pushData)));
 }
+
+const sendToUser = async (userId: number, pushData: { title: string; message: string }) => {
+  const subscriptions = await db.pushNotification.findMany({ where: { userId } });
+  await Promise.all(subscriptions.map((s) => pushNotification(s.subscription, pushData)));
+};
+
+/** Tells the creator of a recurring expense that it was paused or stopped, and why. */
+export async function sendRecurringStatusPushNotification(recurringId: number) {
+  const rule = await db.recurringExpense.findUnique({
+    where: { id: recurringId },
+    select: {
+      createdById: true,
+      status: true,
+      statusReason: true,
+      occurrences: { orderBy: { occurrenceDate: 'desc' }, take: 1, select: { name: true } },
+    },
+  });
+
+  if (!rule || 'ACTIVE' === rule.status) {
+    return;
+  }
+
+  await sendToUser(rule.createdById, {
+    title: `${rule.occurrences[0]?.name ?? 'A recurring expense'} ${'PAUSED' === rule.status ? 'paused' : 'stopped'}`,
+    message: rule.statusReason ?? '',
+  });
+}
+
+/** Tells creators that their recurring expenses went away with their group. */
+export async function sendRecurringGroupDeletedPushNotification(
+  rules: Array<{ createdById: number; name: string }>,
+  groupName: string,
+) {
+  await Promise.all(
+    rules.map((rule) =>
+      sendToUser(rule.createdById, {
+        title: `${rule.name} stopped`,
+        message: `The group ${groupName} was deleted`,
+      }),
+    ),
+  );
+}

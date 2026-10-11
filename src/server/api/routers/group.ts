@@ -1,4 +1,4 @@
-import { Prisma, SplitType } from '@prisma/client';
+import { Prisma, RecurringStatus, SplitType } from '@prisma/client';
 import { z } from 'zod';
 import { getGroupTotalsWhere } from '~/utils/balances';
 import { createTRPCRouter, groupProcedure, protectedProcedure } from '~/server/api/trpc';
@@ -15,7 +15,12 @@ import {
   getGroupDefaultSplit,
   isSameDefaultSplit,
 } from '~/utils/defaultSplit';
-import { sendDefaultSplitPushNotification } from '../services/notificationService';
+import {
+  sendDefaultSplitPushNotification,
+  sendRecurringGroupDeletedPushNotification,
+  sendRecurringStatusPushNotification,
+} from '../services/notificationService';
+import { pauseRulesWith, recurrenceInputSchema } from '../services/recurringService';
 
 export const groupRouter = createTRPCRouter({
   create: protectedProcedure
@@ -157,6 +162,8 @@ export const groupRouter = createTRPCRouter({
         fileKey: z.string().optional(),
         expenseDate: z.date().optional(),
         expenseId: z.string().optional(),
+        /** How a new expense repeats. For an edit, `null` stops it repeating. */
+        recurrence: recurrenceInputSchema.nullable().optional(),
       }),
     )
     .mutation(async ({ input, ctx }) => {
@@ -176,6 +183,7 @@ export const groupRouter = createTRPCRouter({
               ctx.session.user.id,
               input.expenseDate ?? new Date(),
               input.fileKey,
+              input.recurrence,
             )
           : await createGroupExpense(
               input.groupId,
@@ -189,6 +197,7 @@ export const groupRouter = createTRPCRouter({
               ctx.session.user.id,
               input.expenseDate ?? new Date(),
               input.fileKey,
+              input.recurrence ?? undefined,
             );
 
         return expense;
@@ -243,6 +252,7 @@ export const groupRouter = createTRPCRouter({
           paidByUser: true,
           deletedByUser: true,
           updatedByUser: true,
+          recurring: { select: { id: true, frequency: true, status: true } },
         },
       });
 
@@ -350,70 +360,106 @@ export const groupRouter = createTRPCRouter({
       return groupUsers;
     }),
 
-  leaveGroup: groupProcedure.input(z.object({ groupId: z.number() })).mutation(({ input, ctx }) =>
-    runBalanceTransaction(async (tx) => {
-      const nonZeroBalance = await tx.groupBalance.findFirst({
-        where: {
-          groupId: input.groupId,
-          userId: ctx.session.user.id,
-          amount: {
-            not: 0,
-          },
-        },
-      });
-
-      if (nonZeroBalance) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: 'You have a non-zero balance in this group',
-        });
-      }
-
-      return tx.groupUser.delete({
-        where: {
-          groupId_userId: {
+  leaveGroup: groupProcedure
+    .input(z.object({ groupId: z.number() }))
+    .mutation(async ({ input, ctx }) => {
+      const { left, pausedIds } = await runBalanceTransaction(async (tx) => {
+        const nonZeroBalance = await tx.groupBalance.findFirst({
+          where: {
             groupId: input.groupId,
             userId: ctx.session.user.id,
+            amount: {
+              not: 0,
+            },
           },
-        },
+        });
+
+        if (nonZeroBalance) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'You have a non-zero balance in this group',
+          });
+        }
+
+        const left = await tx.groupUser.delete({
+          where: {
+            groupId_userId: {
+              groupId: input.groupId,
+              userId: ctx.session.user.id,
+            },
+          },
+        });
+
+        // Repeating an expense they are in would add it without them, so it waits for a decision.
+        const pausedIds = await pauseRulesWith(tx, {
+          groupId: input.groupId,
+          userIds: [ctx.session.user.id],
+          reason: `${ctx.session.user.name ?? ctx.session.user.email ?? 'Someone'} left the group`,
+        });
+
+        return { left, pausedIds };
       });
+
+      pausedIds.forEach((id) => {
+        sendRecurringStatusPushNotification(id).catch(console.error);
+      });
+      return left;
     }),
-  ),
 
-  delete: groupProcedure.input(z.object({ groupId: z.number() })).mutation(({ input, ctx }) =>
-    runBalanceTransaction(async (tx) => {
-      const group = await tx.group.findUnique({
-        where: {
-          id: input.groupId,
-        },
-        include: {
-          groupBalances: true,
-        },
+  delete: groupProcedure
+    .input(z.object({ groupId: z.number() }))
+    .mutation(async ({ input, ctx }) => {
+      const { group, rules } = await runBalanceTransaction(async (tx) => {
+        const group = await tx.group.findUnique({
+          where: {
+            id: input.groupId,
+          },
+          include: {
+            groupBalances: true,
+          },
+        });
+
+        if (group?.userId !== ctx.session.user.id) {
+          throw new TRPCError({
+            code: 'UNAUTHORIZED',
+            message: 'Only creator can delete the group',
+          });
+        }
+
+        const balanceWithNonZero = group.groupBalances.find((balance) => 0 !== balance.amount);
+
+        if (balanceWithNonZero) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'You have a non-zero balance in this group',
+          });
+        }
+
+        // Its recurring expenses go with the group and its expenses. Their creators are told.
+        const rules = await tx.recurringExpense.findMany({
+          where: { groupId: input.groupId, status: { not: RecurringStatus.STOPPED } },
+          select: {
+            createdById: true,
+            occurrences: { orderBy: { occurrenceDate: 'desc' }, take: 1, select: { name: true } },
+          },
+        });
+
+        await tx.group.delete({
+          where: {
+            id: input.groupId,
+          },
+        });
+
+        return { group, rules };
       });
 
-      if (group?.userId !== ctx.session.user.id) {
-        throw new TRPCError({
-          code: 'UNAUTHORIZED',
-          message: 'Only creator can delete the group',
-        });
-      }
-
-      const balanceWithNonZero = group.groupBalances.find((balance) => 0 !== balance.amount);
-
-      if (balanceWithNonZero) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: 'You have a non-zero balance in this group',
-        });
-      }
-
-      await tx.group.delete({
-        where: {
-          id: input.groupId,
-        },
-      });
-
+      sendRecurringGroupDeletedPushNotification(
+        rules.map((rule) => ({
+          createdById: rule.createdById,
+          name: rule.occurrences[0]?.name ?? 'A recurring expense',
+        })),
+        group.name,
+      ).catch(console.error);
       return group;
     }),
-  ),
 });

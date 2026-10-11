@@ -12,6 +12,7 @@ import { type User } from 'next-auth';
 import { BalanceSkeleton } from '~/components/ui/skeleton';
 import useEnableAfter from '~/hooks/useEnableAfter';
 import { LoadingSpinner } from '~/components/ui/spinner';
+import { RepeatIcon } from '~/components/Expense/RepeatIcon';
 import { Fragment } from 'react';
 import { AdSlot, isFeedAdPosition } from '~/components/Ads/AdSlot';
 
@@ -111,6 +112,9 @@ const ActivityPage: NextPageWithUser = ({ user }) => {
                                 <span className=" font-semibold text-gray-300">
                                   {e.expense.name}
                                 </span>
+                                {e.expense.recurringId ? (
+                                  <RepeatIcon className="ml-1 inline align-[-1px]" />
+                                ) : null}
                               </>
                             )}
                           </p>

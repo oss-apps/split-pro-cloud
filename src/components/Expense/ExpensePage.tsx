@@ -11,6 +11,7 @@ import { Separator } from '../ui/separator';
 import { CategoryIcons } from '../ui/categoryIcons';
 import { Banknote } from 'lucide-react';
 import { env } from '~/env';
+import { ExpenseRecurringRule } from './RecurringRule';
 
 type ExpenseDetailsProps = {
   user: NextUser;
@@ -62,6 +63,7 @@ const ExpenseDetails: React.FC<ExpenseDetailsProps> = ({ user, expense, storageP
                 {format(expense.createdAt, 'dd MMM yyyy')}
               </p>
             )}
+            {expense.recurringId ? <ExpenseRecurringRule ruleId={expense.recurringId} /> : null}
           </div>
         </div>
         <div>
