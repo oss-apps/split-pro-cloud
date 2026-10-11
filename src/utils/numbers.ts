@@ -13,6 +13,19 @@ export function toInteger(num: number) {
   return Math.round(num * 100);
 }
 
+/**
+ * A sum of percentages or shares in whole hundredths. Values with at most 2 decimals add up exactly,
+ * whatever float noise their sum has.
+ */
+export function sumHundredths(values: number[]) {
+  return Math.round(values.reduce((total, value) => total + value, 0) * 100);
+}
+
+/** Whether a value is written with at most 2 decimals, e.g. 33.33 but not 33.333. */
+export function hasAtMostTwoDecimals(value: number) {
+  return Number.isFinite(value) && Math.round(value * 100) / 100 === value;
+}
+
 /** Whether a major-unit amount (e.g. 12.34) fits the stored integer cents. */
 export function isAmountWithinLimit(num: number) {
   const cents = toInteger(num);

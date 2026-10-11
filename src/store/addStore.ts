@@ -6,7 +6,7 @@ import {
   isDefaultSplitType,
   resolveDefaultSplit,
 } from '~/utils/defaultSplit';
-import { toFixedNumber, toInteger } from '~/utils/numbers';
+import { sumHundredths, toFixedNumber, toInteger } from '~/utils/numbers';
 
 export type Participant = User & { amount?: number; splitShare?: number };
 
@@ -188,6 +188,27 @@ const touchSplit = (participants: Array<Participant>, splitType: SplitType) => (
   defaultSplitHint: undefined,
 });
 
+/**
+ * The split changed by hand, with a participant's value moved to who replaced them (an invite that
+ * returned their account) or dropped when they left the form, so selecting a group later never
+ * applies a value to the wrong person.
+ */
+const moveInManualSplit = (
+  manualSplit: DefaultSplit | undefined,
+  fromId: number,
+  toId?: number,
+): DefaultSplit | undefined => {
+  if (undefined === manualSplit?.shares[fromId]) {
+    return manualSplit;
+  }
+
+  const { [fromId]: value, ...shares } = manualSplit.shares;
+  return {
+    ...manualSplit,
+    shares: undefined === toId || undefined === value ? shares : { ...shares, [toId]: value },
+  };
+};
+
 /** An untouched currency follows the group, and goes back to the user's without one. */
 const getGroupCurrency = (state: AddExpenseState, group: Group | undefined) => {
   if (state.currencyTouched) {
@@ -356,17 +377,23 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
       set((state) => {
         if (state.participants.length === 1) return {};
         const newParticipants = [...state.participants];
-        newParticipants.pop();
-        return splitWithParticipants(state, newParticipants);
+        const removed = newParticipants.pop();
+        return {
+          ...splitWithParticipants(state, newParticipants),
+          manualSplit: removed
+            ? moveInManualSplit(state.manualSplit, removed.id)
+            : state.manualSplit,
+        };
       });
     },
     removeParticipant: (userId) => {
-      set((state) =>
-        splitWithParticipants(
+      set((state) => ({
+        ...splitWithParticipants(
           state,
           state.participants.filter((p) => p.id !== userId),
         ),
-      );
+        manualSplit: moveInManualSplit(state.manualSplit, userId),
+      }));
     },
     replaceParticipant: (fromId, user) =>
       set((state) => {
@@ -388,7 +415,15 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
         });
         const paidBy = state.paidBy?.id === fromId ? user : state.paidBy;
 
-        return splitWithParticipants({ ...state, paidBy }, participants);
+        return {
+          ...splitWithParticipants({ ...state, paidBy }, participants),
+          // Someone already in the form keeps their own value, as they do in the split.
+          manualSplit: moveInManualSplit(
+            state.manualSplit,
+            fromId,
+            isAlreadyParticipant ? undefined : user.id,
+          ),
+        };
       }),
     setCurrency: (currency) => set((s) => withEditSnapshot(s, { currency, currencyTouched: true })),
     setPreferredCurrency: (preferredCurrency) => set({ preferredCurrency }),
@@ -457,7 +492,7 @@ const sumSplitShares = (participants: Array<Participant>) =>
 
 /** Remaining percentage to assign, compared in hundredths so float noise never blocks a split. */
 export function getRemainingPercentage(participants: Array<Participant>) {
-  return (10_000 - Math.round(sumSplitShares(participants) * 100)) / 100;
+  return (10_000 - sumHundredths(participants.map((p) => p.splitShare ?? 0))) / 100;
 }
 
 export function calculateParticipantSplit(

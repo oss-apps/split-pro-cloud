@@ -9,7 +9,12 @@ import { assertCanSaveGroupExpense, assertKnownUsers } from '../services/accessC
 import { TRPCError } from '@trpc/server';
 import { nanoid } from 'nanoid';
 import { CURRENCIES } from '~/lib/currency';
-import { defaultSplitSchema, getDefaultSplitError } from '~/utils/defaultSplit';
+import {
+  defaultSplitSchema,
+  getDefaultSplitError,
+  getGroupDefaultSplit,
+  isSameDefaultSplit,
+} from '~/utils/defaultSplit';
 import { sendDefaultSplitPushNotification } from '../services/notificationService';
 
 export const groupRouter = createTRPCRouter({
@@ -284,6 +289,15 @@ export const groupRouter = createTRPCRouter({
         if (error) {
           throw new TRPCError({ code: 'BAD_REQUEST', message: error });
         }
+      }
+
+      // Saving the same split again changes nothing, so it keeps who set it and notifies no one.
+      const currentGroup = await ctx.db.group.findUniqueOrThrow({ where: { id: groupId } });
+      const isUnchanged = split
+        ? isSameDefaultSplit(getGroupDefaultSplit(currentGroup), split)
+        : !currentGroup.defaultSplitType;
+      if (isUnchanged) {
+        return currentGroup;
       }
 
       const group = await ctx.db.group.update({

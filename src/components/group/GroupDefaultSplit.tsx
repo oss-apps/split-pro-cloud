@@ -8,12 +8,15 @@ import { Input } from '../ui/input';
 import { UserAvatar } from '../ui/avatar';
 import { Tabs, TabsList, TabsTrigger } from '../ui/tabs';
 import { api } from '~/utils/api';
+import { sumHundredths } from '~/utils/numbers';
 import {
   DEFAULT_SPLIT_TYPES,
   type DefaultSplit,
   type DefaultSplitType,
   getDefaultSplitError,
   getDefaultSplitNote,
+  getEditorSplit,
+  getEditorValues,
   getGroupDefaultSplit,
   joinNames,
   resolveDefaultSplit,
@@ -29,8 +32,6 @@ const TYPE_ICONS = {
 
 const memberName = (member: Pick<User, 'name' | 'email'>) => member.name ?? member.email ?? '';
 
-const formatValue = (value: number) => String(Math.round(value * 100) / 100);
-
 /** E.g. "Alex 60% · Sam 40%", for the members of the group now. */
 const describeSplit = (split: DefaultSplit, members: Member[]) => {
   if (SplitType.EQUAL === split.splitType) {
@@ -43,32 +44,10 @@ const describeSplit = (split: DefaultSplit, members: Member[]) => {
     .map((member) => {
       const value = split.shares[member.id] ?? 0;
       return SplitType.PERCENTAGE === split.splitType
-        ? `${memberName(member)} ${formatValue(value)}%`
-        : `${memberName(member)} ${formatValue(value)} ${1 === value ? 'share' : 'shares'}`;
+        ? `${memberName(member)} ${value}%`
+        : `${memberName(member)} ${value} ${1 === value ? 'share' : 'shares'}`;
     })
     .join(' · ');
-};
-
-/** Input values per split type, starting from the current default where there is one. */
-const getInitialValues = (split: DefaultSplit | undefined, members: Member[]) => {
-  const fromDefault = (type: DefaultSplitType, fallback: (index: number) => number) =>
-    Object.fromEntries(
-      members.map((member, index) => {
-        const value =
-          split?.splitType === type ? split.shares[member.id] ?? fallback(index) : fallback(index);
-        return [member.id, formatValue(value)];
-      }),
-    );
-  // An even start that adds up to exactly 100%, the remainder on the first member.
-  const evenHundredths = Math.floor(10_000 / Math.max(members.length, 1));
-  const evenPercentage = (index: number) =>
-    (evenHundredths + (0 === index ? 10_000 - evenHundredths * members.length : 0)) / 100;
-
-  return {
-    [SplitType.EQUAL]: fromDefault(SplitType.EQUAL, () => 1),
-    [SplitType.PERCENTAGE]: fromDefault(SplitType.PERCENTAGE, evenPercentage),
-    [SplitType.SHARE]: fromDefault(SplitType.SHARE, () => 1),
-  } satisfies Record<DefaultSplitType, Record<string, string>>;
 };
 
 /**
@@ -86,17 +65,12 @@ export const GroupDefaultSplit: React.FC<{
 
   const [open, setOpen] = React.useState(false);
   const [splitType, setSplitType] = React.useState<DefaultSplitType>(SplitType.EQUAL);
-  const [values, setValues] = React.useState(() => getInitialValues(current, members));
+  const [values, setValues] = React.useState(() => getEditorValues(current, memberIds));
 
   const setDefaultSplitMutation = api.group.setDefaultSplit.useMutation();
   const utils = api.useUtils();
 
-  const split: DefaultSplit = {
-    splitType,
-    shares: Object.fromEntries(
-      members.map((member) => [member.id, parseFloat(values[splitType][member.id] ?? '') || 0]),
-    ),
-  };
+  const split = getEditorSplit(splitType, values[splitType], memberIds);
   const error = getDefaultSplitError(split, memberIds);
   const resolved = current ? resolveDefaultSplit(current, memberIds) : undefined;
   const note =
@@ -107,18 +81,12 @@ export const GroupDefaultSplit: React.FC<{
           resolved.outdated,
         )
       : undefined;
-  const remainingPercentage =
-    (10_000 -
-      members.reduce(
-        (total, member) => total + Math.round((split.shares[member.id] ?? 0) * 100),
-        0,
-      )) /
-    100;
+  const remainingPercentage = (10_000 - sumHundredths(Object.values(split.shares))) / 100;
 
   function onOpenChange(isOpen: boolean) {
     if (isOpen) {
       setSplitType(current?.splitType ?? SplitType.EQUAL);
-      setValues(getInitialValues(current, members));
+      setValues(getEditorValues(current, memberIds));
     }
     setOpen(isOpen);
   }
