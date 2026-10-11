@@ -1,8 +1,6 @@
 import { SplitType } from '@prisma/client';
 
-import { toFixedNumber, toInteger } from './numbers';
-
-const MAX_STORED_AMOUNT = 2_147_483_647;
+import { AMOUNT_TOO_LARGE_MESSAGE, MAX_AMOUNT_CENTS, toFixedNumber, toInteger } from './numbers';
 
 // These split types can only give each person a share between zero and the full amount.
 const PROPORTIONAL_SPLIT_TYPES: SplitType[] = [
@@ -64,13 +62,16 @@ export const toBalancedParticipants = (
 
   if (
     !Number.isFinite(storedAmount) ||
-    MAX_STORED_AMOUNT < Math.abs(storedAmount) ||
-    storedParticipants.some(
-      (participant) =>
-        !Number.isFinite(participant.amount) || MAX_STORED_AMOUNT < Math.abs(participant.amount),
-    )
+    storedParticipants.some((participant) => !Number.isFinite(participant.amount))
   ) {
     throw new InvalidExpenseError('Expense amount is not valid');
+  }
+
+  if (
+    MAX_AMOUNT_CENTS < Math.abs(storedAmount) ||
+    storedParticipants.some((participant) => MAX_AMOUNT_CENTS < Math.abs(participant.amount))
+  ) {
+    throw new InvalidExpenseError(AMOUNT_TOO_LARGE_MESSAGE);
   }
 
   if (

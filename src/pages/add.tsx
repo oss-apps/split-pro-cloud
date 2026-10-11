@@ -1,6 +1,6 @@
 import Head from 'next/head';
 import { useRouter } from 'next/router';
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { AddOrEditExpensePage } from '~/components/AddExpense/AddExpensePage';
 import MainLayout from '~/components/Layout/MainLayout';
 import { env } from '~/env';
@@ -12,13 +12,35 @@ import { toFixedNumber } from '~/utils/numbers';
 
 // 🧾
 
+// Refetching these would re-seed the form and wipe what the user entered, e.g. after switching apps.
+const SEED_QUERY_OPTIONS = { refetchOnWindowFocus: false, refetchOnReconnect: false } as const;
+
 const AddPage: NextPageWithUser<{
   isStorageConfigured: boolean;
   enableSendingInvites: boolean;
 }> = ({ user, isStorageConfigured, enableSendingInvites }) => {
-  const { setCurrentUser, setGroup, setParticipants } = useAddExpenseStore((s) => s.actions);
+  const { setCurrentUser, setGroup, setParticipants, resetState } = useAddExpenseStore(
+    (s) => s.actions,
+  );
   const currentUser = useAddExpenseStore((s) => s.currentUser);
 
+  const router = useRouter();
+  const { friendId, groupId, expenseId } = router.query;
+
+  const _groupId = parseInt(groupId as string);
+  const _friendId = parseInt(friendId as string);
+  const _expenseId = expenseId as string | undefined;
+  const formKey = _expenseId ?? '';
+
+  // The form is seeded at most once per group, friend and expense, so refetches never overwrite edits.
+  const seededGroupId = useRef<number | null>(null);
+  const seededFriendId = useRef<number | null>(null);
+  const [seededExpenseId, setSeededExpenseId] = useState<string | null>(null);
+  const [resetFor, setResetFor] = useState<string | null>(null);
+  const isFormReady = resetFor === formKey;
+
+  // Start from a clean form on entering the page and whenever it switches between adding and
+  // editing (the page stays mounted when going from /add?expenseId=… to /add).
   useEffect(() => {
     setCurrentUser({
       ...user,
@@ -27,83 +49,102 @@ const AddPage: NextPageWithUser<{
       email: user.email ?? null,
       image: user.image ?? null,
     });
+    resetState();
+    seededGroupId.current = null;
+    seededFriendId.current = null;
+    setSeededExpenseId(null);
+    setResetFor(formKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [formKey]);
 
-  const router = useRouter();
-  const { friendId, groupId, expenseId } = router.query;
+  useEffect(() => () => resetState(), [resetState]);
 
-  const _groupId = parseInt(groupId as string);
-  const _friendId = parseInt(friendId as string);
-  const _expenseId = expenseId as string;
   const groupQuery = api.group.getGroupDetails.useQuery(
     { groupId: _groupId },
-    { enabled: !!_groupId },
+    { enabled: !!_groupId, ...SEED_QUERY_OPTIONS },
   );
 
   const friendQuery = api.user.getFriend.useQuery(
     { friendId: _friendId },
-    { enabled: !!_friendId },
+    { enabled: !!_friendId, ...SEED_QUERY_OPTIONS },
   );
 
   const expenseQuery = api.user.getExpenseDetails.useQuery(
-    { expenseId: _expenseId },
-    { enabled: !!_expenseId, refetchOnWindowFocus: false },
+    { expenseId: _expenseId ?? '' },
+    { enabled: !!_expenseId, ...SEED_QUERY_OPTIONS },
   );
 
   useEffect(() => {
-    // Set group
-    if (groupId && !groupQuery.isLoading && groupQuery.data && currentUser) {
-      setGroup(groupQuery.data);
-
-      setParticipants([
-        currentUser,
-        ...groupQuery.data.groupUsers.map((gu) => gu.user).filter((u) => u.id !== currentUser.id),
-      ]);
-      useAddExpenseStore.setState({ showFriends: false });
+    if (!_groupId) {
+      seededGroupId.current = null;
+      return;
     }
+
+    if (!isFormReady || seededGroupId.current === _groupId || !groupQuery.data || !currentUser) {
+      return;
+    }
+
+    seededGroupId.current = _groupId;
+    setGroup(groupQuery.data);
+    setParticipants([
+      currentUser,
+      ...groupQuery.data.groupUsers.map((gu) => gu.user).filter((u) => u.id !== currentUser.id),
+    ]);
+    useAddExpenseStore.setState({ showFriends: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groupId, groupQuery.isLoading, groupQuery.data, currentUser]);
+  }, [_groupId, isFormReady, groupQuery.data, currentUser]);
 
   useEffect(() => {
-    if (friendId && currentUser && friendQuery.data) {
-      setParticipants([currentUser, friendQuery.data]);
-      useAddExpenseStore.setState({ showFriends: false });
+    if (!_friendId) {
+      seededFriendId.current = null;
+      return;
     }
+
+    if (!isFormReady || seededFriendId.current === _friendId || !friendQuery.data || !currentUser) {
+      return;
+    }
+
+    seededFriendId.current = _friendId;
+    setParticipants([currentUser, friendQuery.data]);
+    useAddExpenseStore.setState({ showFriends: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [friendId, friendQuery.isLoading, friendQuery.data, currentUser]);
+  }, [_friendId, isFormReady, friendQuery.data, currentUser]);
 
   useEffect(() => {
-    if (_expenseId && expenseQuery.data) {
-      const amount = toFixedNumber(expenseQuery.data.amount);
-      const participants = calculateSplitShareBasedOnAmount(
-        amount,
-        expenseQuery.data.expenseParticipants.map((participant) => ({
-          ...participant.user,
-          amount: toFixedNumber(participant.amount),
-        })),
-        expenseQuery.data.splitType,
-        expenseQuery.data.paidByUser,
-      );
-
-      useAddExpenseStore.setState({
-        amount,
-        amountStr: amount.toString(),
-        canSplitScreenClosed: true,
-        category: expenseQuery.data.category,
-        currency: expenseQuery.data.currency,
-        description: expenseQuery.data.name,
-        expenseDate: expenseQuery.data.expenseDate,
-        fileKey: expenseQuery.data.fileKey ?? undefined,
-        group: expenseQuery.data.group ?? undefined,
-        paidBy: expenseQuery.data.paidByUser,
-        participants,
-        showFriends: false,
-        splitType: expenseQuery.data.splitType,
-      });
+    if (!_expenseId || !isFormReady || seededExpenseId === _expenseId || !expenseQuery.data) {
+      return;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [_expenseId, expenseQuery.data]);
+
+    const amount = toFixedNumber(expenseQuery.data.amount);
+    const participants = calculateSplitShareBasedOnAmount(
+      amount,
+      expenseQuery.data.expenseParticipants.map((participant) => ({
+        ...participant.user,
+        amount: toFixedNumber(participant.amount),
+      })),
+      expenseQuery.data.splitType,
+      expenseQuery.data.paidByUser,
+    );
+
+    useAddExpenseStore.setState({
+      amount,
+      amountStr: amount.toString(),
+      canSplitScreenClosed: true,
+      category: expenseQuery.data.category,
+      currency: expenseQuery.data.currency,
+      description: expenseQuery.data.name,
+      expenseDate: expenseQuery.data.expenseDate,
+      fileKey: expenseQuery.data.fileKey ?? undefined,
+      group: expenseQuery.data.group ?? undefined,
+      paidBy: expenseQuery.data.paidByUser,
+      participants,
+      showFriends: false,
+      splitType: expenseQuery.data.splitType,
+    });
+    setSeededExpenseId(_expenseId);
+  }, [_expenseId, isFormReady, seededExpenseId, expenseQuery.data]);
+
+  const isExpenseSeeded = !_expenseId || seededExpenseId === _expenseId;
 
   return (
     <>
@@ -111,7 +152,7 @@ const AddPage: NextPageWithUser<{
         <title>Add Expense</title>
       </Head>
       <MainLayout hideAppBar>
-        {currentUser && (!_expenseId || expenseQuery.data) ? (
+        {currentUser && isFormReady && isExpenseSeeded ? (
           <AddOrEditExpensePage
             isStorageConfigured={isStorageConfigured}
             enableSendingInvites={enableSendingInvites}

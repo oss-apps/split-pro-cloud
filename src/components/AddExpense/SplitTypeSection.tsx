@@ -1,4 +1,4 @@
-import { type Participant, useAddExpenseStore } from '~/store/addStore';
+import { type Participant, getRemainingPercentage, useAddExpenseStore } from '~/store/addStore';
 import { AppDrawer, Drawer, DrawerClose } from '../ui/drawer';
 import { UserAvatar } from '../ui/avatar';
 import { BarChart2, Check, DollarSign, Equal, Percent, Plus, X } from 'lucide-react';
@@ -6,6 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
 import { Input } from '../ui/input';
 import { useState } from 'react';
 import { SplitType } from '@prisma/client';
+import { toFixedNumber, toInteger, toSignedUIString } from '~/utils/numbers';
 
 export const SplitTypeSection: React.FC = () => {
   const paidBy = useAddExpenseStore((s) => s.paidBy);
@@ -200,7 +201,7 @@ const SplitByPercentageSection: React.FC = () => {
     addOrUpdateParticipant({ ...p, splitShare: parseFloat(value) });
   };
 
-  const remainingPercentage = 100 - participants.reduce((acc, p) => acc + (p.splitShare ?? 0), 0);
+  const remainingPercentage = getRemainingPercentage(participants);
 
   return (
     <div className="mt-4 flex flex-col gap-6 px-2">
@@ -258,7 +259,8 @@ const SplitByAmountSection: React.FC = () => {
 
   const totalSplitShare = participants.reduce((acc, p) => acc + (p.splitShare ?? 0), 0);
 
-  const remainingAmount = parseFloat((amount - totalSplitShare).toFixed(2));
+  // Shares are entered as positive amounts, also for a refund.
+  const remainingAmount = toFixedNumber(toInteger(Math.abs(amount)) - toInteger(totalSplitShare));
 
   return (
     <div className="mt-4 flex flex-col gap-6 px-2">
@@ -363,8 +365,10 @@ const SplitByAdjustmentSection: React.FC = () => {
     addOrUpdateParticipant({ ...p, splitShare: parseFloat(value) });
   };
 
-  const remainingPercentage =
-    amount - participants.reduce((acc, p) => acc + (p.splitShare ?? 0), 0);
+  const remainingPercentage = toFixedNumber(
+    toInteger(Math.abs(amount)) -
+      toInteger(participants.reduce((acc, p) => acc + (p.splitShare ?? 0), 0)),
+  );
 
   return (
     <div className="mt-4 flex flex-col gap-6 px-2">
@@ -401,15 +405,16 @@ export const UserAndAmount: React.FC<{ user: Participant; currency: string }> = 
   const paidBy = useAddExpenseStore((s) => s.paidBy);
   const amount = useAddExpenseStore((s) => s.amount);
 
-  const shareAmount = paidBy?.id === user.id ? (user.amount ?? 0) - amount : user.amount;
+  // What this person owes towards the expense, negative for a refund they get back.
+  const share = (paidBy?.id === user.id ? amount : 0) - (user.amount ?? 0);
 
   return (
     <div className="flex items-center gap-2">
       <UserAvatar user={user} size={30} />
       <div className="flex flex-col items-start">
         <p>{user.name ?? user.email}</p>
-        <p className={`'text-gray-400' text-sm text-gray-400`}>
-          {(shareAmount ?? 0) > 0 ? '-' : ''} {currency} {Math.abs(shareAmount ?? 0).toFixed(2)}
+        <p className="text-sm text-gray-400">
+          {currency} {toSignedUIString(toInteger(share))}
         </p>
       </div>
     </div>

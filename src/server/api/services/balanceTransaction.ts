@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
 import { db } from '~/server/db';
+import { AMOUNT_TOO_LARGE_MESSAGE } from '~/utils/numbers';
 
 const MAX_TRANSACTION_ATTEMPTS = 5;
 
@@ -20,6 +21,18 @@ const isSerializationFailure = (error: unknown) => {
   );
 };
 
+// Amounts and balances are int4 cents. A running balance can overflow even when every amount fits.
+export const isIntegerOverflow = (error: unknown) => {
+  if (error instanceof Prisma.PrismaClientKnownRequestError && 'P2020' === error.code) {
+    return true;
+  }
+
+  return (
+    error instanceof Error &&
+    /\b22003\b|integer out of range|Unable to fit integer value/.test(error.message)
+  );
+};
+
 export const runBalanceTransaction = async <T>(
   operation: (tx: Prisma.TransactionClient) => Promise<T>,
   attempt = 1,
@@ -31,6 +44,10 @@ export const runBalanceTransaction = async <T>(
       timeout: 20_000,
     });
   } catch (error) {
+    if (isIntegerOverflow(error)) {
+      throw new TRPCError({ code: 'BAD_REQUEST', message: AMOUNT_TOO_LARGE_MESSAGE, cause: error });
+    }
+
     if (!isSerializationFailure(error)) {
       throw error;
     }

@@ -5,6 +5,7 @@ import { api } from '~/utils/api';
 import { format } from 'date-fns';
 import { UserAvatar } from '~/components/ui/avatar';
 import { toUIString } from '~/utils/numbers';
+import { SHARE_TONE_CLASS, getNetShareLabel } from '~/utils/expenseLabels';
 import Link from 'next/link';
 import { type NextPageWithUser } from '~/types';
 import { type User } from 'next-auth';
@@ -32,12 +33,10 @@ function getPaymentString(
       </div>
     );
   } else {
+    const yourShare = getNetShareLabel(expenseUserAmt);
     return (
-      <div className={`${user.id === paidBy ? ' text-emerald-500' : 'text-orange-500'} text-sm`}>
-        {user.id === paidBy
-          ? `You lent ${currency}
-        ${toUIString(Math.abs(expenseUserAmt))}`
-          : `You owe ${currency} ${toUIString(expenseUserAmt)}`}
+      <div className={`${SHARE_TONE_CLASS[yourShare.tone]} text-sm`}>
+        {yourShare.label} {currency} {toUIString(yourShare.amount)}
       </div>
     );
   }

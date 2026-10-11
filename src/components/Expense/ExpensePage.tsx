@@ -2,7 +2,8 @@ import { type ExpenseParticipant, type Expense, type User, SplitType } from '@pr
 import { type User as NextUser } from 'next-auth';
 import { format, isSameDay } from 'date-fns';
 import React from 'react';
-import { toUIString } from '~/utils/numbers';
+import { toSignedUIString, toUIString } from '~/utils/numbers';
+import { getParticipantShareLabel } from '~/utils/expenseLabels';
 import { UserAvatar } from '../ui/avatar';
 import Image from 'next/image';
 import { AppDrawer, Drawer, DrawerContent, DrawerTrigger } from '../ui/drawer';
@@ -39,7 +40,7 @@ const ExpenseDetails: React.FC<ExpenseDetailsProps> = ({ user, expense, storageP
           <div className="flex flex-col gap-2">
             <p className="">{expense.name}</p>
             <p className="text-2xl font-semibold">
-              {expense.currency} {toUIString(expense.amount ?? 0)}
+              {expense.currency} {toSignedUIString(expense.amount ?? 0)}
             </p>
             {!isSameDay(expense.expenseDate, expense.createdAt) ? (
               <p className="text-sm text-gray-500">{format(expense.expenseDate, 'dd MMM yyyy')}</p>
@@ -105,7 +106,7 @@ const ExpenseDetails: React.FC<ExpenseDetailsProps> = ({ user, expense, storageP
         <UserAvatar user={expense.paidByUser} size={35} />
         <p>
           {youPaid ? 'You' : expense.paidByUser.name ?? expense.paidByUser.email} paid{' '}
-          {expense.currency} {toUIString(expense.amount)}
+          {expense.currency} {toSignedUIString(expense.amount)}
         </p>
       </div>
       <div className="ml-14 mt-4 flex flex-col gap-4 px-6">
@@ -121,17 +122,38 @@ const ExpenseDetails: React.FC<ExpenseDetailsProps> = ({ user, expense, storageP
               </div>
             )
           ) : (
-            <div key={p.userId} className="flex items-center gap-2 text-sm text-gray-500">
-              <UserAvatar user={p.user} size={25} />
-              <p>
-                {user.id === p.userId ? 'You Owe' : `${p.user.name ?? p.user.email} owes`}{' '}
-                {expense.currency}{' '}
-                {toUIString((expense.paidBy === p.userId ? expense.amount ?? 0 : 0) - p.amount)}
-              </p>
-            </div>
+            <ParticipantShare
+              key={p.userId}
+              participant={p}
+              share={(expense.paidBy === p.userId ? expense.amount ?? 0 : 0) - p.amount}
+              isYou={user.id === p.userId}
+              currency={expense.currency}
+            />
           ),
         )}
       </div>
+    </div>
+  );
+};
+
+const ParticipantShare: React.FC<{
+  participant: ExpenseParticipant & { user: User };
+  share: number;
+  isYou: boolean;
+  currency: string;
+}> = ({ participant, share, isYou, currency }) => {
+  const { label, amount } = getParticipantShareLabel(
+    share,
+    isYou,
+    participant.user.name ?? participant.user.email ?? '',
+  );
+
+  return (
+    <div className="flex items-center gap-2 text-sm text-gray-500">
+      <UserAvatar user={participant.user} size={25} />
+      <p>
+        {label} {currency} {toUIString(amount)}
+      </p>
     </div>
   );
 };
