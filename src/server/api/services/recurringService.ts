@@ -20,6 +20,7 @@ import {
   toDbDate,
 } from '~/utils/recurrence';
 import { getKnownUserIds } from './accessControl';
+import { runBalanceTransaction } from './balanceTransaction';
 
 export { recurrenceInputSchema };
 
@@ -84,6 +85,22 @@ export const lockRulesOfGroup = (tx: Prisma.TransactionClient, groupId: number) 
 
 const lockRulesOfUser = (tx: Prisma.TransactionClient, userId: number) =>
   lockRules(tx, Prisma.sql`"createdById" = ${userId} OR ${userId} = ANY("templateUserIds")`);
+
+/**
+ * Every rule removing the account can reach, as one set in id order: the ones they set up or are
+ * in, the ones in groups they own (deleted with the group), and the ones copying an expense
+ * deleted with them. Locked before the account, so the delete never takes a rule lock out of order.
+ */
+const lockRulesOfAccount = (tx: Prisma.TransactionClient, userId: number) =>
+  lockRules(
+    tx,
+    Prisma.sql`"createdById" = ${userId} OR ${userId} = ANY("templateUserIds")
+      OR "groupId" IN (SELECT id FROM "Group" WHERE "userId" = ${userId})
+      OR "templateExpenseId" IN (
+        SELECT id FROM "Expense"
+        WHERE "paidBy" = ${userId} OR "addedBy" = ${userId} OR "deletedBy" = ${userId}
+      )`,
+  );
 
 /**
  * Records the expense the rule's next occurrence copies, with everyone in it. Called in the
@@ -524,18 +541,35 @@ export async function prepareAccountDeletion(tx: Prisma.TransactionClient, userI
   return rules.map((rule) => rule.id);
 }
 
-/** Removes an account, pausing or stopping its recurring expenses first. */
+/**
+ * Removes an account, pausing or stopping its recurring expenses first. Returns the paused rules
+ * and the ones deleted with the groups they owned, whose creators should be told once committed.
+ */
 export async function deleteUserAccount(userId: number) {
-  const { user, pausedIds } = await db.$transaction(async (tx) => {
-    // Their rules, then the account, then their rules again. An edit adding them to a rule either
-    // committed before the account was locked, and the second look finds it, or can't add them.
-    await lockRulesOfUser(tx, userId);
+  // Retried on a conflict like any balance change, as it deletes expenses and balances too.
+  return runBalanceTransaction(async (tx) => {
+    // Every rule it can reach, then the account, then their rules again. An edit adding them to a
+    // rule either committed before the account was locked, and the second look finds it, or can't
+    // add them.
+    await lockRulesOfAccount(tx, userId);
     await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
     const pausedIds = await prepareAccountDeletion(tx, userId);
+    const groups = await tx.group.findMany({
+      where: { userId },
+      select: {
+        name: true,
+        recurringExpenses: {
+          where: { status: { not: RecurringStatus.STOPPED }, createdById: { not: userId } },
+          select: {
+            createdById: true,
+            occurrences: { orderBy: { occurrenceDate: 'desc' }, take: 1, select: { name: true } },
+          },
+        },
+      },
+    });
     const user = await tx.user.delete({ where: { id: userId } });
-    return { user, pausedIds };
+    return { user, pausedIds, deletedGroups: groups };
   });
-  return { user, pausedIds };
 }
 
 /**

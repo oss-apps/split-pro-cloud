@@ -1652,3 +1652,205 @@ void test(
     }
   },
 );
+
+const isDeadlock = (error: unknown) =>
+  /40P01|deadlock detected/.test(
+    error instanceof Error ? `${error.message} ${JSON.stringify(error.cause ?? '')}` : '',
+  ) || '40P01' === (error as { meta?: { code?: string } } | undefined)?.meta?.code;
+
+/**
+ * Holds the first serializable transaction that runs a raw query matching `isHoldPoint` right
+ * after that query, starts `contender`, waits until something is blocked on a lock, then lets the
+ * held one go on. Returns how both ended, and every deadlock any transaction attempt hit.
+ */
+const whileHeldAfter = async <A, B>(
+  t: Setup,
+  isHoldPoint: (query: string, rows: unknown) => boolean,
+  held: () => Promise<A>,
+  contender: () => Promise<B>,
+) => {
+  type Transaction = (
+    callback: (tx: Record<string | symbol, unknown>) => Promise<unknown>,
+    options?: { isolationLevel?: string },
+  ) => Promise<unknown>;
+  const run = t.db.$transaction.bind(t.db) as unknown as Transaction;
+  const deadlocks: unknown[] = [];
+  let isHolding = false;
+  let release: () => void = () => undefined;
+  let reached: () => void = () => undefined;
+  const released = new Promise<void>((resolve) => (release = resolve));
+  const isHeld = new Promise<void>((resolve) => (reached = resolve));
+  const settle = <T>(promise: Promise<T>) =>
+    promise.then(
+      (value) => ({ ok: true as const, value }),
+      (error: unknown) => ({ ok: false as const, error }),
+    );
+
+  (t.db as unknown as { $transaction: Transaction }).$transaction = (callback, options) => {
+    const attempt = run(async (tx) => {
+      if (isHolding || 'Serializable' !== options?.isolationLevel) {
+        return callback(tx);
+      }
+      const queryRaw = (tx.$queryRaw as (...args: unknown[]) => Promise<unknown>).bind(tx);
+      const holdingQueryRaw = async (...args: unknown[]) => {
+        const rows = await queryRaw(...args);
+        const query = Array.isArray(args[0]) ? args[0].join('') : String(args[0]);
+        if (!isHolding && isHoldPoint(query, rows)) {
+          isHolding = true;
+          reached();
+          await released;
+        }
+        return rows;
+      };
+      return callback(
+        new Proxy(tx, {
+          get: (target, property) =>
+            '$queryRaw' === property ? holdingQueryRaw : Reflect.get(target, property),
+        }),
+      );
+    }, options);
+    attempt.catch((error: unknown) => {
+      if (isDeadlock(error)) {
+        deadlocks.push(error);
+      }
+    });
+    return attempt;
+  };
+
+  try {
+    const holding = settle(held());
+    await Promise.race([isHeld, holding.then(() => assert.fail('it ended without being held'))]);
+    const contending = settle(contender());
+    let waiting = false;
+    for (let i = 0; 250 > i && !waiting; i++) {
+      const rows = await t.db.$queryRaw<unknown[]>`
+        SELECT pid FROM pg_stat_activity
+        WHERE datname = current_database() AND wait_event_type = 'Lock'`;
+      waiting = 0 < rows.length;
+      if (!waiting) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    }
+    // Long enough for a lock cycle to be found (deadlock_timeout is 1s), had there been one.
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    release();
+    const [first, second] = await Promise.all([holding, contending]);
+    assert.ok(waiting, 'the second one waits for a lock held by the first');
+    return { held: first, contender: second, deadlocks };
+  } finally {
+    release();
+    (t.db as unknown as { $transaction: Transaction }).$transaction = run;
+  }
+};
+
+void test(
+  'removing an account locks the rules of groups it owns first, so it never deadlocks with the runner',
+  { skip: !databaseUrl },
+  async () => {
+    const t = await setup();
+    try {
+      const owner = await t.createUser('Owner');
+      const alice = await t.createUser('Alice');
+      const bob = await t.createUser('Bob');
+      const group = await t.createGroup('Flat', owner.id, [owner.id, alice.id, bob.id]);
+      // The owner is neither in the expense nor set it up.
+      const source = await t.addEqualExpense(alice, {
+        groupId: group.id,
+        amount: 100,
+        userIds: [alice.id, bob.id],
+        date: '2026-01-01',
+        frequency: 'DAILY',
+      });
+      const rule = await t.getRule(source.id);
+      assert.ok(!rule.templateUserIds.includes(owner.id) && rule.createdById !== owner.id);
+      await t.setNext(rule.id, '2026-01-02');
+
+      // The runner has the rule; the account delete waits for it instead of locking the group.
+      const result = await whileHeldAfter(
+        t,
+        (query, rows) =>
+          query.includes('SKIP LOCKED') &&
+          Array.isArray(rows) &&
+          rows.some((row: { id: number }) => row.id === rule.id),
+        () => t.runSingleTick({ now: new Date('2026-01-02T01:00:00Z') }),
+        () => t.deleteUserAccount(owner.id),
+      );
+      assert.deepEqual(result.deadlocks, []);
+      assert.ok(result.held.ok && result.contender.ok, 'both finish');
+      assert.equal(result.held.value.created, 1);
+      assert.equal(await t.db.user.findUnique({ where: { id: owner.id } }), null);
+      // The rule went with the group, and its creator is told.
+      assert.equal(await t.db.recurringExpense.findUnique({ where: { id: rule.id } }), null);
+      assert.deepEqual(
+        result.contender.value.deletedGroups.map((g) => [
+          g.name,
+          g.recurringExpenses.map((r) => r.createdById),
+        ]),
+        [['Flat', [alice.id]]],
+      );
+    } finally {
+      await t.cleanUp();
+    }
+  },
+);
+
+void test(
+  'removing an account and deleting its group at once never deadlock, with several rules',
+  { skip: !databaseUrl },
+  async () => {
+    const t = await setup();
+    try {
+      const owner = await t.createUser('Owner');
+      const alice = await t.createUser('Alice');
+      const bob = await t.createUser('Bob');
+      const group = await t.createGroup('Flat', owner.id, [owner.id, alice.id, bob.id]);
+      const lower = await t.getRule(
+        (
+          await t.addEqualExpense(alice, {
+            groupId: group.id,
+            amount: 100,
+            userIds: [alice.id, bob.id],
+            date: '2026-01-01',
+            frequency: 'DAILY',
+          })
+        ).id,
+      );
+      const higher = await t.getRule(
+        (
+          await t.addEqualExpense(owner, {
+            groupId: group.id,
+            amount: 90,
+            userIds: [owner.id, alice.id, bob.id],
+            date: '2026-01-01',
+            frequency: 'DAILY',
+          })
+        ).id,
+      );
+      assert.ok(lower.id < higher.id);
+      // Only a group without balances can be deleted.
+      await t.db.groupBalance.deleteMany({ where: { groupId: group.id } });
+
+      // The account delete has its rules and the account; the group delete waits for the rules.
+      const result = await whileHeldAfter(
+        t,
+        (query) => query.includes('"User"') && query.includes('FOR UPDATE'),
+        () => t.deleteUserAccount(owner.id),
+        () => t.callerFor(owner).group.delete({ groupId: group.id }),
+      );
+      assert.deepEqual(result.deadlocks, []);
+      assert.ok(result.held.ok, 'the account is removed');
+      assert.equal(await t.db.user.findUnique({ where: { id: owner.id } }), null);
+      assert.equal(await t.db.group.findUnique({ where: { id: group.id } }), null);
+      assert.equal(
+        await t.db.recurringExpense.count({ where: { id: { in: [lower.id, higher.id] } } }),
+        0,
+      );
+      // The group was already gone by the time the group delete could look at it.
+      if (!result.contender.ok) {
+        assert.ok(t.isTrpcError('UNAUTHORIZED')(result.contender.error));
+      }
+    } finally {
+      await t.cleanUp();
+    }
+  },
+);
