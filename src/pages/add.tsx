@@ -1,24 +1,53 @@
 import Head from 'next/head';
 import { useRouter } from 'next/router';
-import React, { useEffect } from 'react';
+import Link from 'next/link';
+import React, { useEffect, useState } from 'react';
 import { AddOrEditExpensePage } from '~/components/AddExpense/AddExpensePage';
 import MainLayout from '~/components/Layout/MainLayout';
 import { env } from '~/env';
 import { isStorageConfigured } from '~/server/storage';
-import { calculateSplitShareBasedOnAmount, useAddExpenseStore } from '~/store/addStore';
+import { LoadingSpinner } from '~/components/ui/spinner';
+import { getEditFormState, isCurrentForm, useAddExpenseStore } from '~/store/addStore';
 import { type NextPageWithUser } from '~/types';
 import { api } from '~/utils/api';
-import { toFixedNumber } from '~/utils/numbers';
 
 // 🧾
+
+// Refetching these would re-seed the form and wipe what the user entered, e.g. after switching apps.
+const SEED_QUERY_OPTIONS = { refetchOnWindowFocus: false, refetchOnReconnect: false } as const;
+
+type SeedKey = 'group' | 'friend' | 'expense';
+
+/** One add or edit form: the generation it belongs to, and which requested seeds have loaded. */
+type FormSeeds = { formKey: string; generation: number } & Record<SeedKey, boolean>;
 
 const AddPage: NextPageWithUser<{
   isStorageConfigured: boolean;
   enableSendingInvites: boolean;
 }> = ({ user, isStorageConfigured, enableSendingInvites }) => {
-  const { setCurrentUser, setGroup, setParticipants } = useAddExpenseStore((s) => s.actions);
+  const { setCurrentUser, setGroup, setParticipants, resetState } = useAddExpenseStore(
+    (s) => s.actions,
+  );
   const currentUser = useAddExpenseStore((s) => s.currentUser);
 
+  const router = useRouter();
+  const { friendId, groupId, expenseId } = router.query;
+
+  const _groupId = parseInt(groupId as string);
+  const _friendId = parseInt(friendId as string);
+  const _expenseId = expenseId as string | undefined;
+  // Removing a group or friend inside the form leaves the URL alone, so a change here is a
+  // navigation, e.g. from a group's add page to the plain one.
+  const formKey = [_expenseId, groupId, friendId].map((value) => value ?? '').join('|');
+
+  // Each requested seed is applied once, and only to the form it was requested for, so neither a
+  // refetch nor a late response for an earlier form overwrites what the user entered.
+  const [form, setForm] = useState<FormSeeds | null>(null);
+  const isCurrentKey = form?.formKey === formKey;
+  const isFormReady = !!form && isCurrentKey && form.group && form.friend && form.expense;
+
+  // Start from a clean form on entering the page and on every navigation to another add or edit
+  // form (the page stays mounted, e.g. going from /add?groupId=… to /add).
   useEffect(() => {
     setCurrentUser({
       ...user,
@@ -27,83 +56,82 @@ const AddPage: NextPageWithUser<{
       email: user.email ?? null,
       image: user.image ?? null,
     });
+    resetState();
+    setForm({
+      formKey,
+      generation: useAddExpenseStore.getState().formGeneration,
+      group: !_groupId,
+      friend: !_friendId,
+      expense: !_expenseId,
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [formKey]);
 
-  const router = useRouter();
-  const { friendId, groupId, expenseId } = router.query;
+  useEffect(() => () => resetState(), [resetState]);
 
-  const _groupId = parseInt(groupId as string);
-  const _friendId = parseInt(friendId as string);
-  const _expenseId = expenseId as string;
+  const canSeed = (key: SeedKey) =>
+    !!form && isCurrentKey && !form[key] && isCurrentForm(form.generation) && !!currentUser;
+  const markSeeded = (key: SeedKey) =>
+    setForm((current) => (current?.formKey === formKey ? { ...current, [key]: true } : current));
+
   const groupQuery = api.group.getGroupDetails.useQuery(
     { groupId: _groupId },
-    { enabled: !!_groupId },
+    { enabled: !!_groupId, ...SEED_QUERY_OPTIONS },
   );
 
   const friendQuery = api.user.getFriend.useQuery(
     { friendId: _friendId },
-    { enabled: !!_friendId },
+    { enabled: !!_friendId, ...SEED_QUERY_OPTIONS },
   );
 
   const expenseQuery = api.user.getExpenseDetails.useQuery(
-    { expenseId: _expenseId },
-    { enabled: !!_expenseId, refetchOnWindowFocus: false },
+    { expenseId: _expenseId ?? '' },
+    { enabled: !!_expenseId, ...SEED_QUERY_OPTIONS },
   );
 
-  useEffect(() => {
-    // Set group
-    if (groupId && !groupQuery.isLoading && groupQuery.data && currentUser) {
-      setGroup(groupQuery.data);
-
-      setParticipants([
-        currentUser,
-        ...groupQuery.data.groupUsers.map((gu) => gu.user).filter((u) => u.id !== currentUser.id),
-      ]);
-      useAddExpenseStore.setState({ showFriends: false });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groupId, groupQuery.isLoading, groupQuery.data, currentUser]);
+  const hasSeedError =
+    (!!_groupId && (groupQuery.isError || null === groupQuery.data)) ||
+    (!!_friendId && (friendQuery.isError || null === friendQuery.data)) ||
+    (!!_expenseId && expenseQuery.isError);
 
   useEffect(() => {
-    if (friendId && currentUser && friendQuery.data) {
-      setParticipants([currentUser, friendQuery.data]);
-      useAddExpenseStore.setState({ showFriends: false });
+    const group = groupQuery.data;
+    if (!canSeed('group') || !currentUser || group?.id !== _groupId) {
+      return;
     }
+
+    setGroup(group);
+    setParticipants([
+      currentUser,
+      ...group.groupUsers.map((gu) => gu.user).filter((u) => u.id !== currentUser.id),
+    ]);
+    useAddExpenseStore.setState({ showFriends: false });
+    markSeeded('group');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [friendId, friendQuery.isLoading, friendQuery.data, currentUser]);
+  }, [form, groupQuery.data, currentUser]);
 
   useEffect(() => {
-    if (_expenseId && expenseQuery.data) {
-      const amount = toFixedNumber(expenseQuery.data.amount);
-      const participants = calculateSplitShareBasedOnAmount(
-        amount,
-        expenseQuery.data.expenseParticipants.map((participant) => ({
-          ...participant.user,
-          amount: toFixedNumber(participant.amount),
-        })),
-        expenseQuery.data.splitType,
-        expenseQuery.data.paidByUser,
-      );
-
-      useAddExpenseStore.setState({
-        amount,
-        amountStr: amount.toString(),
-        canSplitScreenClosed: true,
-        category: expenseQuery.data.category,
-        currency: expenseQuery.data.currency,
-        description: expenseQuery.data.name,
-        expenseDate: expenseQuery.data.expenseDate,
-        fileKey: expenseQuery.data.fileKey ?? undefined,
-        group: expenseQuery.data.group ?? undefined,
-        paidBy: expenseQuery.data.paidByUser,
-        participants,
-        showFriends: false,
-        splitType: expenseQuery.data.splitType,
-      });
+    const friend = friendQuery.data;
+    if (!canSeed('friend') || !currentUser || friend?.id !== _friendId) {
+      return;
     }
+
+    setParticipants([currentUser, friend]);
+    useAddExpenseStore.setState({ showFriends: false });
+    markSeeded('friend');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [_expenseId, expenseQuery.data]);
+  }, [form, friendQuery.data, currentUser]);
+
+  useEffect(() => {
+    const expense = expenseQuery.data;
+    if (!canSeed('expense') || !expense || expense.id !== _expenseId) {
+      return;
+    }
+
+    useAddExpenseStore.setState(getEditFormState(expense));
+    markSeeded('expense');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form, expenseQuery.data, currentUser]);
 
   return (
     <>
@@ -111,14 +139,23 @@ const AddPage: NextPageWithUser<{
         <title>Add Expense</title>
       </Head>
       <MainLayout hideAppBar>
-        {currentUser && (!_expenseId || expenseQuery.data) ? (
+        {currentUser && isFormReady ? (
           <AddOrEditExpensePage
             isStorageConfigured={isStorageConfigured}
             enableSendingInvites={enableSendingInvites}
             expenseId={_expenseId}
           />
+        ) : hasSeedError ? (
+          <div className="mt-20 flex flex-col items-center gap-4 text-sm text-gray-400">
+            <p>This expense form could not be loaded.</p>
+            <Link href="/add" className="text-cyan-500">
+              Add a new expense
+            </Link>
+          </div>
         ) : (
-          <div></div>
+          <div className="mt-20 flex justify-center">
+            <LoadingSpinner className="text-primary" />
+          </div>
         )}
       </MainLayout>
     </>

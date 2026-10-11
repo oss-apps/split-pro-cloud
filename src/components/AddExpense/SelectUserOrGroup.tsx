@@ -1,6 +1,6 @@
 import { api } from '~/utils/api';
 import { GroupAvatar, UserAvatar } from '../ui/avatar';
-import { useAddExpenseStore } from '~/store/addStore';
+import { inviteParticipant, useAddExpenseStore } from '~/store/addStore';
 import { z } from 'zod';
 import { Button } from '../ui/button';
 import { UserPlusIcon } from '@heroicons/react/24/solid';
@@ -11,6 +11,7 @@ import Image from 'next/image';
 import { SendIcon } from 'lucide-react';
 import { env } from '~/env';
 import React from 'react';
+import { toast } from 'sonner';
 
 export const SelectUserOrGroup: React.FC<{
   enableSendingInvites: boolean;
@@ -35,27 +36,15 @@ export const SelectUserOrGroup: React.FC<{
   );
 
   function onAddEmailClick(invite = false) {
-    if (isEmail.success) {
-      addFriendMutation.mutate(
-        { email: nameOrEmail, sendInviteEmail: invite },
-        {
-          onSuccess: (user) => {
-            removeParticipant(-1);
-            addOrUpdateParticipant(user);
-            setNameOrEmail('');
-          },
-        },
-      );
-      addOrUpdateParticipant({
-        id: -1,
-        name: nameOrEmail,
-        email: nameOrEmail,
-        emailVerified: new Date(),
-        image: null,
-        currency: 'USD',
-      });
-      // add email to split pro
+    if (!isEmail.success) {
+      return;
     }
+
+    inviteParticipant(nameOrEmail, (email) =>
+      addFriendMutation.mutateAsync({ email, sendInviteEmail: invite }),
+    ).catch((error) => {
+      toast.error(error instanceof Error ? error.message : 'Failed to invite friend');
+    });
   }
 
   function onGroupSelect(group: Group & { groupUsers: Array<GroupUser & { user: User }> }) {

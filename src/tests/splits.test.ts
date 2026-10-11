@@ -168,23 +168,23 @@ void describe('split cent conservation', () => {
     );
   });
 
-  void it('adds a missing payer from the other participants', () => {
-    assert.deepEqual(
-      toBalancedParticipants(
-        10,
-        1,
-        [
-          { userId: 2, amount: -5 },
-          { userId: 3, amount: -5 },
-        ],
-        SplitType.EQUAL,
-      ),
-      [
-        { userId: 2, amount: -5 },
-        { userId: 3, amount: -5 },
-        { userId: 1, amount: 10 },
-      ],
-    );
+  void it('rejects a payer who is not a participant', () => {
+    [SplitType.EQUAL, SplitType.EXACT, SplitType.SETTLEMENT].forEach((splitType) => {
+      assert.throws(
+        () =>
+          toBalancedParticipants(
+            10,
+            1,
+            [
+              { userId: 2, amount: 10 },
+              { userId: 3, amount: -10 },
+            ],
+            splitType,
+          ),
+        /payer must be one of the participants/,
+        splitType,
+      );
+    });
   });
 
   void it('allows negative exact shares as long as the amounts balance', () => {

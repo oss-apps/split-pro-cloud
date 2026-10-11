@@ -98,7 +98,7 @@ const Auth: React.FC<{ Page: NextPageWithUser; pageProps: any }> = ({ Page, page
   const { status, data } = useSession({ required: true });
   const [showSpinner, setShowSpinner] = useState(false);
 
-  const { setCurrency } = useAddExpenseStore((s) => s.actions);
+  const { setPreferredCurrency } = useAddExpenseStore((s) => s.actions);
   const { setWebPushPublicKey } = useAppStore((s) => s.actions);
 
   const { data: webPushPublicKey } = api.user.getWebPushPublicKey.useQuery();
@@ -117,9 +117,10 @@ const Auth: React.FC<{ Page: NextPageWithUser; pageProps: any }> = ({ Page, page
 
   useEffect(() => {
     if (status === 'authenticated') {
-      setCurrency(data.user.currency);
+      // Only the default for new expenses: a session refetch must not change a form in progress.
+      setPreferredCurrency(data.user.currency);
     }
-  }, [status, data?.user, setCurrency]);
+  }, [status, data?.user, setPreferredCurrency]);
 
   if (status === 'loading') {
     return (

@@ -1,20 +1,15 @@
-import { useAddExpenseStore } from '~/store/addStore';
+import { toast } from 'sonner';
+import { inviteParticipant, useAddExpenseStore } from '~/store/addStore';
 import { GroupAvatar, UserAvatar } from '../ui/avatar';
 import { z } from 'zod';
 import { api } from '~/utils/api';
-import Router from 'next/router';
 
 export const UserInput: React.FC<{
   isEditing?: boolean;
 }> = ({ isEditing }) => {
-  const {
-    setNameOrEmail,
-    removeLastParticipant,
-    removeParticipant,
-    addOrUpdateParticipant,
-    setParticipants,
-    setGroup,
-  } = useAddExpenseStore((s) => s.actions);
+  const { setNameOrEmail, removeLastParticipant, setParticipants, setGroup } = useAddExpenseStore(
+    (s) => s.actions,
+  );
   const nameOrEmail = useAddExpenseStore((s) => s.nameOrEmail);
   const participants = useAddExpenseStore((s) => s.participants);
   const currentUser = useAddExpenseStore((s) => s.currentUser);
@@ -27,11 +22,6 @@ export const UserInput: React.FC<{
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Backspace' && nameOrEmail === '') {
       if (group) {
-        const currentPath = window.location.pathname;
-        const searchParams = new URLSearchParams(window.location.search);
-        searchParams.delete('groupId');
-        Router.push(`${currentPath}?${searchParams.toString()}`).catch(console.error);
-
         setGroup(undefined);
         console.log('set Remove called 1', group);
 
@@ -42,23 +32,10 @@ export const UserInput: React.FC<{
         removeLastParticipant(); // Assuming deleteUser is the function you want to call
       }
     } else if (e.key === 'Enter' && isEmail.success) {
-      addFriendMutation.mutate(
-        { email: nameOrEmail.toLowerCase() },
-        {
-          onSuccess: (user) => {
-            removeParticipant(-1);
-            addOrUpdateParticipant(user);
-            setNameOrEmail('');
-          },
-        },
-      );
-      addOrUpdateParticipant({
-        id: -1,
-        name: nameOrEmail,
-        email: nameOrEmail,
-        emailVerified: new Date(),
-        image: null,
-        currency: 'USD',
+      inviteParticipant(nameOrEmail, (email) =>
+        addFriendMutation.mutateAsync({ email: email.toLowerCase() }),
+      ).catch((error) => {
+        toast.error(error instanceof Error ? error.message : 'Failed to invite friend');
       });
     }
   };

@@ -1,7 +1,7 @@
 import { useRouter } from 'next/router';
 import React from 'react';
 import { toast } from 'sonner';
-import { useAddExpenseStore } from '~/store/addStore';
+import { getParticipantsToSave, isPendingInvite, useAddExpenseStore } from '~/store/addStore';
 import { api } from '~/utils/api';
 import { UserInput } from './UserInput';
 import { SelectUserOrGroup } from './SelectUserOrGroup';
@@ -20,6 +20,7 @@ import { CategoryIcons } from '../ui/categoryIcons';
 import Link from 'next/link';
 import { CURRENCIES } from '~/lib/currency';
 import { env } from '~/env';
+import { AMOUNT_TOO_LARGE_MESSAGE, isAmountWithinLimit } from '~/utils/numbers';
 import { AdSlot } from '../Ads/AdSlot';
 
 const categories = {
@@ -128,6 +129,7 @@ export const AddOrEditExpensePage: React.FC<{
 
   const {
     setCurrency,
+    setPreferredCurrency,
     setCategory,
     setDescription,
     setAmount,
@@ -143,16 +145,47 @@ export const AddOrEditExpensePage: React.FC<{
 
   const router = useRouter();
 
+  const isAmountTooLarge = !isAmountWithinLimit(amount);
+  const hasPendingInvite = participants.some(isPendingInvite);
+  const isSaveDisabled =
+    addExpenseMutation.isLoading ||
+    addGroupExpenseMutation.isLoading ||
+    !amount ||
+    isAmountTooLarge ||
+    hasPendingInvite ||
+    description === '' ||
+    isFileUploading;
+
   function onUpdateAmount(amt: string) {
     const _amt = amt.replace(',', '.');
     setAmountStr(_amt);
     setAmount(Number(_amt) || 0);
   }
 
+  function onCancel() {
+    if (!expenseId) {
+      resetState();
+      router.replace('/add', undefined, { shallow: true }).catch(console.error);
+      return;
+    }
+
+    // Leave the edit. Staying on its URL would turn a "new" expense into an overwrite of this one.
+    // The page resets the form when it unmounts.
+    if (1 < window.history.length) {
+      router.back();
+      return;
+    }
+
+    const expensePath = group
+      ? `/groups/${group.id}/expenses/${expenseId}`
+      : `/expenses/${expenseId}`;
+    router.replace(expensePath).catch(console.error);
+  }
+
   function addExpense() {
     const { group, paidBy, splitType, fileKey, canSplitScreenClosed } =
       useAddExpenseStore.getState();
-    if (!paidBy) {
+    if (!paidBy || isSaveDisabled) {
       return;
     }
 
@@ -160,6 +193,11 @@ export const AddOrEditExpensePage: React.FC<{
       setSplitScreenOpen(true);
       return;
     }
+
+    const participantsToSave = getParticipantsToSave(useAddExpenseStore.getState()).map((p) => ({
+      userId: p.id,
+      amount: p.amount ?? 0,
+    }));
 
     if (group) {
       addGroupExpenseMutation.mutate(
@@ -169,10 +207,7 @@ export const AddOrEditExpensePage: React.FC<{
           amount,
           groupId: group.id,
           splitType,
-          participants: participants.map((p) => ({
-            userId: p.id,
-            amount: p.amount ?? 0,
-          })),
+          participants: participantsToSave,
           paidBy: paidBy.id,
           category,
           fileKey,
@@ -201,10 +236,7 @@ export const AddOrEditExpensePage: React.FC<{
           currency,
           amount,
           splitType,
-          participants: participants.map((p) => ({
-            userId: p.id,
-            amount: p.amount ?? 0,
-          })),
+          participants: participantsToSave,
           paidBy: paidBy.id,
           category,
           fileKey,
@@ -233,28 +265,22 @@ export const AddOrEditExpensePage: React.FC<{
     <>
       <div className="flex flex-col gap-4 px-4 py-2">
         <div className="flex items-center justify-between">
-          {participants.length === 1 ? (
+          {participants.length === 1 && !expenseId ? (
             <Link href="/balances">
               <Button variant="ghost" className=" px-0 text-primary">
                 Cancel
               </Button>
             </Link>
           ) : (
-            <Button variant="ghost" className=" px-0 text-primary" onClick={resetState}>
+            <Button variant="ghost" className=" px-0 text-primary" onClick={onCancel}>
               Cancel
             </Button>
           )}
-          <div className="text-center">Add new expense</div>
+          <div className="text-center">{expenseId ? 'Edit expense' : 'Add new expense'}</div>
           <Button
             variant="ghost"
             className=" px-0 text-primary"
-            disabled={
-              addExpenseMutation.isLoading ||
-              addGroupExpenseMutation.isLoading ||
-              !amount ||
-              description === '' ||
-              isFileUploading
-            }
+            disabled={isSaveDisabled}
             onClick={addExpense}
           >
             Save
@@ -347,6 +373,7 @@ export const AddOrEditExpensePage: React.FC<{
                             updateProfile.mutate({ currency: _currency });
 
                             setCurrency(_currency);
+                            setPreferredCurrency(_currency);
                             setOpen(false);
                           }}
                         >
@@ -378,8 +405,12 @@ export const AddOrEditExpensePage: React.FC<{
                 inputMode="decimal"
                 value={amtStr}
                 onChange={(e) => onUpdateAmount(e.target.value)}
+                aria-invalid={isAmountTooLarge}
               />
             </div>
+            {isAmountTooLarge ? (
+              <p className="-mt-2 text-sm text-red-500">{AMOUNT_TOO_LARGE_MESSAGE}</p>
+            ) : null}
             {!amount || description === '' ? (
               <div className="h-[180px]"></div>
             ) : (
@@ -392,22 +423,14 @@ export const AddOrEditExpensePage: React.FC<{
                       <PopoverTrigger asChild>
                         <Button
                           variant="ghost"
-                          className={cn(
-                            ' justify-start px-0 text-left font-normal',
-                            !expenseDate && 'text-muted-foreground',
-                          )}
+                          className=" justify-start px-0 text-left font-normal"
                         >
                           <CalendarIcon className="mr-2 h-6 w-6 text-cyan-500" />
-                          {expenseDate ? (
-                            format(expenseDate, 'yyyy-MM-dd') ===
-                            format(new Date(), 'yyyy-MM-dd') ? (
-                              'Today'
-                            ) : (
-                              format(expenseDate, 'MMM dd')
-                            )
-                          ) : (
-                            <span>Pick a date</span>
-                          )}
+                          {/* Without a date the expense is saved for today. */}
+                          {!expenseDate ||
+                          format(expenseDate, 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd')
+                            ? 'Today'
+                            : format(expenseDate, 'MMM dd')}
                         </Button>
                       </PopoverTrigger>
                       <PopoverContent className="w-auto p-0">
@@ -431,13 +454,7 @@ export const AddOrEditExpensePage: React.FC<{
                         addGroupExpenseMutation.isLoading ||
                         isFileUploading
                       }
-                      disabled={
-                        addExpenseMutation.isLoading ||
-                        addGroupExpenseMutation.isLoading ||
-                        !amount ||
-                        description === '' ||
-                        isFileUploading
-                      }
+                      disabled={isSaveDisabled}
                       onClick={() => addExpense()}
                     >
                       Submit

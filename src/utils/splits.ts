@@ -1,8 +1,6 @@
 import { SplitType } from '@prisma/client';
 
-import { toFixedNumber, toInteger } from './numbers';
-
-const MAX_STORED_AMOUNT = 2_147_483_647;
+import { AMOUNT_TOO_LARGE_MESSAGE, MAX_AMOUNT_CENTS, toFixedNumber, toInteger } from './numbers';
 
 // These split types can only give each person a share between zero and the full amount.
 const PROPORTIONAL_SPLIT_TYPES: SplitType[] = [
@@ -64,13 +62,16 @@ export const toBalancedParticipants = (
 
   if (
     !Number.isFinite(storedAmount) ||
-    MAX_STORED_AMOUNT < Math.abs(storedAmount) ||
-    storedParticipants.some(
-      (participant) =>
-        !Number.isFinite(participant.amount) || MAX_STORED_AMOUNT < Math.abs(participant.amount),
-    )
+    storedParticipants.some((participant) => !Number.isFinite(participant.amount))
   ) {
     throw new InvalidExpenseError('Expense amount is not valid');
+  }
+
+  if (
+    MAX_AMOUNT_CENTS < Math.abs(storedAmount) ||
+    storedParticipants.some((participant) => MAX_AMOUNT_CENTS < Math.abs(participant.amount))
+  ) {
+    throw new InvalidExpenseError(AMOUNT_TOO_LARGE_MESSAGE);
   }
 
   if (
@@ -78,6 +79,10 @@ export const toBalancedParticipants = (
     storedParticipants.length
   ) {
     throw new InvalidExpenseError('Expense participants must be unique');
+  }
+
+  if (!storedParticipants.some((participant) => participant.userId === paidBy)) {
+    throw new InvalidExpenseError('The payer must be one of the participants');
   }
 
   if (SplitType.SETTLEMENT === splitType) {
@@ -94,15 +99,9 @@ export const toBalancedParticipants = (
     ];
   }
 
-  let payer = storedParticipants.find((participant) => participant.userId === paidBy);
-
-  // Some clients dropped the payer from the list. Their row is implied by everyone else's.
+  const payer = storedParticipants.find((participant) => participant.userId === paidBy);
   if (!payer) {
-    payer = {
-      userId: paidBy,
-      amount: -storedParticipants.reduce((sum, participant) => sum + participant.amount, 0),
-    };
-    storedParticipants.push(payer);
+    throw new InvalidExpenseError('The payer must be one of the participants');
   }
 
   const imbalance = storedParticipants.reduce((sum, participant) => sum + participant.amount, 0);

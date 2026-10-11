@@ -9,7 +9,8 @@ import { format } from 'date-fns';
 import { Separator } from '~/components/ui/separator';
 import { Button } from '~/components/ui/button';
 import { SettleUp } from '~/components/Friend/Settleup';
-import { toUIString } from '~/utils/numbers';
+import { toSignedUIString, toUIString } from '~/utils/numbers';
+import { SHARE_TONE_CLASS, getNetShareLabel, getNetWithFriend } from '~/utils/expenseLabels';
 import { CategoryIcon } from '~/components/ui/categoryIcons';
 import { useRouter } from 'next/router';
 import { type NextPageWithUser } from '~/types';
@@ -151,9 +152,7 @@ const FriendPage: NextPageWithUser = ({ user }) => {
             <div className="mx-4 mt-4 flex  flex-col gap-3">
               {expenses.data?.map((e) => {
                 const youPaid = e.paidBy === user.id;
-                const yourExpense = e.expenseParticipants.find(
-                  (p) => p.userId === (youPaid ? friendQuery.data?.id : user.id),
-                );
+                const yourShare = getNetShareLabel(getNetWithFriend(e, user.id, _friendId));
                 const isSettlement = e.splitType === SplitType.SETTLEMENT;
 
                 return (
@@ -189,7 +188,7 @@ const FriendPage: NextPageWithUser = ({ user }) => {
                           </span>
                           <span>
                             {youPaid ? 'You' : friendQuery.data?.name} paid {e.currency}{' '}
-                            {toUIString(e.amount)}
+                            {toSignedUIString(e.amount)}
                             {isSettlement && e.group ? ` in ${e.group.name}` : ''}{' '}
                           </span>
                         </p>
@@ -197,16 +196,12 @@ const FriendPage: NextPageWithUser = ({ user }) => {
                     </div>
                     {isSettlement ? null : (
                       <div className="min-w-10 shrink-0">
-                        <div
-                          className={`text-right text-xs ${youPaid ? 'text-emerald-500' : 'text-orange-700'}`}
-                        >
-                          {youPaid ? 'You lent' : 'You owe'}
+                        <div className={`text-right text-xs ${SHARE_TONE_CLASS[yourShare.tone]}`}>
+                          {yourShare.label}
                         </div>
-                        <div
-                          className={`text-right ${youPaid ? 'text-emerald-500' : 'text-orange-700'}`}
-                        >
+                        <div className={`text-right ${SHARE_TONE_CLASS[yourShare.tone]}`}>
                           <span className="font-light ">{e.currency}</span>{' '}
-                          {toUIString(yourExpense?.amount ?? 0)}
+                          {toUIString(yourShare.amount)}
                         </div>
                       </div>
                     )}

@@ -22,7 +22,8 @@ import NoMembers from '~/components/group/NoMembers';
 import { format } from 'date-fns';
 import AddMembers from '~/components/group/AddMembers';
 import Image from 'next/image';
-import { toUIString } from '~/utils/numbers';
+import { toSignedUIString, toUIString } from '~/utils/numbers';
+import { SHARE_TONE_CLASS, getNetForUser, getNetShareLabel } from '~/utils/expenseLabels';
 import Link from 'next/link';
 import { CategoryIcon } from '~/components/ui/categoryIcons';
 import { env } from '~/env';
@@ -159,7 +160,7 @@ const BalancePage: NextPageWithUser<{
                     return total._sum.amount != null ? (
                       <>
                         <div key={total.currency} className="flex flex-wrap gap-1">
-                          {total.currency} {toUIString(total._sum.amount)}
+                          {total.currency} {toSignedUIString(total._sum.amount)}
                         </div>
                         {index < arr.length - 1 ? <span>+</span> : null}
                       </>
@@ -383,14 +384,11 @@ const BalancePage: NextPageWithUser<{
         )}
         {expensesQuery.data?.map((e) => {
           const youPaid = e.paidBy === user.id;
-          const yourExpense = e.expenseParticipants.find((p) => p.userId === user.id);
           const isSettlement = e.splitType === SplitType.SETTLEMENT;
           const receiver = isSettlement
             ? e.expenseParticipants.find((p) => p.userId !== e.paidBy)
             : undefined;
-          const yourExpenseAmount = youPaid
-            ? yourExpense?.amount ?? 0
-            : -(yourExpense?.amount ?? 0);
+          const yourShare = getNetShareLabel(getNetForUser(e, user.id));
 
           return (
             <Link
@@ -425,20 +423,17 @@ const BalancePage: NextPageWithUser<{
                     {receiver
                       ? `${receiver.userId === user.id ? 'you' : receiver.user.name ?? receiver.user.email} `
                       : null}
-                    {e.currency} {toUIString(e.amount)}{' '}
+                    {e.currency} {toSignedUIString(e.amount)}{' '}
                   </p>
                 </div>
               </div>
               {isSettlement ? null : (
                 <div className="min-w-10 shrink-0">
-                  <div
-                    className={`text-right text-xs ${youPaid ? 'text-emerald-500' : 'text-orange-600'}`}
-                  >
-                    {youPaid ? 'You lent' : 'You owe'}
+                  <div className={`text-right text-xs ${SHARE_TONE_CLASS[yourShare.tone]}`}>
+                    {yourShare.label}
                   </div>
-                  <div className={`text-right ${youPaid ? 'text-emerald-500' : 'text-orange-600'}`}>
-                    <span className="font-light ">{e.currency}</span>{' '}
-                    {toUIString(yourExpenseAmount)}
+                  <div className={`text-right ${SHARE_TONE_CLASS[yourShare.tone]}`}>
+                    <span className="font-light ">{e.currency}</span> {toUIString(yourShare.amount)}
                   </div>
                 </div>
               )}
