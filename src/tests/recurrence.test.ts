@@ -25,7 +25,9 @@ import {
   getNextOccurrence,
   getOccurrenceAfter,
   getOccurrenceExpenseDate,
+  getCanonicalTimeZone,
   isValidTimeZone,
+  recurrenceInputSchema,
 } from '~/utils/recurrence';
 
 const d = (value: string): LocalDate => {
@@ -341,6 +343,28 @@ void describe('repeat in the add form', () => {
     assert.deepEqual(
       state().participants.map((p) => p.amount),
       [40, -40],
+    );
+  });
+});
+
+void describe('time zone input', () => {
+  void it('stores the canonical name and rejects unknown zones', () => {
+    assert.equal(getCanonicalTimeZone('europe/berlin'), 'Europe/Berlin');
+    assert.equal(getCanonicalTimeZone('EUROPE/BERLIN'), 'Europe/Berlin');
+    assert.equal(getCanonicalTimeZone('Mars/Olympus'), undefined);
+    assert.deepEqual(
+      recurrenceInputSchema.parse({
+        frequency: RecurringFrequency.MONTHLY,
+        timezone: 'eUrOpE/bErLiN',
+      }),
+      { frequency: RecurringFrequency.MONTHLY, timezone: 'Europe/Berlin' },
+    );
+    assert.equal(
+      recurrenceInputSchema.safeParse({
+        frequency: RecurringFrequency.MONTHLY,
+        timezone: 'Mars/Olympus',
+      }).success,
+      false,
     );
   });
 });

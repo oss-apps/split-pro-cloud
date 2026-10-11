@@ -16,14 +16,12 @@ import {
   getLocalDate,
   getNextOccurrence,
   isValidTimeZone,
+  recurrenceInputSchema,
   toDbDate,
 } from '~/utils/recurrence';
 import { getKnownUserIds } from './accessControl';
 
-export const recurrenceInputSchema = z.object({
-  frequency: z.enum(RECURRING_FREQUENCIES),
-  timezone: z.string().refine(isValidTimeZone, { message: 'Unknown time zone' }),
-});
+export { recurrenceInputSchema };
 
 export type RecurrenceInput = z.infer<typeof recurrenceInputSchema>;
 

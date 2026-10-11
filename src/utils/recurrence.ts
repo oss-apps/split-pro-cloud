@@ -1,4 +1,5 @@
 import { RecurringFrequency } from '@prisma/client';
+import { z } from 'zod';
 
 /**
  * A calendar date in a time zone, without a time. Stored in `@db.Date` columns, which Prisma
@@ -153,14 +154,35 @@ const getFormatter = (timeZone: string) => {
   return formatter;
 };
 
-export const isValidTimeZone = (timeZone: string) => {
+/**
+ * The time zone's canonical name, e.g. "Europe/Berlin" for "europe/berlin", or undefined if it is
+ * unknown. Only canonical names are stored and cached, so client input can't grow the cache.
+ */
+export const getCanonicalTimeZone = (timeZone: string) => {
   try {
-    getFormatter(timeZone);
-    return true;
+    return new Intl.DateTimeFormat('en-US', { timeZone }).resolvedOptions().timeZone;
   } catch {
-    return false;
+    return undefined;
   }
 };
+
+export const isValidTimeZone = (timeZone: string) => undefined !== getCanonicalTimeZone(timeZone);
+
+/** How an expense repeats, as sent by the app. The time zone is stored by its canonical name. */
+export const recurrenceInputSchema = z.object({
+  frequency: z.enum(RECURRING_FREQUENCIES),
+  timezone: z
+    .string()
+    .max(100)
+    .transform((timeZone, ctx) => {
+      const canonical = getCanonicalTimeZone(timeZone);
+      if (!canonical) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Unknown time zone' });
+        return z.NEVER;
+      }
+      return canonical;
+    }),
+});
 
 /** The wall clock in `timeZone` at an instant, as if it were UTC. */
 const getWallTime = (instant: number, timeZone: string) => {
