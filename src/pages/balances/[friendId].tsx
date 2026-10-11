@@ -5,18 +5,25 @@ import { api } from '~/utils/api';
 import { UserAvatar } from '~/components/ui/avatar';
 import Link from 'next/link';
 import { ChevronLeftIcon, PlusIcon, Trash, Trash2 } from 'lucide-react';
-import { format } from 'date-fns';
+import { Fragment } from 'react';
 import { Separator } from '~/components/ui/separator';
 import { Button } from '~/components/ui/button';
 import { SettleUp } from '~/components/Friend/Settleup';
 import { toSignedUIString, toUIString } from '~/utils/numbers';
-import { SHARE_TONE_CLASS, getNetShareLabel, getNetWithFriend } from '~/utils/expenseLabels';
+import {
+  SHARE_TONE_CLASS,
+  getNetShareLabel,
+  getNetWithFriend,
+  hasShareWithFriend,
+} from '~/utils/expenseLabels';
 import { CategoryIcon } from '~/components/ui/categoryIcons';
 import { useRouter } from 'next/router';
 import { type NextPageWithUser } from '~/types';
 import { motion } from 'framer-motion';
 import { DeleteFriend } from '~/components/Friend/DeleteFriend';
 import { Export } from '~/components/Friend/Export';
+import { DateColumn, MonthHeader } from '~/components/Expense/ExpenseListDate';
+import { isNewMonth } from '~/utils/dates';
 
 const FriendPage: NextPageWithUser = ({ user }) => {
   const router = useRouter();
@@ -37,6 +44,9 @@ const FriendPage: NextPageWithUser = ({ user }) => {
     { friendId: _friendId },
     { enabled: !!_friendId },
   );
+
+  // The export keeps every expense; the list skips those where neither owes the other anything.
+  const listedExpenses = expenses.data?.filter((e) => hasShareWithFriend(e, user.id, _friendId));
 
   const youLent = balances.data?.filter((b) => b.amount > 0);
   const youOwe = balances.data?.filter((b) => b.amount < 0);
@@ -150,62 +160,58 @@ const FriendPage: NextPageWithUser = ({ user }) => {
             </div>
             <Separator className="px-4" />
             <div className="mx-4 mt-4 flex  flex-col gap-3">
-              {expenses.data?.map((e) => {
+              {listedExpenses?.map((e, index, expenseList) => {
                 const youPaid = e.paidBy === user.id;
                 const yourShare = getNetShareLabel(getNetWithFriend(e, user.id, _friendId));
                 const isSettlement = e.splitType === SplitType.SETTLEMENT;
 
                 return (
-                  <Link
-                    href={`/balances/${friendQuery.data?.id}/expenses/${e.id}`}
-                    key={e.id}
-                    className="flex items-start justify-between px-2 py-2"
-                  >
-                    <div className="flex items-center gap-3 px-1">
-                      <div className="text-xs text-gray-500">
-                        {format(e.expenseDate, 'MMM dd')
-                          .split(' ')
-                          .map((d) => (
-                            <div className="text-center" key={d}>
-                              {d}
-                            </div>
-                          ))}
-                      </div>
-                      <div className="">
-                        <CategoryIcon category={e.category} className="h-5 w-5 text-gray-400" />
-                      </div>
-                      <div>
-                        {!isSettlement ? (
-                          <p className=" max-w-[180px] truncate text-sm lg:max-w-md lg:text-base">
-                            {e.name}
+                  <Fragment key={e.id}>
+                    {isNewMonth(e.expenseDate, expenseList[index - 1]?.expenseDate) ? (
+                      <MonthHeader date={e.expenseDate} />
+                    ) : null}
+                    <Link
+                      href={`/balances/${friendQuery.data?.id}/expenses/${e.id}`}
+                      className="flex items-start justify-between px-2 py-2"
+                    >
+                      <div className="flex items-center gap-3 px-1">
+                        <DateColumn date={e.expenseDate} />
+                        <div className="">
+                          <CategoryIcon category={e.category} className="h-5 w-5 text-gray-400" />
+                        </div>
+                        <div>
+                          {!isSettlement ? (
+                            <p className=" max-w-[180px] truncate text-sm lg:max-w-md lg:text-base">
+                              {e.name}
+                            </p>
+                          ) : null}
+                          <p
+                            className={`flex ${isSettlement ? 'text-sm text-gray-400' : 'text-xs text-gray-500'}`}
+                          >
+                            <span className={`text-[8px] ${isSettlement ? 'mr-1' : ''} `}>
+                              {isSettlement ? '  🎉 ' : null}
+                            </span>
+                            <span>
+                              {youPaid ? 'You' : friendQuery.data?.name} paid {e.currency}{' '}
+                              {toSignedUIString(e.amount)}
+                              {isSettlement && e.group ? ` in ${e.group.name}` : ''}{' '}
+                            </span>
                           </p>
-                        ) : null}
-                        <p
-                          className={`flex ${isSettlement ? 'text-sm text-gray-400' : 'text-xs text-gray-500'}`}
-                        >
-                          <span className={`text-[8px] ${isSettlement ? 'mr-1' : ''} `}>
-                            {isSettlement ? '  🎉 ' : null}
-                          </span>
-                          <span>
-                            {youPaid ? 'You' : friendQuery.data?.name} paid {e.currency}{' '}
-                            {toSignedUIString(e.amount)}
-                            {isSettlement && e.group ? ` in ${e.group.name}` : ''}{' '}
-                          </span>
-                        </p>
-                      </div>
-                    </div>
-                    {isSettlement ? null : (
-                      <div className="min-w-10 shrink-0">
-                        <div className={`text-right text-xs ${SHARE_TONE_CLASS[yourShare.tone]}`}>
-                          {yourShare.label}
-                        </div>
-                        <div className={`text-right ${SHARE_TONE_CLASS[yourShare.tone]}`}>
-                          <span className="font-light ">{e.currency}</span>{' '}
-                          {toUIString(yourShare.amount)}
                         </div>
                       </div>
-                    )}
-                  </Link>
+                      {isSettlement ? null : (
+                        <div className="min-w-10 shrink-0">
+                          <div className={`text-right text-xs ${SHARE_TONE_CLASS[yourShare.tone]}`}>
+                            {yourShare.label}
+                          </div>
+                          <div className={`text-right ${SHARE_TONE_CLASS[yourShare.tone]}`}>
+                            <span className="font-light ">{e.currency}</span>{' '}
+                            {toUIString(yourShare.amount)}
+                          </div>
+                        </div>
+                      )}
+                    </Link>
+                  </Fragment>
                 );
               })}
             </div>

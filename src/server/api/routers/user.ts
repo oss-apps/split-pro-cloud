@@ -1,4 +1,4 @@
-import { type Balance, SplitType } from '@prisma/client';
+import { type Balance, Prisma, SplitType } from '@prisma/client';
 import { boolean, z } from 'zod';
 import { createTRPCRouter, protectedProcedure } from '~/server/api/trpc';
 import { db } from '~/server/db';
@@ -143,12 +143,23 @@ export const userRouter = createTRPCRouter({
         return friend;
       }
 
-      const user = await db.user.create({
-        data: {
-          email: input.email,
-          name: input.email.split('@')[0],
-        },
-      });
+      let user;
+      try {
+        user = await db.user.create({
+          data: {
+            email: input.email,
+            name: input.email.split('@')[0],
+          },
+        });
+      } catch (error) {
+        // A concurrent invite for the same new email created the user first
+        if (!(error instanceof Prisma.PrismaClientKnownRequestError) || 'P2002' !== error.code) {
+          throw error;
+        }
+        const existing = await db.user.findUniqueOrThrow({ where: { email: input.email } });
+        await addFriendship(session.user.id, existing.id);
+        return existing;
+      }
 
       await addFriendship(session.user.id, user.id);
 

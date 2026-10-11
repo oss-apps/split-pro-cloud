@@ -29,6 +29,11 @@ interface AddExpenseState {
   currency: string;
   /** The user's default currency, restored for every new expense. */
   preferredCurrency: string | undefined;
+  /**
+   * Whether this form's currency was picked by hand or loaded from the expense being edited. Only
+   * an untouched currency follows the selected group.
+   */
+  currencyTouched: boolean;
   category: string;
   nameOrEmail: string;
   paidBy: User | undefined;
@@ -149,6 +154,7 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
   participants: [],
   currency: 'USD',
   preferredCurrency: undefined,
+  currencyTouched: false,
   category: 'general',
   nameOrEmail: '',
   paidBy: undefined,
@@ -205,9 +211,18 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
           ...calculateParticipantSplit(state.amount, participants, splitType, state.paidBy),
         });
       }),
-    setGroup: (group) => {
-      set({ group });
-    },
+    setGroup: (group) =>
+      set((s) => {
+        if (s.currencyTouched) {
+          return { group };
+        }
+
+        // An untouched currency follows the group, and goes back to the user's without one.
+        const currency = group
+          ? group.defaultCurrency
+          : s.preferredCurrency ?? s.currentUser?.currency ?? s.currency;
+        return withEditSnapshot(s, { group, currency: currency ?? s.currency });
+      }),
     addOrUpdateParticipant: (user) =>
       set((state) => {
         const participants = [...state.participants];
@@ -265,7 +280,7 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
 
         return splitWithParticipants({ ...state, paidBy }, participants);
       }),
-    setCurrency: (currency) => set((s) => withEditSnapshot(s, { currency })),
+    setCurrency: (currency) => set((s) => withEditSnapshot(s, { currency, currencyTouched: true })),
     setPreferredCurrency: (preferredCurrency) => set({ preferredCurrency }),
     setCategory: (category) => set({ category }),
     setNameOrEmail: (nameOrEmail) => set({ nameOrEmail, showFriends: nameOrEmail.length > 0 }),
@@ -303,6 +318,7 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
         paidBy: s.currentUser,
         description: '',
         currency: s.preferredCurrency ?? s.currentUser?.currency ?? s.currency,
+        currencyTouched: false,
         fileKey: undefined,
         isFileUploading: false,
         category: 'general',
@@ -502,6 +518,8 @@ export const getEditFormState = (expense: ExpenseToEdit) => {
     canSplitScreenClosed: true,
     category: expense.category,
     currency: expense.currency,
+    // An edit keeps its stored currency, whatever the group's default.
+    currencyTouched: true,
     description: expense.name,
     expenseDate: expense.expenseDate,
     fileKey: expense.fileKey ?? undefined,

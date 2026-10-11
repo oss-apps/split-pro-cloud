@@ -18,6 +18,7 @@ import {
   getSettleableCurrencies,
   resolveSelection,
 } from '~/utils/settleUp';
+import { parseDateInput } from '~/utils/dates';
 
 const describeAmount = (amount: number, currency: string) =>
   0 === amount
@@ -35,6 +36,7 @@ export const SettleUp: React.FC<{
   const [currency, setCurrency] = React.useState<string | undefined>();
   const [selection, setSelection] = React.useState<SettleUpSelection | undefined>();
   const [amount, setAmount] = React.useState('');
+  const [date, setDate] = React.useState('');
   const [selectionChanged, setSelectionChanged] = React.useState(false);
 
   const breakdown = currencies.find((b) => b.currency === currency);
@@ -74,6 +76,7 @@ export const SettleUp: React.FC<{
 
   // The drawer stays mounted, so start every visit from the latest balances.
   function onOpen() {
+    setDate('');
     const [onlyCurrency] = currencies;
     if (1 === currencies.length && onlyCurrency) {
       onSelectCurrency(onlyCurrency);
@@ -109,6 +112,7 @@ export const SettleUp: React.FC<{
       value,
       currentUserId: currentUser.id,
       friendId: friend.id,
+      expenseDate: parseDateInput(date),
     });
     if ('group' === settlement.kind) {
       addGroupExpenseMutation.mutate(settlement.payment, callbacks);
@@ -259,6 +263,8 @@ export const SettleUp: React.FC<{
                   currency={breakdown.currency}
                   amount={amount}
                   onAmountChange={setAmount}
+                  date={date}
+                  onDateChange={setDate}
                 />
               ) : null}
             </div>

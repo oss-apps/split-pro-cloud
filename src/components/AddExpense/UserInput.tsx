@@ -31,7 +31,7 @@ export const UserInput: React.FC<{
       } else {
         removeLastParticipant(); // Assuming deleteUser is the function you want to call
       }
-    } else if (e.key === 'Enter' && isEmail.success) {
+    } else if (e.key === 'Enter' && isEmail.success && !group) {
       inviteParticipant(nameOrEmail, (email) =>
         addFriendMutation.mutateAsync({ email: email.toLowerCase() }),
       ).catch((error) => {

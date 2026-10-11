@@ -116,12 +116,15 @@ export const buildSettleUpPayment = ({
   value,
   currentUserId,
   friendId,
+  expenseDate,
 }: {
   destination: SettleUpDestination;
   currency: string;
   value: number;
   currentUserId: number;
   friendId: number;
+  /** Undefined records the payment now. */
+  expenseDate?: Date;
 }) => {
   const isCurrentUserPaying = 0 > destination.amount;
   const payment = {
@@ -135,6 +138,7 @@ export const buildSettleUpPayment = ({
     ],
     paidBy: isCurrentUserPaying ? currentUserId : friendId,
     category: 'general',
+    ...(expenseDate ? { expenseDate } : {}),
   };
 
   return 'all' === destination.id

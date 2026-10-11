@@ -8,10 +8,21 @@ import { createGroupExpense, deleteExpense, editExpense } from '../services/spli
 import { assertCanSaveGroupExpense, assertKnownUsers } from '../services/accessControl';
 import { TRPCError } from '@trpc/server';
 import { nanoid } from 'nanoid';
+import { CURRENCIES } from '~/lib/currency';
 
 export const groupRouter = createTRPCRouter({
   create: protectedProcedure
-    .input(z.object({ name: z.string().min(1), currency: z.string().optional() }))
+    .input(
+      z.object({
+        name: z.string().min(1),
+        currency: z
+          .string()
+          .refine((code) => CURRENCIES.some((currency) => currency.code === code), {
+            message: 'Unknown currency',
+          })
+          .optional(),
+      }),
+    )
     .mutation(async ({ ctx, input }) => {
       const group = await ctx.db.group.create({
         data: {
