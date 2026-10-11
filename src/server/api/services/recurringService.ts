@@ -8,7 +8,6 @@ import {
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 
-import { db } from '~/server/db';
 import {
   RECURRING_FREQUENCIES,
   fromDbDate,
@@ -88,17 +87,29 @@ const lockRulesOfUser = (tx: Prisma.TransactionClient, userId: number) =>
 
 /**
  * Every rule removing the account can reach, as one set in id order: the ones they set up or are
- * in, the ones in groups they own (deleted with the group), and the ones copying an expense
- * deleted with them. Locked before the account, so the delete never takes a rule lock out of order.
+ * in, the ones in groups they own (deleted with the group), and the ones with any expense the
+ * removal deletes or changes (paid, added, deleted or last edited by them, or with them in it),
+ * which includes every template among them. Locked before the account, so the delete never takes
+ * a rule lock, or an expense row a rule delete also locks, out of order.
  */
 const lockRulesOfAccount = (tx: Prisma.TransactionClient, userId: number) =>
   lockRules(
     tx,
     Prisma.sql`"createdById" = ${userId} OR ${userId} = ANY("templateUserIds")
       OR "groupId" IN (SELECT id FROM "Group" WHERE "userId" = ${userId})
+      OR id IN (
+        SELECT "recurringId" FROM "Expense"
+        WHERE "recurringId" IS NOT NULL AND (
+          "paidBy" = ${userId} OR "addedBy" = ${userId} OR "deletedBy" = ${userId}
+          OR "updatedBy" = ${userId}
+          OR id IN (SELECT "expenseId" FROM "ExpenseParticipant" WHERE "userId" = ${userId})
+        )
+      )
       OR "templateExpenseId" IN (
-        SELECT id FROM "Expense"
+        SELECT "expenseId" FROM "ExpenseParticipant" WHERE "userId" = ${userId}
+        UNION SELECT id FROM "Expense"
         WHERE "paidBy" = ${userId} OR "addedBy" = ${userId} OR "deletedBy" = ${userId}
+          OR "updatedBy" = ${userId}
       )`,
   );
 
@@ -620,7 +631,7 @@ export async function setRulePaused(
   callerId: number,
   now = new Date(),
 ) {
-  return db.$transaction(async (tx) => {
+  return runBalanceTransaction(async (tx) => {
     // Also waits for a runner or an edit working on this rule, so they never interleave.
     const rule = await lockManageableRule(tx, callerId, ruleId);
 
@@ -660,7 +671,8 @@ export async function setRulePaused(
 
 /** Stops repeating for good. The expenses it added stay. */
 export async function deleteRule(ruleId: number, callerId: number) {
-  await db.$transaction(async (tx) => {
+  // Retried on a conflict: removing the rule also unlinks each of its expenses.
+  await runBalanceTransaction(async (tx) => {
     await lockManageableRule(tx, callerId, ruleId);
     await tx.recurringExpense.delete({ where: { id: ruleId } });
   });

@@ -1854,3 +1854,157 @@ void test(
     }
   },
 );
+
+void test(
+  'removing an account that paid an older occurrence never deadlocks with deleting the rule',
+  { skip: !databaseUrl },
+  async () => {
+    const t = await setup();
+    // Unique per run, as the test database is shared with the other files.
+    const key = Math.floor(Math.random() * 1_000_000_000);
+    const trigger = `hold_expense_delete_${key}`;
+    try {
+      const removed = await t.createUser('Removed');
+      const alice = await t.createUser('Alice');
+      const bob = await t.createUser('Bob');
+      const group = await t.createGroup('Flat', bob.id, [removed.id, alice.id, bob.id]);
+      const input = {
+        groupId: group.id,
+        paidBy: alice.id,
+        name: 'Rent',
+        category: 'rent',
+        amount: 10,
+        currency: 'USD',
+        splitType: 'EQUAL' as const,
+        participants: [
+          { userId: alice.id, amount: 5 },
+          { userId: bob.id, amount: -5 },
+        ],
+        expenseDate: new Date('2026-01-01T12:00:00Z'),
+      };
+      // Added by them, repeated by Alice; the second one is later paid by them, the third not.
+      const source = await t.callerFor(removed).group.addOrEditExpense(input);
+      await t.callerFor(alice).group.addOrEditExpense({
+        ...input,
+        expenseId: source.id,
+        recurrence: { frequency: 'DAILY', timezone: 'UTC' },
+      });
+      const rule = await t.getRule(source.id);
+      await t.setNext(rule.id, '2026-01-02');
+      await t.runRecurringTick({ now: new Date('2026-01-02T01:00:00Z') });
+      const [, second] = await t.occurrences(rule.id);
+      assert.ok(second);
+      await t.callerFor(alice).group.addOrEditExpense({
+        ...input,
+        expenseId: second.id,
+        paidBy: removed.id,
+        participants: [
+          { userId: removed.id, amount: 5 },
+          { userId: bob.id, amount: -5 },
+        ],
+      });
+      await t.runRecurringTick({ now: new Date('2026-01-03T01:00:00Z') });
+      const [, , third] = await t.occurrences(rule.id);
+      assert.ok(third);
+      await t.callerFor(bob).group.addOrEditExpense({ ...input, expenseId: third.id });
+      const current = await t.getRule(source.id);
+      assert.equal(current.templateExpenseId, third.id);
+      assert.ok(!current.templateUserIds.includes(removed.id) && current.createdById === alice.id);
+
+      // The account delete stops in its cascade at the occurrence they paid, until released.
+      await t.db.$executeRawUnsafe(`
+        CREATE FUNCTION ${trigger}() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF OLD.id = '${second.id}' THEN PERFORM pg_advisory_xact_lock(${key}); END IF;
+          RETURN OLD;
+        END $$`);
+      await t.db.$executeRawUnsafe(
+        `CREATE TRIGGER ${trigger} BEFORE DELETE ON "Expense" FOR EACH ROW EXECUTE FUNCTION ${trigger}()`,
+      );
+
+      type Transaction = (
+        callback: (tx: { $executeRawUnsafe: (query: string) => Promise<unknown> }) => unknown,
+        options?: object,
+      ) => Promise<unknown>;
+      const run = t.db.$transaction.bind(t.db) as unknown as Transaction;
+      const deadlocks: unknown[] = [];
+      (t.db as unknown as { $transaction: Transaction }).$transaction = (callback, options) => {
+        const attempt = run(callback, options);
+        attempt.catch((error: unknown) => {
+          if (isDeadlock(error)) {
+            deadlocks.push(error);
+          }
+        });
+        return attempt;
+      };
+      let release: () => void = () => undefined;
+      let reached: () => void = () => undefined;
+      const released = new Promise<void>((resolve) => (release = resolve));
+      const isReached = new Promise<void>((resolve) => (reached = resolve));
+      const blocker = run(
+        async (tx) => {
+          await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(${key})`);
+          reached();
+          await released;
+        },
+        { timeout: 30_000 },
+      );
+      const waitFor = async (like: string) => {
+        for (let i = 0; 250 > i; i++) {
+          const rows = await t.db.$queryRaw<unknown[]>`
+            SELECT pid FROM pg_stat_activity
+            WHERE datname = current_database() AND wait_event_type IN ('Lock', 'Advisory')
+              AND query LIKE ${like}`;
+          if (rows.length) {
+            return true;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        return false;
+      };
+      const settle = <T>(promise: Promise<T>) =>
+        promise.then(
+          (value) => ({ ok: true as const, value }),
+          (error: unknown) => ({ ok: false as const, error }),
+        );
+
+      try {
+        await isReached;
+        const removing = settle(t.deleteUserAccount(removed.id));
+        assert.ok(await waitFor('%DELETE%User%'), 'the account delete is held in its cascade');
+        const deleting = settle(t.callerFor(alice).recurring.delete({ ruleId: rule.id }));
+        // It waits for the rule the account delete locked first, before touching any expense.
+        const isWaiting = await waitFor('%RecurringExpense%FOR UPDATE%');
+        // Long enough for a lock cycle to be found (deadlock_timeout is 1s), had there been one.
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+        release();
+        await blocker;
+        const [account, ruleDelete] = await Promise.all([removing, deleting]);
+        assert.deepEqual(deadlocks, []);
+        assert.ok(account.ok, 'the account is removed');
+        assert.ok(
+          ruleDelete.ok,
+          `the rule is deleted: ${String(!ruleDelete.ok && ruleDelete.error)}`,
+        );
+        assert.ok(isWaiting, 'the rule delete waits for the rule lock');
+      } finally {
+        release();
+        await blocker.catch(() => undefined);
+        (t.db as unknown as { $transaction: Transaction }).$transaction = run;
+      }
+
+      assert.equal(await t.db.user.findUnique({ where: { id: removed.id } }), null);
+      assert.equal(await t.db.recurringExpense.findUnique({ where: { id: rule.id } }), null);
+      // What it added or paid went with the account; the rest stays, no longer repeating.
+      const left = await t.db.expense.findMany({ where: { groupId: group.id } });
+      assert.deepEqual(
+        left.map((e) => [e.id, e.recurringId]),
+        [[third.id, null]],
+      );
+    } finally {
+      await t.db.$executeRawUnsafe(`DROP TRIGGER IF EXISTS ${trigger} ON "Expense"`);
+      await t.db.$executeRawUnsafe(`DROP FUNCTION IF EXISTS ${trigger}()`);
+      await t.cleanUp();
+    }
+  },
+);
