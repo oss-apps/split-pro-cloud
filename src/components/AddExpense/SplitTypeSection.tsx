@@ -3,8 +3,10 @@ import {
   formatSplitShare,
   getRemainingPercentage,
   isPendingInvite,
+  isSplitWaitingForInvite,
   useAddExpenseStore,
 } from '~/store/addStore';
+import { SPLIT_WAITING_MESSAGE } from '~/utils/defaultSplit';
 import { AppDrawer, Drawer, DrawerClose } from '../ui/drawer';
 import { UserAvatar } from '../ui/avatar';
 import { BarChart2, Check, DollarSign, Equal, Percent, Plus, X } from 'lucide-react';
@@ -87,10 +89,14 @@ export const SplitTypeSection: React.FC = () => {
 
 const SplitExpenseForm: React.FC = () => {
   const splitType = useAddExpenseStore((s) => s.splitType);
+  const isWaitingForInvite = useAddExpenseStore(isSplitWaitingForInvite);
   const { setSplitType } = useAddExpenseStore((s) => s.actions);
 
   return (
-    <div>
+    <fieldset disabled={isWaitingForInvite} className="disabled:opacity-60">
+      {isWaitingForInvite ? (
+        <p className="mt-4 text-center text-sm text-gray-400">{SPLIT_WAITING_MESSAGE}</p>
+      ) : null}
       <Tabs
         value={splitType}
         className="mx-auto mt-5 w-full"
@@ -129,7 +135,7 @@ const SplitExpenseForm: React.FC = () => {
           <SplitByAdjustmentSection />
         </TabsContent>
       </Tabs>
-    </div>
+    </fieldset>
   );
 };
 

@@ -5,7 +5,9 @@ import { type Group, SplitType, type User } from '@prisma/client';
 import {
   getEditFormState,
   getParticipantsToSave,
+  hasUnresolvedInvite,
   inviteParticipant,
+  isSplitWaitingForInvite,
   useAddExpenseStore,
 } from '~/store/addStore';
 import {
@@ -579,5 +581,404 @@ void describe('a split changed by hand and pending invites', () => {
       [1, 66.67],
       [4, -66.67],
     ]);
+  });
+});
+
+void describe('a group selected while an invite with a value is pending', () => {
+  const bob = user(4, 'Bob');
+  const carol = user(5, 'Carol');
+  const invite = (email: string) => {
+    let settle: { resolve: (u: User) => void; reject: (e: Error) => void } | undefined;
+    const before = new Set(state().participants.map((p) => p.id));
+    const pending = inviteParticipant(
+      email,
+      () => new Promise<User>((resolve, reject) => (settle = { resolve, reject })),
+    );
+    const placeholder = state().participants.find((p) => !before.has(p.id));
+    assert.ok(placeholder && 0 > placeholder.id && settle);
+    return { pending, placeholder, settle };
+  };
+  const setShare = (id: number, splitShare: number) => {
+    const participant = state().participants.find((p) => p.id === id);
+    assert.ok(participant);
+    state().actions.addOrUpdateParticipant({ ...participant, splitShare });
+  };
+  const canSave = () => state().canSplitScreenClosed && !hasUnresolvedInvite(state());
+  const startShares = () => {
+    start();
+    state().actions.setAmount(100);
+    state().actions.setSplitType(SplitType.SHARE);
+  };
+
+  void it('gives the invitee their value once the invite returns a group member', async () => {
+    startShares();
+    const { pending, placeholder, settle } = invite('bob@example.com');
+    setShare(me.id, 1);
+    setShare(placeholder.id, 3);
+
+    state().actions.selectGroup(group(), [me, bob]);
+    assert.equal(isSplitWaitingForInvite(state()), true);
+    assert.equal(canSave(), false);
+    // The split can't be changed meanwhile.
+    setShare(bob.id, 5);
+    state().actions.setSplitType(SplitType.EQUAL);
+    assert.equal(state().splitType, SplitType.SHARE);
+    assert.deepEqual(
+      state().participants.map((p) => p.splitShare),
+      [1, 1],
+    );
+
+    settle.resolve(bob);
+    await pending;
+
+    assert.equal(canSave(), true);
+    assert.deepEqual(state().manualSplit, { splitType: 'SHARE', shares: { 1: 1, 4: 3 } });
+    assert.deepEqual(
+      getParticipantsToSave(state()).map((p) => [p.id, p.amount]),
+      [
+        [1, 75],
+        [4, -75],
+      ],
+    );
+  });
+
+  void it('drops the value when the invitee is not in the group, and adds no one', async () => {
+    startShares();
+    const { pending, placeholder, settle } = invite('bob@example.com');
+    setShare(placeholder.id, 3);
+
+    state().actions.selectGroup(group(), [me, alex]);
+    assert.equal(canSave(), false);
+    settle.resolve(bob);
+    await pending;
+
+    assert.deepEqual(state().pendingInviteSplit, {});
+    assert.equal(canSave(), true);
+    assert.deepEqual(amounts(), [
+      [1, 50],
+      [2, -50],
+    ]);
+  });
+
+  void it('forgets an invite removed by hand, before or after the group', async () => {
+    startShares();
+    const { pending, placeholder, settle } = invite('bob@example.com');
+    setShare(placeholder.id, 3);
+    state().actions.removeParticipant(placeholder.id);
+    state().actions.selectGroup(group(), [me, bob]);
+
+    assert.equal(canSave(), true);
+    settle.resolve(bob);
+    await pending;
+    assert.deepEqual(amounts(), [
+      [1, 50],
+      [4, -50],
+    ]);
+
+    removeGroup();
+    assert.deepEqual(
+      state().participants.map((p) => p.id),
+      [1],
+    );
+  });
+
+  void it('drops the value when the invite fails after the group was selected', async () => {
+    startShares();
+    const { pending, placeholder, settle } = invite('bob@example.com');
+    setShare(placeholder.id, 3);
+    state().actions.selectGroup(group(), [me, bob]);
+    const hint = state().defaultSplitHint;
+
+    settle.reject(new Error('no'));
+    await assert.rejects(pending);
+
+    assert.equal(isSplitWaitingForInvite(state()), false);
+    assert.equal(canSave(), true);
+    assert.equal(state().defaultSplitHint, hint);
+    assert.deepEqual(amounts(), [
+      [1, 50],
+      [4, -50],
+    ]);
+  });
+
+  void it('waits for every pending invite, whichever returns first', async () => {
+    for (const order of [
+      [0, 1],
+      [1, 0],
+    ]) {
+      startShares();
+      const invites = [invite('bob@example.com'), invite('carol@example.com')];
+      setShare(invites[0]!.placeholder.id, 3);
+      setShare(invites[1]!.placeholder.id, 2);
+      state().actions.selectGroup(group(), [me, bob, carol]);
+
+      const [first, second] = order.map((index) => ({
+        ...invites[index]!,
+        user: [bob, carol][index]!,
+      }));
+      first!.settle.resolve(first!.user);
+      await first!.pending;
+      assert.equal(canSave(), false, `${order.join()} after the first`);
+      second!.settle.resolve(second!.user);
+      await second!.pending;
+
+      assert.equal(canSave(), true);
+      assert.deepEqual(
+        state().participants.map((p) => [p.id, p.splitShare]),
+        [
+          [1, 1],
+          [4, 3],
+          [5, 2],
+        ],
+      );
+    }
+  });
+
+  void it('keeps an invite that returned before the group and waits for the other', async () => {
+    startShares();
+    const bobInvite = invite('bob@example.com');
+    const carolInvite = invite('carol@example.com');
+    setShare(bobInvite.placeholder.id, 3);
+    setShare(carolInvite.placeholder.id, 2);
+    carolInvite.settle.resolve(carol);
+    await carolInvite.pending;
+
+    state().actions.selectGroup(group(), [me, bob, carol]);
+    assert.equal(canSave(), false);
+    bobInvite.settle.resolve(bob);
+    await bobInvite.pending;
+
+    assert.equal(canSave(), true);
+    assert.deepEqual(
+      state().participants.map((p) => [p.id, p.splitShare]),
+      [
+        [1, 1],
+        [4, 3],
+        [5, 2],
+      ],
+    );
+  });
+});
+
+/**
+ * A model of the add flow that knows invitees by invite rather than by placeholder id. It follows
+ * the rules: a split changed by hand keeps everyone's value as shown; an invitee's value goes to
+ * their account once the invite returns if they are in the form and have no value of their own,
+ * else it is dropped; nobody is ever added by an invite once its placeholder is gone; and while an
+ * invitee's value waits outside the form, the split can't be changed.
+ */
+void describe('pending invites, groups and a split changed by hand, in any order', () => {
+  const bob = user(4, 'Bob');
+  const carol = user(5, 'Carol');
+  const dan = user(6, 'Dan');
+  const groups = [
+    { group: { ...group(), id: 7 } as Group, members: [me, bob, alex] },
+    { group: { ...group(), id: 8 } as Group, members: [carol, me] },
+  ];
+
+  type Key = number | `invite-${number}`;
+  type Invite = {
+    target: User;
+    placeholderId: number;
+    settle: { resolve: (u: User) => void; reject: (e: Error) => void };
+    pending: Promise<void>;
+    settled: boolean;
+  };
+
+  const applySplit = (values: Map<Key, number>, participants: Key[]) => {
+    const shares = participants.map((key) => values.get(key) ?? 1);
+    return 0 === shares.reduce((total, share) => total + share, 0)
+      ? { type: SplitType.EQUAL, shown: new Map(participants.map((key) => [key, 1])) }
+      : { type: SplitType.SHARE, shown: new Map(participants.map((key, i) => [key, shares[i]!])) };
+  };
+
+  const run = async (seed: number) => {
+    const next = random(seed);
+    const pick = <T>(items: T[]) => items[Math.floor(next() * items.length)]!;
+    start();
+    state().actions.setAmount(100);
+    state().actions.setSplitType(SplitType.SHARE);
+
+    let group: number | undefined;
+    let type: SplitType = SplitType.SHARE;
+    let participants: Key[] = [me.id];
+    let shown = new Map<Key, number>([[me.id, 1]]);
+    let manual = new Map<Key, number>([[me.id, 1]]);
+    const pendingValues = new Map<number, number>();
+    const invites: Invite[] = [];
+    const inviteKey = (token: number): Key => `invite-${token}`;
+    const isInvite = (key: Key) => 'string' === typeof key;
+    const idOf = (key: Key) =>
+      'number' === typeof key ? key : invites[Number(key.slice(7))]!.placeholderId;
+    const capture = () => {
+      manual = new Map(participants.map((key) => [key, shown.get(key) ?? 0]));
+    };
+    const log: string[] = [];
+
+    for (let step = 0; step < 30; step++) {
+      const open = invites
+        .map((invite, token) => ({ invite, token }))
+        .filter((i) => !i.invite.settled);
+      const ops: Array<[string, () => Promise<void> | void]> = [];
+
+      ops.push([
+        'edit',
+        () => {
+          const key = pick(participants);
+          const value = Math.floor(next() * 4);
+          const participant = state().participants.find((p) => p.id === idOf(key));
+          if (SplitType.EQUAL === type && !pendingValues.size) {
+            state().actions.setSplitType(SplitType.SHARE);
+            type = SplitType.SHARE;
+            capture();
+            log.push('switch to shares');
+            return;
+          }
+          log.push(`set ${String(key)} to ${value}`);
+          state().actions.addOrUpdateParticipant({ ...participant!, splitShare: value });
+          if (pendingValues.size || SplitType.SHARE !== type) {
+            return;
+          }
+          shown.set(key, value);
+          capture();
+        },
+      ]);
+      if (undefined === group && 2 > open.length) {
+        ops.push([
+          'invite',
+          () => {
+            const token = invites.length;
+            const target = pick([bob, carol, dan]);
+            let settle: Invite['settle'] | undefined;
+            const before = new Set(state().participants.map((p) => p.id));
+            const pending = inviteParticipant(
+              target.email!,
+              () => new Promise<User>((resolve, reject) => (settle = { resolve, reject })),
+            ).catch(() => undefined);
+            const placeholder = state().participants.find((p) => !before.has(p.id));
+            invites.push({
+              target,
+              placeholderId: placeholder!.id,
+              settle: settle!,
+              pending,
+              settled: false,
+            });
+            participants.push(inviteKey(token));
+            shown.set(inviteKey(token), SplitType.EQUAL === type ? 1 : 0);
+            log.push(`invite ${target.name} as ${inviteKey(token)}`);
+          },
+        ]);
+      }
+      if (open.length) {
+        ops.push([
+          'resolve',
+          async () => {
+            const { invite, token } = pick(open);
+            const key = inviteKey(token);
+            const target = invite.target.id;
+            log.push(`${key} returns ${invite.target.name}`);
+            invite.settled = true;
+            invite.settle.resolve(invite.target);
+            await invite.pending;
+            if (participants.includes(key)) {
+              const value = manual.get(key);
+              manual.delete(key);
+              if (participants.includes(target)) {
+                participants = participants.filter((k) => k !== key);
+              } else {
+                participants = participants.map((k) => (k === key ? target : k));
+                shown.set(target, shown.get(key)!);
+                if (undefined !== value) {
+                  manual.set(target, value);
+                }
+              }
+              shown.delete(key);
+              return;
+            }
+            const value = pendingValues.get(token);
+            pendingValues.delete(token);
+            if (undefined !== value && participants.includes(target) && !manual.has(target)) {
+              manual.set(target, value);
+              ({ type, shown } = applySplit(manual, participants));
+            }
+          },
+        ]);
+        ops.push([
+          'fail',
+          async () => {
+            const { invite, token } = pick(open);
+            const key = inviteKey(token);
+            log.push(`${key} fails`);
+            invite.settled = true;
+            invite.settle.reject(new Error('no'));
+            await invite.pending;
+            participants = participants.filter((k) => k !== key);
+            shown.delete(key);
+            manual.delete(key);
+            pendingValues.delete(token);
+          },
+        ]);
+      }
+      ops.push([
+        'select group',
+        () => {
+          const index = Math.floor(next() * groups.length);
+          const selected = groups[index]!;
+          log.push(`select group ${selected.group.id}`);
+          state().actions.selectGroup(selected.group, selected.members);
+          group = selected.group.id;
+          [...manual]
+            .filter(([key]) => isInvite(key))
+            .forEach(([key, value]) => {
+              pendingValues.set(Number(String(key).slice(7)), value);
+              manual.delete(key);
+            });
+          participants = [me.id, ...selected.members.map((m) => m.id).filter((id) => id !== me.id)];
+          ({ type, shown } = applySplit(manual, participants));
+        },
+      ]);
+      if (undefined !== group) {
+        ops.push([
+          'remove group',
+          () => {
+            log.push('remove group');
+            removeGroup();
+            group = undefined;
+            shown = new Map([[me.id, SplitType.EQUAL === type ? 1 : 0]]);
+            participants = [me.id];
+            type = SplitType.EQUAL;
+          },
+        ]);
+      }
+
+      await pick(ops)[1]();
+
+      const label = `seed ${seed}: ${log.join(', ')}`;
+      const s = state();
+      assert.deepEqual(
+        s.participants.map((p) => [p.id, p.splitShare]),
+        participants.map((key) => [idOf(key), shown.get(key)]),
+        label,
+      );
+      assert.equal(s.splitType, type, label);
+      assert.equal(isSplitWaitingForInvite(s), 0 < pendingValues.size, label);
+      const canSave = s.canSplitScreenClosed && !hasUnresolvedInvite(s);
+      if (canSave) {
+        assert.ok(
+          s.participants.every((p) => 0 < p.id),
+          label,
+        );
+        assert.equal(pendingValues.size, 0, label);
+      }
+      if (participants.some(isInvite) || pendingValues.size) {
+        assert.equal(canSave, false, label);
+      }
+    }
+  };
+
+  void it('every saveable form has each value where the user left it', async () => {
+    for (let seed = 1; seed <= 400; seed++) {
+      await run(seed);
+    }
   });
 });

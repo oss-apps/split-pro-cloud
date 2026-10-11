@@ -54,6 +54,12 @@ interface AddExpenseState {
   splitTouched: boolean;
   /** The split changed by hand, put back when the group is selected again. */
   manualSplit: DefaultSplit | undefined;
+  /**
+   * Values of the manual split given to pending invites that left the form because a group was
+   * selected, by placeholder id. Each goes to the invitee if they are in the form once the invite
+   * returns, else it is dropped. Until then the split can't be changed or saved.
+   */
+  pendingInviteSplit: Record<number, number>;
   defaultSplitHint: DefaultSplitHint | undefined;
   category: string;
   nameOrEmail: string;
@@ -209,6 +215,93 @@ const moveInManualSplit = (
   };
 };
 
+/** Moves the values of pending invites out of a manual split, e.g. when a group replaces them. */
+const takePendingInvites = (
+  manualSplit: DefaultSplit | undefined,
+  pendingInviteSplit: Record<number, number>,
+) => {
+  if (!manualSplit) {
+    return { manualSplit, pendingInviteSplit };
+  }
+
+  const entries = Object.entries(manualSplit.shares);
+  const isInvite = ([id]: [string, number]) => isPendingInvite({ id: Number(id) });
+  return {
+    manualSplit: {
+      ...manualSplit,
+      shares: Object.fromEntries(entries.filter((entry) => !isInvite(entry))),
+    },
+    pendingInviteSplit: {
+      ...pendingInviteSplit,
+      ...Object.fromEntries(entries.filter(isInvite)),
+    },
+  };
+};
+
+const withoutPendingInvite = (pendingInviteSplit: Record<number, number>, placeholderId: number) =>
+  Object.fromEntries(
+    Object.entries(pendingInviteSplit).filter(([id]) => Number(id) !== placeholderId),
+  );
+
+/** The manual split applied to these participants, as when its group is selected. */
+const applyManualSplit = (
+  state: AddExpenseState,
+  manualSplit: DefaultSplit,
+  participants: Array<Participant>,
+) => {
+  const resolved = resolveDefaultSplit(
+    manualSplit,
+    participants.map((p) => p.id),
+  );
+  return splitWithParticipants(
+    state,
+    participants.map((p, index) => ({ ...p, splitShare: resolved.shares[index] ?? 0 })),
+    resolved.splitType,
+  );
+};
+
+/** Whether an invite in the form or in its split hasn't returned yet, so it can't be saved. */
+export const hasUnresolvedInvite = (
+  state: Pick<AddExpenseState, 'participants' | 'manualSplit' | 'pendingInviteSplit'>,
+) =>
+  state.participants.some(isPendingInvite) ||
+  Object.keys(state.manualSplit?.shares ?? {}).some((id) => isPendingInvite({ id: Number(id) })) ||
+  0 < Object.keys(state.pendingInviteSplit).length;
+
+/** Whether the split waits for an invite that left the form, so it can't be changed yet. */
+export const isSplitWaitingForInvite = (state: Pick<AddExpenseState, 'pendingInviteSplit'>) =>
+  0 < Object.keys(state.pendingInviteSplit).length;
+
+/**
+ * An invite whose placeholder left the form when a group was selected has returned. Its value goes
+ * to the invitee if they are in the form (e.g. a group member) and have no value of their own,
+ * else it is dropped. Nobody is added to the form.
+ */
+const resolvePendingInvite = (
+  state: AddExpenseState,
+  placeholderId: number,
+  user: User,
+): Partial<AddExpenseState> => {
+  const value = state.pendingInviteSplit[placeholderId];
+  if (undefined === value) {
+    return {};
+  }
+
+  const pendingInviteSplit = withoutPendingInvite(state.pendingInviteSplit, placeholderId);
+  const { manualSplit } = state;
+  const isParticipant = state.participants.some((p) => p.id === user.id);
+  if (!manualSplit || !isParticipant || undefined !== manualSplit.shares[user.id]) {
+    return { pendingInviteSplit };
+  }
+
+  const withInvitee = { ...manualSplit, shares: { ...manualSplit.shares, [user.id]: value } };
+  return {
+    ...applyManualSplit(state, withInvitee, state.participants),
+    manualSplit: withInvitee,
+    pendingInviteSplit,
+  };
+};
+
 /** An untouched currency follows the group, and goes back to the user's without one. */
 const getGroupCurrency = (state: AddExpenseState, group: Group | undefined) => {
   if (state.currencyTouched) {
@@ -232,6 +325,7 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
   currencyTouched: false,
   splitTouched: false,
   manualSplit: undefined,
+  pendingInviteSplit: {},
   defaultSplitHint: undefined,
   category: 'general',
   nameOrEmail: '',
@@ -267,6 +361,10 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
     setAmountStr: (amountStr) => set({ amountStr }),
     setSplitType: (splitType) =>
       set((state) => {
+        if (isSplitWaitingForInvite(state)) {
+          return {};
+        }
+
         // Without an amount there is nothing to rebuild shares from, so keep the current ones
         if (0 === state.amount) {
           return {
@@ -315,11 +413,18 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
           ...members.filter((member) => member.id !== currentUser.id),
         ];
         const state = { ...s, group, currency: getGroupCurrency(s, group) };
-        const split = s.splitTouched ? s.manualSplit : getGroupDefaultSplit(group);
+        // Pending invites aren't group members. Their values wait for the invite to return.
+        const { manualSplit, pendingInviteSplit } = takePendingInvites(
+          s.manualSplit,
+          s.pendingInviteSplit,
+        );
+        const split = s.splitTouched ? manualSplit : getGroupDefaultSplit(group);
         if (!split) {
           return {
             group,
             currency: state.currency,
+            manualSplit,
+            pendingInviteSplit,
             ...splitWithParticipants(
               state,
               participants.map((p) => ({ ...p, splitShare: 1 })),
@@ -335,6 +440,8 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
         return {
           group,
           currency: state.currency,
+          manualSplit,
+          pendingInviteSplit,
           ...splitWithParticipants(
             state,
             participants.map((p, index) => ({ ...p, splitShare: resolved.shares[index] ?? 0 })),
@@ -356,6 +463,10 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
         if (userIndex === -1) {
           participants.push({ ...user, splitShare: state.splitType === SplitType.EQUAL ? 1 : 0 });
           return splitWithParticipants(state, participants);
+        }
+
+        if (isSplitWaitingForInvite(state)) {
+          return {};
         }
 
         // Updating someone already in the split is a change to their split value.
@@ -387,18 +498,27 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
       });
     },
     removeParticipant: (userId) => {
-      set((state) => ({
-        ...splitWithParticipants(
-          state,
-          state.participants.filter((p) => p.id !== userId),
-        ),
-        manualSplit: moveInManualSplit(state.manualSplit, userId),
-      }));
+      set((state) => {
+        const manualSplit = moveInManualSplit(state.manualSplit, userId);
+        const pendingInviteSplit = withoutPendingInvite(state.pendingInviteSplit, userId);
+        if (!state.participants.some((p) => p.id === userId)) {
+          return { manualSplit, pendingInviteSplit };
+        }
+
+        return {
+          ...splitWithParticipants(
+            state,
+            state.participants.filter((p) => p.id !== userId),
+          ),
+          manualSplit,
+          pendingInviteSplit,
+        };
+      });
     },
     replaceParticipant: (fromId, user) =>
       set((state) => {
         if (!state.participants.some((p) => p.id === fromId)) {
-          return {};
+          return resolvePendingInvite(state, fromId, user);
         }
 
         // Keeps the position, split value and payer choice. If they were already added, the
@@ -466,6 +586,7 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
         currencyTouched: false,
         splitTouched: false,
         manualSplit: undefined,
+        pendingInviteSplit: {},
         defaultSplitHint: undefined,
         fileKey: undefined,
         isFileUploading: false,
@@ -671,6 +792,7 @@ export const getEditFormState = (expense: ExpenseToEdit) => {
     // And its stored split, whatever the group's default.
     splitTouched: true,
     manualSplit: undefined,
+    pendingInviteSplit: {},
     defaultSplitHint: undefined,
     description: expense.name,
     expenseDate: expense.expenseDate,

@@ -20,6 +20,8 @@ export type DefaultSplit = { splitType: DefaultSplitType; shares: Record<number,
 export const MEMBERS_CHANGED_MESSAGE = 'The group members changed. Reload and try again.';
 export const DECIMALS_MESSAGE = 'Use at most 2 decimals.';
 export const PERCENTAGE_SUM_MESSAGE = 'Percentages must add up to 100%.';
+export const SPLIT_WAITING_MESSAGE =
+  'An invite is still pending. Review the split once it finishes.';
 
 /** User ids are positive int4 values. */
 const MAX_MEMBER_ID = 2_147_483_647;
