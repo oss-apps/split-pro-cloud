@@ -126,12 +126,15 @@ export const loadSnapshot = async (db: PrismaClient): Promise<Snapshot> =>
   );
 
 /**
- * Inside the caller's transaction, reads every row that bears on the given pairs: all their
- * expenses in any currency (an edit can change currency), the expenses the plan used, every
- * personal expense and every settlement any of the people is on (for the person-level
- * eligibility rules), their Balance, GroupBalance and SettlementAllocation rows and their
- * group memberships. Under SERIALIZABLE these reads make concurrent writers to the same rows
- * conflict with the repair.
+ * Inside the caller's transaction, reads every row that bears on the given pairs:
+ * - all their expenses in any currency (an edit can change currency) and the expenses the plan
+ *   used;
+ * - every personal expense and every settlement any of the people is on;
+ * - every Balance row of the people (with anyone) and every member of their groups, which
+ *   define their neighbourhood, and every edited personal expense any neighbour is on;
+ * - their GroupBalance and SettlementAllocation rows.
+ * Under SERIALIZABLE these reads make concurrent writers to the same rows conflict with the
+ * repair.
  */
 export const loadPairSlice = async (
   tx: Tx,
@@ -146,6 +149,20 @@ export const loadPairSlice = async (
   const users = [...new Set([...los, ...his])];
 
   const now = await dbNow(tx);
+  const balances = await tx.$queryRaw<StoredBalance[]>`
+    SELECT "userId", "friendId", currency, amount, "importedFromSplitwise" FROM "Balance"
+    WHERE "userId" = ANY(${users}::int[]) OR "friendId" = ANY(${users}::int[])`;
+  const groupUsers = await tx.$queryRaw<{ groupId: number; userId: number }[]>`
+    SELECT "groupId", "userId" FROM "GroupUser"
+    WHERE "groupId" IN (SELECT "groupId" FROM "GroupUser" WHERE "userId" = ANY(${users}::int[]))`;
+  const neighbours = [
+    ...new Set([
+      ...users,
+      ...balances.flatMap((b) => [b.userId, b.friendId]),
+      ...groupUsers.map((g) => g.userId),
+    ]),
+  ];
+
   const expenseRows = await tx.$queryRaw<ExpenseRow[]>`
     SELECT e.id, e."paidBy", e.currency, e."groupId", e."splitType"::text AS "splitType",
            e.amount, e."createdAt", e."updatedAt", e."deletedAt", e."addedBy", e."updatedBy",
@@ -162,14 +179,17 @@ export const loadPairSlice = async (
          OR e."updatedBy" = ANY(${users}::int[])
          OR EXISTS (
            SELECT 1 FROM "ExpenseParticipant" p
-           WHERE p."expenseId" = e.id AND p."userId" = ANY(${users}::int[]))))`;
+           WHERE p."expenseId" = e.id AND p."userId" = ANY(${users}::int[]))))
+       OR (e."groupId" IS NULL
+         AND (e."updatedBy" IS NOT NULL OR e."updatedAt" > e."createdAt" + interval '5 seconds')
+         AND (e."paidBy" = ANY(${neighbours}::int[]) OR e."addedBy" = ANY(${neighbours}::int[])
+           OR e."updatedBy" = ANY(${neighbours}::int[])
+           OR EXISTS (
+             SELECT 1 FROM "ExpenseParticipant" p
+             WHERE p."expenseId" = e.id AND p."userId" = ANY(${neighbours}::int[]))))`;
   const participantRows = await tx.$queryRaw<ParticipantRow[]>`
     SELECT "expenseId", "userId", amount FROM "ExpenseParticipant"
     WHERE "expenseId" = ANY(${expenseRows.map((row) => row.id)}::text[])`;
-  const balances = await tx.$queryRaw<StoredBalance[]>`
-    SELECT b."userId", b."friendId", b.currency, b.amount, b."importedFromSplitwise"
-    FROM "Balance" b JOIN unnest(${los}::int[], ${his}::int[]) AS k(lo, hi)
-      ON (b."userId" = k.lo AND b."friendId" = k.hi) OR (b."userId" = k.hi AND b."friendId" = k.lo)`;
   const groupBalances = await tx.$queryRaw<StoredGroupBalance[]>`
     SELECT gb."groupId", gb.currency, gb."userId", gb."firendId" AS "friendId", gb.amount
     FROM "GroupBalance" gb JOIN unnest(${los}::int[], ${his}::int[]) AS k(lo, hi)
@@ -178,9 +198,6 @@ export const loadPairSlice = async (
     SELECT a."settlementExpenseId", a."groupId", a.currency, a."userId", a."friendId", a.amount
     FROM "SettlementAllocation" a JOIN unnest(${los}::int[], ${his}::int[]) AS k(lo, hi)
       ON (a."userId" = k.lo AND a."friendId" = k.hi) OR (a."userId" = k.hi AND a."friendId" = k.lo)`;
-
-  const groupUsers = await tx.$queryRaw<{ groupId: number; userId: number }[]>`
-    SELECT "groupId", "userId" FROM "GroupUser" WHERE "userId" = ANY(${users}::int[])`;
 
   return {
     now,

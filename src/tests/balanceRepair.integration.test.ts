@@ -367,3 +367,60 @@ void test('refuses to apply after a member left the group', { skip: !databaseUrl
     await t.cleanup();
   }
 });
+
+void test(
+  'refuses to apply when a neighbour of the pair has an edited personal expense since the plan',
+  { skip: !databaseUrl },
+  async () => {
+    const t = await setup();
+    const suffix = `${Date.now()}-${Math.random()}`;
+    const [g, h] = await Promise.all(
+      ['g', 'h'].map((name) =>
+        t.db.user.create({ data: { email: `${name}-${suffix}@example.com`, name } }),
+      ),
+    );
+    try {
+      const { snapshot, analysis, planned } = await t.makePlan();
+      assert.equal(analysis.verdict, 'repair');
+
+      // G gets a zero Balance row with B (as the old code left for a 0 participant), and an
+      // edited personal settlement between G and H, which touches neither A nor B.
+      await t.db.balance.createMany({
+        data: [
+          { userId: t.b.id, friendId: g!.id, currency: 'USD', amount: 0 },
+          { userId: g!.id, friendId: t.b.id, currency: 'USD', amount: 0 },
+        ],
+      });
+      await t.db.expense.create({
+        data: {
+          paidBy: g!.id,
+          addedBy: g!.id,
+          updatedBy: g!.id,
+          name: 'Settle up',
+          category: 'general',
+          amount: 1000,
+          splitType: t.SplitType.SETTLEMENT,
+          currency: 'USD',
+          expenseParticipants: {
+            create: [
+              { userId: g!.id, amount: 1000 },
+              { userId: h!.id, amount: -1000 },
+            ],
+          },
+        },
+      });
+
+      const outcome = await t.apply.applySetRepair(
+        t.db,
+        'test-neighbour',
+        snapshot.loadedAt,
+        planned,
+      );
+      assert.equal(outcome.status, 'changed-since-plan');
+      assert.equal(await t.groupRowAB(), 0);
+    } finally {
+      await t.db.user.deleteMany({ where: { id: { in: [g!.id, h!.id] } } });
+      await t.cleanup();
+    }
+  },
+);

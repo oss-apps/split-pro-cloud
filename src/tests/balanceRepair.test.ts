@@ -307,6 +307,67 @@ void describe('repair eligibility', () => {
     assert.match(set?.reasons.join(' ') ?? '', /edited-personal-expense-touching-pair-user/);
   });
 
+  void it('skips a pair whose settlement a third person edited away from both of them', () => {
+    // Final review probe: C files a settlement B -> A with C listed at 0, which clears A-B's
+    // group, then edits it into a C -> D settlement. Neither A nor B is left on it, but the old
+    // code gave C a Balance row with B when the settlement was created.
+    const E = 5;
+    const expenses = [
+      expense({
+        paidBy: A,
+        groupId: GROUP,
+        createdAt: 1,
+        participants: [
+          { userId: A, amount: 1000 },
+          { userId: B, amount: -1000 },
+        ],
+      }),
+      {
+        ...pays(C, D, 1000, 2, { isSettlement: true }),
+        addedBy: C,
+        updatedBy: C,
+        edited: true,
+        updatedAt: 3,
+      },
+      expense({
+        paidBy: A,
+        groupId: GROUP,
+        createdAt: 4,
+        participants: [
+          { userId: A, amount: 100 },
+          { userId: B, amount: 0 },
+          { userId: E, amount: 0 },
+        ],
+      }),
+    ];
+    const rows = legacyRows(expenses);
+    const leftByC = [
+      { userId: B, friendId: C, currency: 'USD', amount: 0, importedFromSplitwise: false },
+      { userId: C, friendId: B, currency: 'USD', amount: 0, importedFromSplitwise: false },
+    ];
+    const members = new Set([A, B, E].map((userId) => `${GROUP}:${userId}`));
+
+    const unseen = analyse(expenses, { memberships: members }).setOf(A, B);
+    assert.equal(unseen?.verdict, 'repair', 'without the leftover Balance row C is invisible');
+
+    const set = analyse(expenses, {
+      balances: [...rows.balances, ...leftByC],
+      memberships: members,
+    }).setOf(A, B);
+    assert.equal(set?.verdict, 'skipped');
+    assert.match(set?.reasons.join(' ') ?? '', /edited-personal-expense-touching-neighbour/);
+
+    // The same through a group: C shares any group with A or B.
+    const throughGroup = analyse(expenses, {
+      memberships: new Set([...members, `${OTHER_GROUP}:${B}`, `${OTHER_GROUP}:${C}`]),
+    }).setOf(A, B);
+    assert.equal(throughGroup?.verdict, 'skipped');
+    assert.match(
+      throughGroup?.reasons.join(' ') ?? '',
+      /edited-personal-expense-touching-neighbour/,
+    );
+  });
+
   void it('skips a pair that ever had a settlement, even if a deleted group hid its history', () => {
     // Review counterexample: a charge and a refund in a group that was later deleted net to
     // zero, so Balance and the old-rule replay still match without them. They decided whether

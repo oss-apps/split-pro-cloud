@@ -24,6 +24,7 @@ export const isEditedAtAll = (expense: ReplayExpense) =>
 export type PairIssue =
   | 'pair-settlement-ever'
   | 'edited-personal-expense-touching-pair-user'
+  | 'edited-personal-expense-touching-neighbour'
   | 'deleted-expense'
   | 'edited-expense'
   | 'edited-expense-other-currency'
@@ -72,10 +73,16 @@ const userPair = (a: number, b: number) => (a < b ? `${a}|${b}` : `${b}|${a}`);
  * rules make the correct value simply the sum of the live group expenses, whatever happened
  * elsewhere:
  * - no SETTLEMENT has ever had both A and B on it, in any currency, live or deleted;
- * - neither A nor B appears in any edited personal expense, in any currency and any role
- *   (participant, payer, added by, updated by). A settlement edited off the pair (say B paid A,
- *   later changed to B paid C) still has B on it. `addedBy` covers edits from before
- *   `updatedBy` was recorded.
+ * - nobody in the pair's neighbourhood appears in any edited personal expense, in any currency
+ *   and any role (participant, payer, added by, updated by), live or deleted. The neighbourhood
+ *   is A, B, everyone with a Balance row with A or B (any currency, any amount, including 0)
+ *   and everyone currently in a group with A or B. A settlement edited off the pair keeps
+ *   someone from it: whoever stays on it, or a third participant, who got a Balance row with
+ *   the payer when the settlement was created (the old code upserted one for every
+ *   participant and never deleted it on edit). Settling A and B to exactly 0 needs someone who
+ *   can see their balance, which is also a neighbour. `addedBy` covers edits from before
+ *   `updatedBy` was recorded. A or B themselves are reported as
+ *   `edited-personal-expense-touching-pair-user`, anyone else as `...-touching-neighbour`.
  *
  * On top of that, only pairs whose whole history is on record qualify:
  * - every expense between them, personal or group, is live and was never edited;
@@ -188,6 +195,34 @@ export const getPairIssues = (
       });
     }
   });
+
+  // Users with a neighbour in an edited personal expense: through a Balance row, or through a
+  // group they are in.
+  const hasEditedNeighbour = new Set<number>();
+  input.balances.forEach((balance) => {
+    if (usersInEditedPersonalExpenses.has(balance.friendId)) {
+      hasEditedNeighbour.add(balance.userId);
+    }
+    if (usersInEditedPersonalExpenses.has(balance.userId)) {
+      hasEditedNeighbour.add(balance.friendId);
+    }
+  });
+  const membersByGroup = new Map<string, number[]>();
+  input.memberships.forEach((membership) => {
+    const [groupId = '', userId = '0'] = membership.split(':');
+    const members = membersByGroup.get(groupId);
+    if (members) {
+      members.push(Number(userId));
+    } else {
+      membersByGroup.set(groupId, [Number(userId)]);
+    }
+  });
+  membersByGroup.forEach((members) => {
+    if (members.some((userId) => usersInEditedPersonalExpenses.has(userId))) {
+      members.forEach((userId) => hasEditedNeighbour.add(userId));
+    }
+  });
+
   keysByUserPair.forEach((keys, users) => {
     const [a = 0, b = 0] = users.split('|').map(Number);
     keys.forEach((key) => {
@@ -196,6 +231,8 @@ export const getPairIssues = (
       }
       if (usersInEditedPersonalExpenses.has(a) || usersInEditedPersonalExpenses.has(b)) {
         add(key, 'edited-personal-expense-touching-pair-user');
+      } else if (hasEditedNeighbour.has(a) || hasEditedNeighbour.has(b)) {
+        add(key, 'edited-personal-expense-touching-neighbour');
       }
     });
   });
