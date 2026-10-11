@@ -2,7 +2,7 @@ import Head from 'next/head';
 import MainLayout from '~/components/Layout/MainLayout';
 import { SplitType } from '@prisma/client';
 import { api } from '~/utils/api';
-import { format } from 'date-fns';
+import { formatShortDate } from '~/utils/dates';
 import { UserAvatar } from '~/components/ui/avatar';
 import { toUIString } from '~/utils/numbers';
 import { SHARE_TONE_CLASS, getNetShareLabel } from '~/utils/expenseLabels';
@@ -128,7 +128,7 @@ const ActivityPage: NextPageWithUser = ({ user }) => {
                           )}
                         </div>
                         <p className="text-xs text-gray-500">
-                          {format(e.expense.expenseDate, 'dd MMM')}
+                          {formatShortDate(e.expense.expenseDate)}
                         </p>
                       </div>
                     </Link>

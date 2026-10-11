@@ -9,6 +9,9 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Form, FormControl, FormField, FormItem, FormMessage } from '../ui/form';
 import { Button } from '../ui/button';
+import { CURRENCIES } from '~/lib/currency';
+import { useAddExpenseStore } from '~/store/addStore';
+import { useRecentCurrencies } from '~/hooks/useRecentCurrencies';
 
 const groupSchema = z.object({
   name: z.string({ required_error: 'Name is required' }).min(1, { message: 'Name is required' }),
@@ -16,6 +19,10 @@ const groupSchema = z.object({
 
 export const CreateGroup: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const preferredCurrency = useAddExpenseStore((s) => s.preferredCurrency);
+  const { recent: recentCurrencies, remember: rememberCurrency } = useRecentCurrencies();
+  const [currency, setCurrency] = useState<string | undefined>();
+  const groupCurrency = currency ?? preferredCurrency ?? 'USD';
 
   const createGroup = api.group.create.useMutation(undefined);
   const utils = api.useUtils();
@@ -28,9 +35,10 @@ export const CreateGroup: React.FC<{ children: React.ReactNode }> = ({ children 
 
   async function onGroupSubmit(values: z.infer<typeof groupSchema>) {
     await createGroup.mutateAsync(
-      { name: values.name },
+      { name: values.name, currency: groupCurrency },
       {
         onSuccess: (data) => {
+          rememberCurrency(data.defaultCurrency);
           utils.group.getAllGroupsWithBalances.refetch().catch(console.error);
           router
             .push(`/groups/${data.id}`)
@@ -47,6 +55,8 @@ export const CreateGroup: React.FC<{ children: React.ReactNode }> = ({ children 
         open={drawerOpen}
         onOpenChange={(openVal) => {
           if (openVal !== drawerOpen) setDrawerOpen(openVal);
+          // Every new group starts from the user's own currency.
+          if (openVal) setCurrency(undefined);
         }}
         trigger={children}
         leftAction="Cancel"
@@ -84,6 +94,34 @@ export const CreateGroup: React.FC<{ children: React.ReactNode }> = ({ children 
               />
             </form>
           </Form>
+          <label className="mt-6 flex items-center justify-between gap-4 text-sm text-gray-400">
+            Currency
+            <select
+              value={groupCurrency}
+              onChange={(e) => setCurrency(e.target.value)}
+              className="h-10 max-w-[60%] rounded-md border bg-background px-3 text-foreground"
+            >
+              {recentCurrencies.length ? (
+                <optgroup label="Recent">
+                  {recentCurrencies.map((code) => (
+                    <option key={code} value={code}>
+                      {code} · {CURRENCIES.find((c) => c.code === code)?.name ?? code}
+                    </option>
+                  ))}
+                </optgroup>
+              ) : null}
+              <optgroup label="All currencies">
+                {CURRENCIES.filter((c) => !recentCurrencies.includes(c.code)).map((c) => (
+                  <option key={`${c.code}-${c.name}`} value={c.code}>
+                    {c.code} · {c.name}
+                  </option>
+                ))}
+              </optgroup>
+            </select>
+          </label>
+          <p className="mt-2 text-xs text-gray-500">
+            New expenses in this group use it by default.
+          </p>
         </div>
       </AppDrawer>
     </>

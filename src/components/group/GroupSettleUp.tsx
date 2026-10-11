@@ -8,6 +8,7 @@ import { FriendBalance } from '../Friend/FirendBalance';
 import { SettleUpPayment } from '../Friend/SettleUpPayment';
 import { api } from '~/utils/api';
 import { toFixedNumber } from '~/utils/numbers';
+import { parseDateInput } from '~/utils/dates';
 
 /**
  * Records a payment between the current user and one member, inside this group only.
@@ -29,6 +30,7 @@ export const GroupSettleUp: React.FC<{
     Pick<GroupBalance, 'firendId' | 'currency' | 'amount'> | undefined
   >();
   const [amount, setAmount] = React.useState('');
+  const [date, setDate] = React.useState('');
   const [selectionChanged, setSelectionChanged] = React.useState(false);
 
   const currentBalance = selection
@@ -62,6 +64,7 @@ export const GroupSettleUp: React.FC<{
 
   // With a single balance there is nothing to choose, so open straight on the payment.
   function onOpen() {
+    setDate('');
     if (1 === balances.length && firstBalance && membersById.has(firstBalance.firendId)) {
       onSelectBalance(firstBalance);
     } else {
@@ -91,6 +94,7 @@ export const GroupSettleUp: React.FC<{
         ],
         paidBy: isCurrentUserPaying ? currentUser.id : friend.id,
         category: 'general',
+        expenseDate: parseDateInput(date),
       },
       {
         onSuccess: () => {
@@ -202,6 +206,8 @@ export const GroupSettleUp: React.FC<{
               currency={balanceToSettle.currency}
               amount={amount}
               onAmountChange={setAmount}
+              date={date}
+              onDateChange={setDate}
             />
           </div>
         )}

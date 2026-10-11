@@ -27,7 +27,9 @@ import { SHARE_TONE_CLASS, getNetForUser, getNetShareLabel } from '~/utils/expen
 import Link from 'next/link';
 import { CategoryIcon } from '~/components/ui/categoryIcons';
 import { env } from '~/env';
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
+import { DateColumn, MonthHeader } from '~/components/Expense/ExpenseListDate';
+import { isNewMonth } from '~/utils/dates';
 import { type NextPageWithUser } from '~/types';
 import { motion } from 'framer-motion';
 import {
@@ -382,7 +384,7 @@ const BalancePage: NextPageWithUser<{
             </div>
           </motion.div>
         )}
-        {expensesQuery.data?.map((e) => {
+        {expensesQuery.data?.map((e, index, expenses) => {
           const youPaid = e.paidBy === user.id;
           const isSettlement = e.splitType === SplitType.SETTLEMENT;
           const receiver = isSettlement
@@ -391,53 +393,50 @@ const BalancePage: NextPageWithUser<{
           const yourShare = getNetShareLabel(getNetForUser(e, user.id));
 
           return (
-            <Link
-              href={`/groups/${groupId}/expenses/${e.id}`}
-              key={e.id}
-              className="flex items-center justify-between px-2 py-2"
-            >
-              <div className="flex items-center gap-4">
-                <div className="text-xs text-gray-500">
-                  {format(e.expenseDate, 'MMM dd')
-                    .split(' ')
-                    .map((d) => (
-                      <div className="text-center" key={d}>
-                        {d}
-                      </div>
-                    ))}
-                </div>
-                <div>
-                  <CategoryIcon category={e.category} className="h-5 w-5 text-gray-400" />
-                </div>
-                <div>
-                  {!isSettlement ? (
-                    <p className=" max-w-[180px] truncate text-sm lg:max-w-md lg:text-base">
-                      {e.name}
+            <Fragment key={e.id}>
+              {isNewMonth(e.expenseDate, expenses[index - 1]?.expenseDate) ? (
+                <MonthHeader date={e.expenseDate} />
+              ) : null}
+              <Link
+                href={`/groups/${groupId}/expenses/${e.id}`}
+                className="flex items-center justify-between px-2 py-2"
+              >
+                <div className="flex items-center gap-4">
+                  <DateColumn date={e.expenseDate} />
+                  <div>
+                    <CategoryIcon category={e.category} className="h-5 w-5 text-gray-400" />
+                  </div>
+                  <div>
+                    {!isSettlement ? (
+                      <p className=" max-w-[180px] truncate text-sm lg:max-w-md lg:text-base">
+                        {e.name}
+                      </p>
+                    ) : null}
+                    <p
+                      className={`flex text-center ${isSettlement ? 'text-sm text-gray-400' : 'text-xs text-gray-500'}`}
+                    >
+                      <span className="text-[10px]">{isSettlement ? '  🎉  ' : null}</span>
+                      {youPaid ? 'You' : e.paidByUser.name ?? e.paidByUser.email} paid{' '}
+                      {receiver
+                        ? `${receiver.userId === user.id ? 'you' : receiver.user.name ?? receiver.user.email} `
+                        : null}
+                      {e.currency} {toSignedUIString(e.amount)}{' '}
                     </p>
-                  ) : null}
-                  <p
-                    className={`flex text-center ${isSettlement ? 'text-sm text-gray-400' : 'text-xs text-gray-500'}`}
-                  >
-                    <span className="text-[10px]">{isSettlement ? '  🎉  ' : null}</span>
-                    {youPaid ? 'You' : e.paidByUser.name ?? e.paidByUser.email} paid{' '}
-                    {receiver
-                      ? `${receiver.userId === user.id ? 'you' : receiver.user.name ?? receiver.user.email} `
-                      : null}
-                    {e.currency} {toSignedUIString(e.amount)}{' '}
-                  </p>
-                </div>
-              </div>
-              {isSettlement ? null : (
-                <div className="min-w-10 shrink-0">
-                  <div className={`text-right text-xs ${SHARE_TONE_CLASS[yourShare.tone]}`}>
-                    {yourShare.label}
-                  </div>
-                  <div className={`text-right ${SHARE_TONE_CLASS[yourShare.tone]}`}>
-                    <span className="font-light ">{e.currency}</span> {toUIString(yourShare.amount)}
                   </div>
                 </div>
-              )}
-            </Link>
+                {isSettlement ? null : (
+                  <div className="min-w-10 shrink-0">
+                    <div className={`text-right text-xs ${SHARE_TONE_CLASS[yourShare.tone]}`}>
+                      {yourShare.label}
+                    </div>
+                    <div className={`text-right ${SHARE_TONE_CLASS[yourShare.tone]}`}>
+                      <span className="font-light ">{e.currency}</span>{' '}
+                      {toUIString(yourShare.amount)}
+                    </div>
+                  </div>
+                )}
+              </Link>
+            </Fragment>
           );
         })}
         {expensesQuery.data?.length === 0 &&

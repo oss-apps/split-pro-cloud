@@ -22,6 +22,7 @@ import { CURRENCIES } from '~/lib/currency';
 import { env } from '~/env';
 import { AMOUNT_TOO_LARGE_MESSAGE, isAmountWithinLimit } from '~/utils/numbers';
 import { AdSlot } from '../Ads/AdSlot';
+import { useRecentCurrencies } from '~/hooks/useRecentCurrencies';
 
 const categories = {
   entertainment: {
@@ -142,6 +143,7 @@ export const AddOrEditExpensePage: React.FC<{
   const addExpenseMutation = api.user.addOrEditExpense.useMutation();
   const addGroupExpenseMutation = api.group.addOrEditExpense.useMutation();
   const updateProfile = api.user.updateUserDetail.useMutation();
+  const { recent: recentCurrencyCodes, remember: rememberCurrency } = useRecentCurrencies();
 
   const router = useRouter();
 
@@ -193,6 +195,8 @@ export const AddOrEditExpensePage: React.FC<{
       setSplitScreenOpen(true);
       return;
     }
+
+    rememberCurrency(currency);
 
     const participantsToSave = getParticipantsToSave(useAddExpenseStore.getState()).map((p) => ({
       userId: p.id,
@@ -260,6 +264,40 @@ export const AddOrEditExpensePage: React.FC<{
   }
 
   const CategoryIcon = CategoryIcons[category] ?? Banknote;
+
+  const recentCurrencies = recentCurrencyCodes.flatMap((code) =>
+    CURRENCIES.filter((c) => c.code === code),
+  );
+  const otherCurrencies = CURRENCIES.filter((c) => !recentCurrencyCodes.includes(c.code));
+
+  const renderCurrencyItem = (framework: (typeof CURRENCIES)[number]) => (
+    <CommandItem
+      key={`${framework.code}-${framework.name}`}
+      value={`${framework.code}-${framework.name}`}
+      onSelect={(currentValue) => {
+        const _currency = currentValue.split('-')[0]?.toUpperCase() ?? 'USD';
+        updateProfile.mutate({ currency: _currency });
+
+        setCurrency(_currency);
+        setPreferredCurrency(_currency);
+        rememberCurrency(_currency);
+        setOpen(false);
+      }}
+    >
+      <Check
+        className={cn(
+          'mr-2 h-4 w-4',
+          `${framework.code}-${framework.name.toLowerCase()}`.startsWith(currency)
+            ? 'opacity-100'
+            : 'opacity-0',
+        )}
+      />
+      <div className="flex gap-2">
+        <p>{framework.name}</p>
+        <p className=" text-muted-foreground">{framework.code}</p>
+      </div>
+    </CommandItem>
+  );
 
   return (
     <>
@@ -363,37 +401,18 @@ export const AddOrEditExpensePage: React.FC<{
                   <Command className="h-[50vh]">
                     <CommandInput className="text-lg" placeholder="Search currency" />
                     <CommandEmpty>No currency found.</CommandEmpty>
-                    <CommandGroup className="h-full overflow-auto">
-                      {CURRENCIES.map((framework) => (
-                        <CommandItem
-                          key={`${framework.code}-${framework.name}`}
-                          value={`${framework.code}-${framework.name}`}
-                          onSelect={(currentValue) => {
-                            const _currency = currentValue.split('-')[0]?.toUpperCase() ?? 'USD';
-                            updateProfile.mutate({ currency: _currency });
-
-                            setCurrency(_currency);
-                            setPreferredCurrency(_currency);
-                            setOpen(false);
-                          }}
-                        >
-                          <Check
-                            className={cn(
-                              'mr-2 h-4 w-4',
-                              `${framework.code}-${framework.name.toLowerCase()}`.startsWith(
-                                currency,
-                              )
-                                ? 'opacity-100'
-                                : 'opacity-0',
-                            )}
-                          />
-                          <div className="flex gap-2">
-                            <p>{framework.name}</p>
-                            <p className=" text-muted-foreground">{framework.code}</p>
-                          </div>
-                        </CommandItem>
-                      ))}
-                    </CommandGroup>
+                    <div className="h-full overflow-auto">
+                      {recentCurrencies.length ? (
+                        <CommandGroup heading="Recent">
+                          {recentCurrencies.map(renderCurrencyItem)}
+                        </CommandGroup>
+                      ) : null}
+                      <CommandGroup
+                        heading={recentCurrencies.length ? 'All currencies' : undefined}
+                      >
+                        {otherCurrencies.map(renderCurrencyItem)}
+                      </CommandGroup>
+                    </div>
                   </Command>
                 </div>
               </AppDrawer>

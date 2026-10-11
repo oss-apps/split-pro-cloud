@@ -205,9 +205,21 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
           ...calculateParticipantSplit(state.amount, participants, splitType, state.paidBy),
         });
       }),
-    setGroup: (group) => {
-      set({ group });
-    },
+    setGroup: (group) =>
+      set((s) => {
+        // A group's expenses start in its currency. Removing the group goes back to the user's,
+        // unless a currency was picked by hand in the meantime.
+        if (group) {
+          return withEditSnapshot(s, { group, currency: group.defaultCurrency ?? s.currency });
+        }
+
+        const hasGroupCurrency = !!s.group && s.currency === s.group.defaultCurrency;
+        const userCurrency = s.preferredCurrency ?? s.currentUser?.currency ?? s.currency;
+        return withEditSnapshot(s, {
+          group,
+          currency: hasGroupCurrency ? userCurrency : s.currency,
+        });
+      }),
     addOrUpdateParticipant: (user) =>
       set((state) => {
         const participants = [...state.participants];
