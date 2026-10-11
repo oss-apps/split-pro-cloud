@@ -2,6 +2,7 @@ import {
   type Participant,
   formatSplitShare,
   getRemainingPercentage,
+  isPendingInvite,
   useAddExpenseStore,
 } from '~/store/addStore';
 import { AppDrawer, Drawer, DrawerClose } from '../ui/drawer';
@@ -46,13 +47,13 @@ export const SplitTypeSection: React.FC = () => {
               key={participant.id}
               className="flex items-center justify-between px-2 disabled:opacity-50"
               // An invited friend can't pay until the invite returns their account.
-              disabled={0 > participant.id}
+              disabled={isPendingInvite(participant)}
               onClick={() => setPaidBy(participant)}
             >
               <div className="flex items-center gap-1">
                 <UserAvatar user={participant} size={30} />
                 <p className="ml-4">{participant.name ?? participant.email ?? ''}</p>
-                {0 > participant.id ? (
+                {isPendingInvite(participant) ? (
                   <p className="ml-2 text-xs text-gray-500">Invite pending</p>
                 ) : null}
               </div>

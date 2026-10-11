@@ -8,6 +8,7 @@ import {
   calculateSplitShareBasedOnAmount,
   getEditFormState,
   inviteParticipant,
+  isPendingInvite,
   uploadReceipt,
   useAddExpenseStore,
 } from '~/store/addStore';
@@ -383,10 +384,10 @@ void describe('async results for an earlier form', () => {
     startNewForm();
     const invite = deferred<User>();
     const pending = inviteParticipant('pending@example.com', () => invite.promise);
-    assert.deepEqual(
-      useAddExpenseStore.getState().participants.map((participant) => participant.id),
-      [alice.id, -1],
-    );
+    assert.deepEqual(useAddExpenseStore.getState().participants.map(isPendingInvite), [
+      false,
+      true,
+    ]);
 
     startNewForm();
     useAddExpenseStore.getState().actions.addOrUpdateParticipant(carol);

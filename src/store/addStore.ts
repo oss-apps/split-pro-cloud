@@ -623,17 +623,25 @@ export function calculateSplitShareBasedOnAmount(
 export const formatSplitShare = (splitShare: number | undefined) =>
   undefined === splitShare ? undefined : String(Math.round(splitShare * 100) / 100);
 
+/** An invited friend is a placeholder with a negative id until the invite returns their account. */
+export const isPendingInvite = (participant: { id: number }) => 0 > participant.id;
+
+let lastPlaceholderId = 0;
+
 /**
- * Adds an invited email as a placeholder participant until the invite returns their account. A
- * result for a form that was reset in the meantime is dropped.
+ * Adds an invited email as a placeholder participant until the invite returns their account. Every
+ * invite has its own placeholder, so overlapping invites only replace or remove their own. A result
+ * for a form that was reset in the meantime is dropped.
  */
 export const inviteParticipant = async (
   email: string,
   invite: (email: string) => Promise<User>,
 ) => {
   const { formGeneration, actions } = useAddExpenseStore.getState();
+  lastPlaceholderId -= 1;
+  const placeholderId = lastPlaceholderId;
   actions.addOrUpdateParticipant({
-    id: -1,
+    id: placeholderId,
     name: email,
     email,
     emailVerified: new Date(),
@@ -647,14 +655,17 @@ export const inviteParticipant = async (
       return;
     }
 
-    actions.replaceParticipant(-1, user);
-    actions.setNameOrEmail('');
+    actions.replaceParticipant(placeholderId, user);
+    // Keep anything typed since, e.g. the next email to invite.
+    if (email === useAddExpenseStore.getState().nameOrEmail) {
+      actions.setNameOrEmail('');
+    }
   } catch (error) {
     if (!isCurrentForm(formGeneration)) {
       return;
     }
 
-    actions.removeParticipant(-1);
+    actions.removeParticipant(placeholderId);
     throw error;
   }
 };

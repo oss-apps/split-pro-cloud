@@ -253,7 +253,9 @@ void test(
       actions.setNameOrEmail('');
       actions.setDescription('Bob paid dinner');
       actions.setAmount(100);
-      actions.setPaidBy(store.useAddExpenseStore.getState().participants.find((p) => -1 === p.id)!);
+      actions.setPaidBy(
+        store.useAddExpenseStore.getState().participants.find(store.isPendingInvite)!,
+      );
       await finish();
       await pending;
 
@@ -266,6 +268,79 @@ void test(
         },
       });
       assert.equal(balance?.amount, -5000);
+    } finally {
+      await cleanUp(
+        users.map((user) => user.id),
+        [],
+      );
+    }
+  },
+);
+
+void test(
+  'two overlapping invites both end up in the saved expense, whichever returns first',
+  { skip: !databaseUrl },
+  async () => {
+    const { db, store, createUsers, callerFor, cleanUp, getSaveInput } = await setup();
+    const users = await createUsers(['Alice', 'Bob', 'Carol']);
+    const [alice, bob, carol] = users;
+    assert.ok(alice && bob && carol);
+    const caller = callerFor(alice);
+    const { actions } = store.useAddExpenseStore.getState();
+    // An invite that only reaches the server when `finish` is called.
+    const startInvite = (email: string) => {
+      let finish!: () => Promise<void>;
+      const pending = store.inviteParticipant(
+        email,
+        (input) =>
+          new Promise((resolve) => {
+            finish = async () => resolve(await caller.user.inviteFriend({ email: input }));
+          }),
+      );
+      return { pending, finish: () => finish() };
+    };
+
+    try {
+      actions.setCurrentUser(alice);
+      actions.resetState();
+      // Bob with Enter, then Carol with "Add to Split Pro" while Bob is pending. Carol returns first.
+      const bobInvite = startInvite(bob.email!);
+      const carolInvite = startInvite(carol.email!);
+      await carolInvite.finish();
+      await carolInvite.pending;
+      assert.ok(store.useAddExpenseStore.getState().participants.some(store.isPendingInvite));
+      await bobInvite.finish();
+      await bobInvite.pending;
+
+      actions.setAmount(100);
+      actions.setDescription('Bob and Carol should both share');
+      const state = store.useAddExpenseStore.getState();
+      assert.equal(state.participants.some(store.isPendingInvite), false);
+
+      const saved = await caller.user.addOrEditExpense(getSaveInput());
+      const rows = await db.expenseParticipant.findMany({
+        where: { expenseId: saved.id },
+        orderBy: { userId: 'asc' },
+      });
+      assert.deepEqual(
+        rows.map(({ userId, amount }) => ({ userId, amount })),
+        [
+          { userId: alice.id, amount: 6666 },
+          { userId: bob.id, amount: -3333 },
+          { userId: carol.id, amount: -3333 },
+        ],
+      );
+      const balances = await db.balance.findMany({
+        where: { userId: alice.id },
+        orderBy: { friendId: 'asc' },
+      });
+      assert.deepEqual(
+        balances.map(({ friendId, amount }) => ({ friendId, amount })),
+        [
+          { friendId: bob.id, amount: 3333 },
+          { friendId: carol.id, amount: 3333 },
+        ],
+      );
     } finally {
       await cleanUp(
         users.map((user) => user.id),

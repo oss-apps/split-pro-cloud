@@ -7,6 +7,7 @@ import {
   getEditFormState,
   getParticipantsToSave,
   inviteParticipant,
+  isPendingInvite,
   uploadReceipt,
   useAddExpenseStore,
 } from '~/store/addStore';
@@ -279,7 +280,7 @@ void describe('completing an invite', () => {
     actions.setNameOrEmail('');
     actions.setAmount(100);
     actions.setSplitType(SplitType.SHARE);
-    const placeholder = useAddExpenseStore.getState().participants.find((p) => -1 === p.id);
+    const placeholder = useAddExpenseStore.getState().participants.find(isPendingInvite);
     assert.ok(placeholder);
     actions.addOrUpdateParticipant({ ...placeholder, splitShare: 3 });
     actions.setPaidBy(placeholder);
@@ -308,7 +309,7 @@ void describe('completing an invite', () => {
     const pending = inviteParticipant(bob.email!, () => invite.promise);
     actions.setDescription('Bob paid dinner');
     actions.setAmount(100);
-    actions.setPaidBy(useAddExpenseStore.getState().participants.find((p) => -1 === p.id)!);
+    actions.setPaidBy(useAddExpenseStore.getState().participants.find(isPendingInvite)!);
 
     invite.resolve(bob);
     await pending;
@@ -324,7 +325,7 @@ void describe('completing an invite', () => {
     actions.addOrUpdateParticipant(bob);
     const invite = deferred<User>();
     const pending = inviteParticipant(bob.email!, () => invite.promise);
-    actions.setPaidBy(useAddExpenseStore.getState().participants.find((p) => -1 === p.id)!);
+    actions.setPaidBy(useAddExpenseStore.getState().participants.find(isPendingInvite)!);
 
     invite.resolve(bob);
     await pending;

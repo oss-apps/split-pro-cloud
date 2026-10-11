@@ -1,7 +1,7 @@
 import { useRouter } from 'next/router';
 import React from 'react';
 import { toast } from 'sonner';
-import { getParticipantsToSave, useAddExpenseStore } from '~/store/addStore';
+import { getParticipantsToSave, isPendingInvite, useAddExpenseStore } from '~/store/addStore';
 import { api } from '~/utils/api';
 import { UserInput } from './UserInput';
 import { SelectUserOrGroup } from './SelectUserOrGroup';
@@ -146,8 +146,7 @@ export const AddOrEditExpensePage: React.FC<{
   const router = useRouter();
 
   const isAmountTooLarge = !isAmountWithinLimit(amount);
-  // An invited friend is a placeholder until the invite returns their account.
-  const hasPendingInvite = participants.some((p) => 0 > p.id);
+  const hasPendingInvite = participants.some(isPendingInvite);
   const isSaveDisabled =
     addExpenseMutation.isLoading ||
     addGroupExpenseMutation.isLoading ||
