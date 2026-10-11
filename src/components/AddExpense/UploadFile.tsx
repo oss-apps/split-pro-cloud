@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { type File, FileUp, ImagePlus, Image as ImageUploaded } from 'lucide-react';
-import { useAddExpenseStore } from '~/store/addStore';
+import { uploadReceipt, useAddExpenseStore } from '~/store/addStore';
 import { api } from '~/utils/api';
 import { FILE_SIZE_LIMIT } from '~/lib/constants';
 import { toast } from 'sonner';
@@ -22,8 +22,7 @@ const getImgHeightAndWidth = (file: File) => {
 };
 
 export const UploadFile: React.FC = () => {
-  const [file, setFile] = useState<File | null>(null);
-  const { setFileUploading, setFileKey } = useAddExpenseStore((s) => s.actions);
+  const hasReceipt = useAddExpenseStore((s) => s.isFileUploading || !!s.fileKey);
 
   const getUploadUrl = api.user.getUploadUrl.useMutation();
 
@@ -39,45 +38,26 @@ export const UploadFile: React.FC = () => {
       return;
     }
 
-    setFile(file);
-
     const { height, width } = await getImgHeightAndWidth(file);
     console.log('height:', height, 'width:', width);
 
-    setFileUploading(true);
     try {
-      const { fileUrl, key } = await getUploadUrl.mutateAsync({
-        fileName: file.name,
-        fileType: file.type,
-        fileSize: file.size,
-      });
-
-      const response = await fetch(fileUrl, {
-        method: 'PUT',
-        body: file,
-      });
-
-      if (!response.ok) {
+      const result = await uploadReceipt(file, (input) => getUploadUrl.mutateAsync(input));
+      if ('uploaded' === result) {
+        toast.success('File uploaded successfully');
+      } else if ('failed' === result) {
         toast.error('Failed to upload file');
-        return;
       }
-
-      toast.success('File uploaded successfully');
-
-      setFileKey(key);
-      console.log('Setting file key', key);
     } catch (error) {
       console.error('Error getting upload url:', error);
       toast.error(`Error uploading file`);
     }
-
-    setFileUploading(false);
   };
 
   return (
     <div>
       <Label htmlFor="picture">
-        {file ? (
+        {hasReceipt ? (
           <ImageUploaded className="h-6 w-6 text-primary" />
         ) : (
           <ImagePlus className="h-6 w-6 text-gray-300" />

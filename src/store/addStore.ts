@@ -24,6 +24,13 @@ interface AddExpenseState {
   canSplitScreenClosed: boolean;
   splitScreenOpen: boolean;
   expenseDate: Date | undefined;
+  /** Bumped on every reset. Async work started for an older form must not write to a newer one. */
+  formGeneration: number;
+  /**
+   * The allocation that split type switches rebuild from, kept until a value changes. Switching to a
+   * type that can't express it (e.g. equal) and back then restores the same cents.
+   */
+  splitTypeSource: Array<Participant> | undefined;
   actions: {
     setAmount: (amount: number) => void;
     setAmountStr: (amountStr: string) => void;
@@ -48,15 +55,28 @@ interface AddExpenseState {
   };
 }
 
-// A removed payer can't stay selected as the payer, so the current user pays instead.
-const splitWithoutRemoved = (state: AddExpenseState, participants: Array<Participant>) => {
-  const paidBy = participants.some((p) => p.id === state.paidBy?.id)
-    ? state.paidBy
-    : state.currentUser;
+/** The payer must be a participant. Without them, the current user (or else anyone left) pays. */
+const getPayerAmong = (
+  participants: Array<Participant>,
+  paidBy: User | undefined,
+  currentUser: User | undefined,
+) =>
+  [paidBy, currentUser].find(
+    (user) => user && participants.some((participant) => participant.id === user.id),
+  ) ?? participants[0];
+
+const splitWithParticipants = (
+  state: AddExpenseState,
+  participants: Array<Participant>,
+  splitType = state.splitType,
+) => {
+  const paidBy = getPayerAmong(participants, state.paidBy, state.currentUser);
 
   return {
     paidBy,
-    ...calculateParticipantSplit(state.amount, participants, state.splitType, paidBy),
+    splitType,
+    splitTypeSource: undefined,
+    ...calculateParticipantSplit(state.amount, participants, splitType, paidBy),
   };
 };
 
@@ -79,6 +99,8 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
   canSplitScreenClosed: true,
   splitScreenOpen: false,
   expenseDate: undefined,
+  formGeneration: 0,
+  splitTypeSource: undefined,
   actions: {
     setAmount: (amount) =>
       set((s) => {
@@ -89,24 +111,30 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
           s.paidBy,
         );
 
-        return { amount, participants, canSplitScreenClosed };
+        return { amount, participants, canSplitScreenClosed, splitTypeSource: undefined };
       }),
     setAmountStr: (amountStr) => set({ amountStr }),
     setSplitType: (splitType) =>
       set((state) => {
         // Without an amount there is nothing to rebuild shares from, so keep the current ones
-        const participants =
-          0 === state.amount
-            ? state.participants
-            : calculateSplitShareBasedOnAmount(
-                state.amount,
-                state.participants,
-                splitType,
-                state.paidBy,
-              );
+        if (0 === state.amount) {
+          return {
+            splitType,
+            ...calculateParticipantSplit(state.amount, state.participants, splitType, state.paidBy),
+          };
+        }
+
+        const source = state.splitTypeSource ?? state.participants;
+        const participants = calculateSplitShareBasedOnAmount(
+          state.amount,
+          source,
+          splitType,
+          state.paidBy,
+        );
 
         return {
           splitType,
+          splitTypeSource: source,
           ...calculateParticipantSplit(state.amount, participants, splitType, state.paidBy),
         };
       }),
@@ -122,9 +150,7 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
         } else {
           participants.push({ ...user, splitShare: state.splitType === SplitType.EQUAL ? 1 : 0 });
         }
-        return {
-          ...calculateParticipantSplit(state.amount, participants, state.splitType, state.paidBy),
-        };
+        return splitWithParticipants(state, participants);
       }),
     setParticipants: (_participants) =>
       set((state) => {
@@ -132,34 +158,41 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
           splitShare: state.splitType === SplitType.EQUAL ? 1 : 0,
           ...p,
         }));
-        return {
-          splitType: SplitType.EQUAL,
-          ...calculateParticipantSplit(state.amount, participants, SplitType.EQUAL, state.paidBy),
-        };
+        return splitWithParticipants(state, participants, SplitType.EQUAL);
       }),
     removeLastParticipant: () => {
       set((state) => {
         if (state.participants.length === 1) return {};
         const newParticipants = [...state.participants];
         newParticipants.pop();
-        return splitWithoutRemoved(state, newParticipants);
+        return splitWithParticipants(state, newParticipants);
       });
     },
     removeParticipant: (userId) => {
-      set((state) => {
-        const newParticipants = state.participants.filter((p) => p.id !== userId);
-        return splitWithoutRemoved(state, newParticipants);
-      });
+      set((state) =>
+        splitWithParticipants(
+          state,
+          state.participants.filter((p) => p.id !== userId),
+        ),
+      );
     },
     setCurrency: (currency) => set({ currency }),
     setPreferredCurrency: (preferredCurrency) => set({ preferredCurrency }),
     setCategory: (category) => set({ category }),
     setNameOrEmail: (nameOrEmail) => set({ nameOrEmail, showFriends: nameOrEmail.length > 0 }),
     setPaidBy: (paidBy) =>
-      set((s) => ({
-        paidBy,
-        ...calculateParticipantSplit(s.amount, s.participants, s.splitType, paidBy),
-      })),
+      set((s) => {
+        // Picking the current payer again must not recalculate, e.g. an imported uneven split.
+        if (paidBy.id === s.paidBy?.id || !s.participants.some((p) => p.id === paidBy.id)) {
+          return {};
+        }
+
+        return {
+          paidBy,
+          splitTypeSource: undefined,
+          ...calculateParticipantSplit(s.amount, s.participants, s.splitType, paidBy),
+        };
+      }),
     setCurrentUser: (currentUser) =>
       set((s) => {
         const cUser = s.participants.find((p) => p.id === currentUser.id);
@@ -191,6 +224,8 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
         canSplitScreenClosed: true,
         splitScreenOpen: false,
         expenseDate: undefined,
+        formGeneration: s.formGeneration + 1,
+        splitTypeSource: undefined,
       }));
     },
     setSplitScreenOpen: (splitScreenOpen) => set({ splitScreenOpen }),
@@ -328,10 +363,79 @@ export function calculateParticipantSplit(
   return { participants: updatedParticipants, canSplitScreenClosed };
 }
 
+type ExpenseToEdit = {
+  amount: number;
+  splitType: SplitType;
+  category: string;
+  currency: string;
+  name: string;
+  expenseDate: Date;
+  fileKey: string | null;
+  group: Group | null;
+  paidByUser: User;
+  expenseParticipants: Array<{ amount: number; user: User }>;
+};
+
+/** The form state for editing a stored expense. Its participant cents are kept as stored. */
+export const getEditFormState = (expense: ExpenseToEdit) => {
+  const amount = toFixedNumber(expense.amount);
+  const stored = expense.expenseParticipants.map((participant) => ({
+    ...participant.user,
+    amount: toFixedNumber(participant.amount),
+  }));
+  // Very old expenses may lack the payer's row. It is implied by everyone else's.
+  const withPayer = stored.some((participant) => participant.id === expense.paidByUser.id)
+    ? stored
+    : [
+        ...stored,
+        {
+          ...expense.paidByUser,
+          amount: toFixedNumber(
+            -expense.expenseParticipants.reduce(
+              (total, participant) => total + participant.amount,
+              0,
+            ),
+          ),
+        },
+      ];
+
+  return {
+    amount,
+    amountStr: amount.toString(),
+    canSplitScreenClosed: true,
+    category: expense.category,
+    currency: expense.currency,
+    description: expense.name,
+    expenseDate: expense.expenseDate,
+    fileKey: expense.fileKey ?? undefined,
+    group: expense.group ?? undefined,
+    paidBy: expense.paidByUser,
+    participants: calculateSplitShareBasedOnAmount(
+      amount,
+      withPayer,
+      expense.splitType,
+      expense.paidByUser,
+    ),
+    showFriends: false,
+    splitType: expense.splitType,
+    splitTypeSource: undefined,
+  } satisfies Partial<AddExpenseState>;
+};
+
+/** Whether async work started for form `generation` may still write to the form. */
+export const isCurrentForm = (generation: number) =>
+  generation === useAddExpenseStore.getState().formGeneration;
+
+const gcd = (a: number, b: number): number => (0 === b ? a : gcd(b, a % b));
+
 /**
  * Rebuilds the split inputs from participant amounts, e.g. when editing an expense or switching
  * split type. Works on what each person owes of the absolute amount, so a refund rebuilds the same
  * inputs as the matching expense; `calculateParticipantSplit` re-applies the sign.
+ *
+ * Readable inputs (whole percentages, 1:2 shares) are only used when they give back exactly the
+ * same cents. Otherwise the inputs keep the exact ratios, and the split screen rounds them for
+ * display only, so opening and saving an expense never moves a cent.
  */
 export function calculateSplitShareBasedOnAmount(
   amount: number,
@@ -340,22 +444,31 @@ export function calculateSplitShareBasedOnAmount(
   paidBy?: User,
 ) {
   const sign = 0 > amount ? -1 : 1;
-  const absAmount = Math.abs(amount);
+  const totalCents = toInteger(Math.abs(amount));
+  const cents = participants.map((p) => toInteger(p.amount ?? 0));
   // What each person owes towards the expense, in cents of the absolute amount.
-  const owed = participants.map((p) =>
-    toInteger(sign * ((paidBy?.id === p.id ? amount : 0) - (p.amount ?? 0))),
+  const owed = participants.map((p, index) =>
+    toInteger(sign * ((paidBy?.id === p.id ? amount : 0) - toFixedNumber(cents[index] ?? 0))),
   );
-  const withShares = (getShare: (owedCents: number, index: number) => number) =>
-    participants.map((p, index) => ({ ...p, splitShare: getShare(owed[index] ?? 0, index) }));
+  const withShares = (shares: number[]) =>
+    participants.map((p, index) => ({ ...p, splitShare: shares[index] ?? 0 }));
+  const keepsCents = (candidate: Array<Participant>) =>
+    calculateParticipantSplit(amount, candidate, splitType, paidBy).participants.every(
+      (p, index) => toInteger(p.amount ?? 0) === cents[index],
+    );
+  // The first candidate that keeps every cent, else the last one, which is exact.
+  const pick = (...candidates: number[][]) => {
+    const rebuilt = candidates.map(withShares);
+    return rebuilt.find(keepsCents) ?? rebuilt[rebuilt.length - 1] ?? [...participants];
+  };
 
   switch (splitType) {
     case SplitType.EQUAL:
-      return withShares((owedCents) => (0 === owedCents ? 0 : 1));
+      return pick(owed.map((owedCents) => (0 === owedCents ? 0 : 1)));
 
     case SplitType.PERCENTAGE: {
-      const totalCents = toInteger(absAmount);
       if (0 === totalCents) {
-        return withShares(() => 0);
+        return pick(owed.map(() => 0));
       }
 
       // Percentages in hundredths, with the rounding remainder on the largest share so they add
@@ -367,30 +480,138 @@ export function calculateSplitShareBasedOnAmount(
         hundredths[largest] = (hundredths[largest] ?? 0) + remainder;
       }
 
-      return withShares((_, index) => (hundredths[index] ?? 0) / 100);
+      return pick(
+        hundredths.map((value) => value / 100),
+        owed.map((owedCents) => (owedCents / totalCents) * 100),
+      );
     }
 
     case SplitType.SHARE: {
-      // Scale so the smallest non-zero share is 1, rounded to drop leftover-cent noise.
+      // Relative to the smallest non-zero share, which becomes 1.
       const positive = owed.filter((owedCents) => 0 < owedCents);
       const minOwed = positive.length ? Math.min(...positive) : 0;
+      if (0 === minOwed) {
+        return pick(owed.map(() => 0));
+      }
 
-      return withShares((owedCents) =>
-        0 === minOwed ? 0 : Math.round((owedCents / minOwed) * 100) / 100,
+      // Whole numbers when the shares have a small common ratio, e.g. 30.00 and 70.00 give 3 and 7.
+      const divisor = owed.reduce((result, owedCents) => gcd(result, Math.abs(owedCents)), 0);
+      const wholeShares = owed.map((owedCents) => owedCents / divisor);
+
+      return pick(
+        owed.map((owedCents) => Math.round((owedCents / minOwed) * 100) / 100),
+        ...(wholeShares.every((share) => 100 >= Math.abs(share)) ? [wholeShares] : []),
+        owed.map((owedCents) => owedCents / minOwed),
       );
     }
 
     case SplitType.EXACT:
-      return withShares((owedCents) => toFixedNumber(owedCents));
+      return pick(owed.map((owedCents) => toFixedNumber(owedCents)));
 
     case SplitType.ADJUSTMENT: {
       // Everyone gets the smallest share equally, plus their difference from it as adjustment.
       const minOwed = owed.length ? Math.min(...owed) : 0;
 
-      return withShares((owedCents) => toFixedNumber(owedCents - minOwed));
+      return pick(owed.map((owedCents) => toFixedNumber(owedCents - minOwed)));
     }
 
     default:
       return [...participants];
   }
 }
+
+/** Split inputs are kept exact, so the split screen rounds them for display. */
+export const formatSplitShare = (splitShare: number | undefined) =>
+  undefined === splitShare ? undefined : String(Math.round(splitShare * 100) / 100);
+
+/**
+ * Adds an invited email as a placeholder participant until the invite returns their account. A
+ * result for a form that was reset in the meantime is dropped.
+ */
+export const inviteParticipant = async (
+  email: string,
+  invite: (email: string) => Promise<User>,
+) => {
+  const { formGeneration, actions } = useAddExpenseStore.getState();
+  actions.addOrUpdateParticipant({
+    id: -1,
+    name: email,
+    email,
+    emailVerified: new Date(),
+    image: null,
+    currency: 'USD',
+  });
+
+  try {
+    const user = await invite(email);
+    if (!isCurrentForm(formGeneration)) {
+      return;
+    }
+
+    actions.removeParticipant(-1);
+    actions.addOrUpdateParticipant(user);
+    actions.setNameOrEmail('');
+  } catch (error) {
+    if (!isCurrentForm(formGeneration)) {
+      return;
+    }
+
+    actions.removeParticipant(-1);
+    throw error;
+  }
+};
+
+type UploadUrlInput = { fileName: string; fileType: string; fileSize: number };
+
+/**
+ * Uploads a receipt for the current form. Resetting the form aborts the upload, and a result for a
+ * form that was reset in the meantime is dropped.
+ */
+export const uploadReceipt = async (
+  file: { name: string; type: string; size: number } & BodyInit,
+  getUploadUrl: (input: UploadUrlInput) => Promise<{ fileUrl: string; key: string }>,
+): Promise<'uploaded' | 'failed' | 'stale'> => {
+  const { formGeneration, actions } = useAddExpenseStore.getState();
+  const controller = new AbortController();
+  const unsubscribe = useAddExpenseStore.subscribe((state) => {
+    if (state.formGeneration !== formGeneration) {
+      controller.abort();
+    }
+  });
+  const isCurrent = () => !controller.signal.aborted && isCurrentForm(formGeneration);
+
+  actions.setFileUploading(true);
+  try {
+    const { fileUrl, key } = await getUploadUrl({
+      fileName: file.name,
+      fileType: file.type,
+      fileSize: file.size,
+    });
+    if (!isCurrent()) {
+      return 'stale';
+    }
+
+    const response = await fetch(fileUrl, { method: 'PUT', body: file, signal: controller.signal });
+    if (!isCurrent()) {
+      return 'stale';
+    }
+
+    if (!response.ok) {
+      return 'failed';
+    }
+
+    actions.setFileKey(key);
+    return 'uploaded';
+  } catch (error) {
+    if (!isCurrent()) {
+      return 'stale';
+    }
+
+    throw error;
+  } finally {
+    unsubscribe();
+    if (isCurrentForm(formGeneration)) {
+      actions.setFileUploading(false);
+    }
+  }
+};

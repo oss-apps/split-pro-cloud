@@ -1,4 +1,9 @@
-import { type Participant, getRemainingPercentage, useAddExpenseStore } from '~/store/addStore';
+import {
+  type Participant,
+  formatSplitShare,
+  getRemainingPercentage,
+  useAddExpenseStore,
+} from '~/store/addStore';
 import { AppDrawer, Drawer, DrawerClose } from '../ui/drawer';
 import { UserAvatar } from '../ui/avatar';
 import { BarChart2, Check, DollarSign, Equal, Percent, Plus, X } from 'lucide-react';
@@ -185,7 +190,7 @@ const SplitByPercentageSection: React.FC = () => {
   const [splitShareValue, setSplitShareValue] = useState(
     participants.reduce(
       (acc, p) => {
-        acc[p.id] = p.splitShare?.toString();
+        acc[p.id] = formatSplitShare(p.splitShare);
         return acc;
       },
       {} as Record<string, string | undefined>,
@@ -299,7 +304,7 @@ const SplitByShareSection: React.FC = () => {
   const [splitShareValue, setSplitShareValue] = useState(
     participants.reduce(
       (acc, p) => {
-        acc[p.id] = p.splitShare?.toString();
+        acc[p.id] = formatSplitShare(p.splitShare);
         return acc;
       },
       {} as Record<string, string | undefined>,
@@ -319,7 +324,9 @@ const SplitByShareSection: React.FC = () => {
 
   return (
     <div className="mt-4 flex flex-col gap-6 px-2">
-      <div className="mb-2 text-center text-gray-300">Total shares {totalShare}</div>
+      <div className="mb-2 text-center text-gray-300">
+        Total shares {formatSplitShare(totalShare)}
+      </div>
       {participants.map((p) => (
         <div key={p.id} className="flex justify-between">
           <UserAndAmount user={p} currency={currency} />
@@ -349,7 +356,7 @@ const SplitByAdjustmentSection: React.FC = () => {
   const [splitShareValue, setSplitShareValue] = useState(
     participants.reduce(
       (acc, p) => {
-        acc[p.id] = p.splitShare?.toString();
+        acc[p.id] = formatSplitShare(p.splitShare);
         return acc;
       },
       {} as Record<string, string | undefined>,

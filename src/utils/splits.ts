@@ -81,6 +81,10 @@ export const toBalancedParticipants = (
     throw new InvalidExpenseError('Expense participants must be unique');
   }
 
+  if (!storedParticipants.some((participant) => participant.userId === paidBy)) {
+    throw new InvalidExpenseError('The payer must be one of the participants');
+  }
+
   if (SplitType.SETTLEMENT === splitType) {
     const others = storedParticipants.filter((participant) => participant.userId !== paidBy);
     const [receiver] = others;
@@ -95,15 +99,9 @@ export const toBalancedParticipants = (
     ];
   }
 
-  let payer = storedParticipants.find((participant) => participant.userId === paidBy);
-
-  // Some clients dropped the payer from the list. Their row is implied by everyone else's.
+  const payer = storedParticipants.find((participant) => participant.userId === paidBy);
   if (!payer) {
-    payer = {
-      userId: paidBy,
-      amount: -storedParticipants.reduce((sum, participant) => sum + participant.amount, 0),
-    };
-    storedParticipants.push(payer);
+    throw new InvalidExpenseError('The payer must be one of the participants');
   }
 
   const imbalance = storedParticipants.reduce((sum, participant) => sum + participant.amount, 0);
