@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { type Group, type User } from '@prisma/client';
+import { type Group, SplitType, type User } from '@prisma/client';
 
 import { addRecentCurrency, MAX_RECENT_CURRENCIES } from '~/hooks/useRecentCurrencies';
-import { useAddExpenseStore } from '~/store/addStore';
+import { getEditFormState, useAddExpenseStore } from '~/store/addStore';
+import { hasShareWithFriend } from '~/utils/expenseLabels';
 import {
   formatMonthHeader,
   formatShortDate,
@@ -84,37 +85,93 @@ void describe('addRecentCurrency', () => {
 });
 
 void describe('group currency in the add flow', () => {
+  const friend: User = { ...me, id: 2, name: 'Friend', email: 'friend@example.com' };
+  const trip = group(1, 'EUR');
   const start = () => {
     useAddExpenseStore.setState({ currentUser: me, preferredCurrency: 'INR' });
     useAddExpenseStore.getState().actions.resetState();
   };
+  const state = () => useAddExpenseStore.getState();
+  // As in the form: picking a currency also makes it the user's default.
+  const pickCurrency = (currency: string) => {
+    state().actions.setCurrency(currency);
+    state().actions.setPreferredCurrency(currency);
+  };
+  // As UserInput (Backspace) and SelectUserOrGroup do.
+  const removeGroup = () => {
+    state().actions.setGroup(undefined);
+    state().actions.setParticipants([me]);
+  };
+  const selectGroup = () => {
+    state().actions.setGroup(trip);
+    state().actions.setParticipants([me, friend]);
+  };
 
   void it('uses the group currency and goes back to the user currency without the group', () => {
     start();
-    const { setGroup } = useAddExpenseStore.getState().actions;
+    selectGroup();
+    assert.equal(state().currency, 'EUR');
 
-    setGroup(group(1, 'EUR'));
-    assert.equal(useAddExpenseStore.getState().currency, 'EUR');
-
-    setGroup(undefined);
-    assert.equal(useAddExpenseStore.getState().currency, 'INR');
+    removeGroup();
+    assert.equal(state().currency, 'INR');
   });
 
-  void it('keeps a currency picked by hand when the group is removed', () => {
+  void it('keeps a picked currency when the group is removed and selected again', () => {
     start();
-    const { setGroup, setCurrency } = useAddExpenseStore.getState().actions;
+    selectGroup();
+    state().actions.setAmount(100);
+    pickCurrency('GBP');
 
-    setGroup(group(1, 'EUR'));
-    setCurrency('GBP');
-    setGroup(undefined);
-    assert.equal(useAddExpenseStore.getState().currency, 'GBP');
+    removeGroup();
+    assert.equal(state().currency, 'GBP');
+    selectGroup();
+    assert.equal(state().currency, 'GBP');
+    assert.equal(state().amount, 100);
   });
 
-  void it('starts the next expense from the user currency again', () => {
+  void it('keeps a currency picked before the group', () => {
     start();
-    useAddExpenseStore.getState().actions.setGroup(group(1, 'EUR'));
-    useAddExpenseStore.getState().actions.resetState();
-    assert.equal(useAddExpenseStore.getState().currency, 'INR');
+    pickCurrency('GBP');
+    selectGroup();
+    assert.equal(state().currency, 'GBP');
+  });
+
+  void it('never applies the group currency to an edit', () => {
+    start();
+    useAddExpenseStore.setState(
+      getEditFormState({
+        amount: 1000,
+        splitType: SplitType.EQUAL,
+        category: 'general',
+        currency: 'GBP',
+        name: 'Dinner',
+        expenseDate: new Date(2026, 8, 30),
+        fileKey: null,
+        group: trip,
+        paidByUser: me,
+        expenseParticipants: [
+          { amount: 500, user: me },
+          { amount: -500, user: friend },
+        ],
+      }),
+    );
+    assert.equal(state().currencyTouched, true);
+
+    state().actions.setGroup(trip);
+    assert.equal(state().currency, 'GBP');
+    state().actions.setGroup(undefined);
+    assert.equal(state().currency, 'GBP');
+  });
+
+  void it('lets the next form follow the group again after a reset', () => {
+    start();
+    pickCurrency('GBP');
+    state().actions.resetState();
+    assert.equal(state().currencyTouched, false);
+    assert.equal(state().currency, 'GBP');
+
+    selectGroup();
+    assert.equal(state().currency, 'EUR');
   });
 });
 
@@ -127,5 +184,34 @@ void describe('settle up payment date', () => {
 
     assert.equal(buildSettleUpPayment({ ...base, expenseDate }).payment.expenseDate, expenseDate);
     assert.equal('expenseDate' in buildSettleUpPayment(base).payment, false);
+  });
+});
+
+void describe('hasShareWithFriend', () => {
+  const ME = 1;
+  const FRIEND = 2;
+  const expense = (paidBy: number, mine: number | undefined, theirs: number | undefined) => ({
+    paidBy,
+    expenseParticipants: [
+      ...(undefined === mine ? [] : [{ userId: ME, amount: mine }]),
+      ...(undefined === theirs ? [] : [{ userId: FRIEND, amount: theirs }]),
+    ],
+  });
+
+  void it('hides only expenses where the one who did not pay owes nothing', () => {
+    const cases: Array<[string, ReturnType<typeof expense>, boolean]> = [
+      ['zero, I paid', expense(ME, 0, 0), false],
+      ['zero, friend paid', expense(FRIEND, 0, 0), false],
+      ['I paid', expense(ME, 50, -50), true],
+      ['friend paid', expense(FRIEND, -50, 50), true],
+      ['refund I paid', expense(ME, -50, 50), true],
+      ['settlement friend paid', expense(FRIEND, -100, 100), true],
+      ['old expense without my payer row', expense(ME, undefined, -50), true],
+      ['old expense without their payer row', expense(FRIEND, -50, undefined), true],
+    ];
+
+    cases.forEach(([name, e, listed]) =>
+      assert.equal(hasShareWithFriend(e, ME, FRIEND), listed, name),
+    );
   });
 });

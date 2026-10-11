@@ -9,12 +9,14 @@ const setup = async () => {
   process.env.DATABASE_URL = databaseUrl;
   process.env.SKIP_ENV_VALIDATION = '1';
 
-  const [{ SplitType }, { db }, splitService, { appRouter }] = await Promise.all([
-    import('@prisma/client'),
-    import('~/server/db'),
-    import('~/server/api/services/splitService'),
-    import('~/server/api/root'),
-  ]);
+  const [{ SplitType }, { db }, splitService, { appRouter }, { hasShareWithFriend }] =
+    await Promise.all([
+      import('@prisma/client'),
+      import('~/server/db'),
+      import('~/server/api/services/splitService'),
+      import('~/server/api/root'),
+      import('~/utils/expenseLabels'),
+    ]);
   const suffix = `${Date.now()}-${Math.random()}`;
 
   const createUser = (name: string, currency = 'USD') =>
@@ -42,14 +44,22 @@ const setup = async () => {
       },
     });
 
-  return { SplitType, db, ...splitService, createUser, createGroup, callerFor };
+  return { SplitType, db, ...splitService, createUser, createGroup, callerFor, hasShareWithFriend };
 };
 
 void test(
   'quick wins: group currency, zero shares and settlement dates',
   { skip: !databaseUrl },
   async () => {
-    const { SplitType, db, createGroupExpense, createUser, createGroup, callerFor } = await setup();
+    const {
+      SplitType,
+      db,
+      createGroupExpense,
+      createUser,
+      createGroup,
+      callerFor,
+      hasShareWithFriend,
+    } = await setup();
     const [alice, bob, carol] = await Promise.all([
       createUser('Alice', 'EUR'),
       createUser('Bob'),
@@ -119,17 +129,19 @@ void test(
       assert.equal(backfilled.find((g) => g.id === trip.id)?.defaultCurrency, 'GBP');
       assert.equal(backfilled.find((g) => g.id === empty.id)?.defaultCurrency, 'INR');
 
-      // Carol owes Bob nothing for the dinner, so it is not on their friend page.
-      const carolWithBob = await callerFor(carol).user.getExpensesWithFriend({ friendId: bob.id });
-      assert.equal(
-        carolWithBob.some((e) => e.id === dinner.id),
-        false,
-      );
-      const aliceWithBob = await callerFor(alice).user.getExpensesWithFriend({ friendId: bob.id });
-      assert.equal(
-        aliceWithBob.some((e) => e.id === dinner.id),
-        true,
-      );
+      // Carol owes Bob nothing for the dinner. The friend page data, which the CSV export uses
+      // as is, still has it (both ways), and only the list hides it.
+      const withFriend = async (viewer: typeof alice, friend: typeof alice) => {
+        const expenses = await callerFor(viewer).user.getExpensesWithFriend({
+          friendId: friend.id,
+        });
+        const row = expenses.find((e) => e.id === dinner.id);
+        return { exported: !!row, listed: !!row && hasShareWithFriend(row, viewer.id, friend.id) };
+      };
+      assert.deepEqual(await withFriend(carol, bob), { exported: true, listed: false });
+      assert.deepEqual(await withFriend(bob, carol), { exported: true, listed: false });
+      assert.deepEqual(await withFriend(alice, bob), { exported: true, listed: true });
+      assert.deepEqual(await withFriend(bob, alice), { exported: true, listed: true });
 
       // A settlement keeps the day it was paid.
       const paidOn = new Date(2026, 8, 30, 12);

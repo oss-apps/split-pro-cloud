@@ -10,7 +10,12 @@ import { Separator } from '~/components/ui/separator';
 import { Button } from '~/components/ui/button';
 import { SettleUp } from '~/components/Friend/Settleup';
 import { toSignedUIString, toUIString } from '~/utils/numbers';
-import { SHARE_TONE_CLASS, getNetShareLabel, getNetWithFriend } from '~/utils/expenseLabels';
+import {
+  SHARE_TONE_CLASS,
+  getNetShareLabel,
+  getNetWithFriend,
+  hasShareWithFriend,
+} from '~/utils/expenseLabels';
 import { CategoryIcon } from '~/components/ui/categoryIcons';
 import { useRouter } from 'next/router';
 import { type NextPageWithUser } from '~/types';
@@ -39,6 +44,9 @@ const FriendPage: NextPageWithUser = ({ user }) => {
     { friendId: _friendId },
     { enabled: !!_friendId },
   );
+
+  // The export keeps every expense; the list skips those where neither owes the other anything.
+  const listedExpenses = expenses.data?.filter((e) => hasShareWithFriend(e, user.id, _friendId));
 
   const youLent = balances.data?.filter((b) => b.amount > 0);
   const youOwe = balances.data?.filter((b) => b.amount < 0);
@@ -152,7 +160,7 @@ const FriendPage: NextPageWithUser = ({ user }) => {
             </div>
             <Separator className="px-4" />
             <div className="mx-4 mt-4 flex  flex-col gap-3">
-              {expenses.data?.map((e, index, expenseList) => {
+              {listedExpenses?.map((e, index, expenseList) => {
                 const youPaid = e.paidBy === user.id;
                 const yourShare = getNetShareLabel(getNetWithFriend(e, user.id, _friendId));
                 const isSettlement = e.splitType === SplitType.SETTLEMENT;

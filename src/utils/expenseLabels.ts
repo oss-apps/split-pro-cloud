@@ -62,3 +62,18 @@ export const getNetWithFriend = (
   expense.paidBy === userId
     ? 0 - getParticipantAmount(expense, friendId)
     : getParticipantAmount(expense, userId);
+
+/**
+ * Whether the expense moves money between the current user and a friend: the one of the two who
+ * didn't pay has a non-zero share. The friend page lists only these; its export keeps all.
+ */
+export const hasShareWithFriend = (
+  expense: ExpenseWithParticipants,
+  userId: number,
+  friendId: number,
+) => {
+  const owerId = expense.paidBy === userId ? friendId : userId;
+  return expense.expenseParticipants.some(
+    (participant) => participant.userId === owerId && 0 !== participant.amount,
+  );
+};
