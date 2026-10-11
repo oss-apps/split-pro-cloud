@@ -19,6 +19,7 @@
     "generate": "prisma generate",
     "lint": "next lint",
     "test": "tsx --test src/tests/*.test.ts",
+    "repair:balances": "tsx src/scripts/repair-balances.ts",
     "start": "sleep 3 && pnpm prisma:prod && next start",
     "start-with-latest-migrations": "prisma migrate deploy && next start",
     "d": "pnpm dx && pnpm dev",
