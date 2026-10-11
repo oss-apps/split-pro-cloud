@@ -1,7 +1,7 @@
 import { useRouter } from 'next/router';
 import React from 'react';
 import { toast } from 'sonner';
-import { useAddExpenseStore } from '~/store/addStore';
+import { getParticipantsToSave, useAddExpenseStore } from '~/store/addStore';
 import { api } from '~/utils/api';
 import { UserInput } from './UserInput';
 import { SelectUserOrGroup } from './SelectUserOrGroup';
@@ -195,6 +195,11 @@ export const AddOrEditExpensePage: React.FC<{
       return;
     }
 
+    const participantsToSave = getParticipantsToSave(useAddExpenseStore.getState()).map((p) => ({
+      userId: p.id,
+      amount: p.amount ?? 0,
+    }));
+
     if (group) {
       addGroupExpenseMutation.mutate(
         {
@@ -203,10 +208,7 @@ export const AddOrEditExpensePage: React.FC<{
           amount,
           groupId: group.id,
           splitType,
-          participants: participants.map((p) => ({
-            userId: p.id,
-            amount: p.amount ?? 0,
-          })),
+          participants: participantsToSave,
           paidBy: paidBy.id,
           category,
           fileKey,
@@ -235,10 +237,7 @@ export const AddOrEditExpensePage: React.FC<{
           currency,
           amount,
           splitType,
-          participants: participants.map((p) => ({
-            userId: p.id,
-            amount: p.amount ?? 0,
-          })),
+          participants: participantsToSave,
           paidBy: paidBy.id,
           category,
           fileKey,

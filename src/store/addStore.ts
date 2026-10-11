@@ -4,6 +4,20 @@ import { toFixedNumber, toInteger } from '~/utils/numbers';
 
 export type Participant = User & { amount?: number; splitShare?: number };
 
+/**
+ * An expense as it was opened for editing. While its amount, currency, payer, participants and
+ * split type are the same as loaded (also after changing one and back) and no split value was
+ * edited, it is shown and saved with its stored cents, even if today's rounding would distribute
+ * them differently.
+ */
+type EditSnapshot = {
+  amountCents: number;
+  currency: string;
+  paidById: number;
+  splitType: SplitType;
+  participants: Array<Participant>;
+};
+
 interface AddExpenseState {
   amount: number;
   amountStr: string;
@@ -31,6 +45,8 @@ interface AddExpenseState {
    * type that can't express it (e.g. equal) and back then restores the same cents.
    */
   splitTypeSource: Array<Participant> | undefined;
+  /** Dropped as soon as a split value or the participants change. */
+  editSnapshot: EditSnapshot | undefined;
   actions: {
     setAmount: (amount: number) => void;
     setAmountStr: (amountStr: string) => void;
@@ -39,6 +55,7 @@ interface AddExpenseState {
     addOrUpdateParticipant: (user: Participant) => void;
     setParticipants: (participants: Array<Participant>) => void;
     removeParticipant: (userId: number) => void;
+    replaceParticipant: (fromId: number, user: User) => void;
     removeLastParticipant: () => void;
     setCurrency: (currency: string) => void;
     setPreferredCurrency: (currency: string) => void;
@@ -65,6 +82,49 @@ const getPayerAmong = (
     (user) => user && participants.some((participant) => participant.id === user.id),
   ) ?? participants[0];
 
+const isSameParticipantSet = (a: Array<{ id: number }>, b: Array<{ id: number }>) =>
+  a.length === b.length && a.every((participant) => b.some((other) => other.id === participant.id));
+
+/** Whether the form still holds the financial inputs of the expense as it was opened. */
+export const matchesEditSnapshot = (
+  state: Pick<
+    AddExpenseState,
+    'editSnapshot' | 'amount' | 'currency' | 'paidBy' | 'splitType' | 'participants'
+  >,
+): state is typeof state & { editSnapshot: EditSnapshot } => {
+  const snapshot = state.editSnapshot;
+  return (
+    !!snapshot &&
+    toInteger(state.amount) === snapshot.amountCents &&
+    state.currency === snapshot.currency &&
+    state.paidBy?.id === snapshot.paidById &&
+    state.splitType === snapshot.splitType &&
+    isSameParticipantSet(state.participants, snapshot.participants)
+  );
+};
+
+/** The participants to save: the stored ones while the expense is unchanged, else the form's. */
+export const getParticipantsToSave = (
+  state: Pick<
+    AddExpenseState,
+    'editSnapshot' | 'amount' | 'currency' | 'paidBy' | 'splitType' | 'participants'
+  >,
+) => (matchesEditSnapshot(state) ? state.editSnapshot.participants : state.participants);
+
+/** Shows the stored cents again when a change returns the form to the expense as it was opened. */
+const withEditSnapshot = <T extends Partial<AddExpenseState>>(state: AddExpenseState, next: T) => {
+  const merged = { ...state, ...next };
+  if (!matchesEditSnapshot(merged)) {
+    return next;
+  }
+
+  return {
+    ...next,
+    participants: merged.editSnapshot.participants,
+    canSplitScreenClosed: true,
+  };
+};
+
 const splitWithParticipants = (
   state: AddExpenseState,
   participants: Array<Participant>,
@@ -76,6 +136,7 @@ const splitWithParticipants = (
     paidBy,
     splitType,
     splitTypeSource: undefined,
+    editSnapshot: undefined,
     ...calculateParticipantSplit(state.amount, participants, splitType, paidBy),
   };
 };
@@ -101,6 +162,7 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
   expenseDate: undefined,
   formGeneration: 0,
   splitTypeSource: undefined,
+  editSnapshot: undefined,
   actions: {
     setAmount: (amount) =>
       set((s) => {
@@ -111,7 +173,12 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
           s.paidBy,
         );
 
-        return { amount, participants, canSplitScreenClosed, splitTypeSource: undefined };
+        return withEditSnapshot(s, {
+          amount,
+          participants,
+          canSplitScreenClosed,
+          splitTypeSource: undefined,
+        });
       }),
     setAmountStr: (amountStr) => set({ amountStr }),
     setSplitType: (splitType) =>
@@ -132,11 +199,11 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
           state.paidBy,
         );
 
-        return {
+        return withEditSnapshot(state, {
           splitType,
           splitTypeSource: source,
           ...calculateParticipantSplit(state.amount, participants, splitType, state.paidBy),
-        };
+        });
       }),
     setGroup: (group) => {
       set({ group });
@@ -176,7 +243,29 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
         ),
       );
     },
-    setCurrency: (currency) => set({ currency }),
+    replaceParticipant: (fromId, user) =>
+      set((state) => {
+        if (!state.participants.some((p) => p.id === fromId)) {
+          return {};
+        }
+
+        // Keeps the position, split value and payer choice. If they were already added, the
+        // placeholder just goes away.
+        const isAlreadyParticipant = state.participants.some((p) => p.id === user.id);
+        const participants = state.participants.flatMap((p) => {
+          if (p.id !== fromId) {
+            return [p];
+          }
+
+          return isAlreadyParticipant
+            ? []
+            : [{ ...user, splitShare: p.splitShare, amount: p.amount }];
+        });
+        const paidBy = state.paidBy?.id === fromId ? user : state.paidBy;
+
+        return splitWithParticipants({ ...state, paidBy }, participants);
+      }),
+    setCurrency: (currency) => set((s) => withEditSnapshot(s, { currency })),
     setPreferredCurrency: (preferredCurrency) => set({ preferredCurrency }),
     setCategory: (category) => set({ category }),
     setNameOrEmail: (nameOrEmail) => set({ nameOrEmail, showFriends: nameOrEmail.length > 0 }),
@@ -187,11 +276,11 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
           return {};
         }
 
-        return {
+        return withEditSnapshot(s, {
           paidBy,
           splitTypeSource: undefined,
           ...calculateParticipantSplit(s.amount, s.participants, s.splitType, paidBy),
-        };
+        });
       }),
     setCurrentUser: (currentUser) =>
       set((s) => {
@@ -226,6 +315,7 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
         expenseDate: undefined,
         formGeneration: s.formGeneration + 1,
         splitTypeSource: undefined,
+        editSnapshot: undefined,
       }));
     },
     setSplitScreenOpen: (splitScreenOpen) => set({ splitScreenOpen }),
@@ -399,6 +489,13 @@ export const getEditFormState = (expense: ExpenseToEdit) => {
         },
       ];
 
+  const participants = calculateSplitShareBasedOnAmount(
+    amount,
+    withPayer,
+    expense.splitType,
+    expense.paidByUser,
+  );
+
   return {
     amount,
     amountStr: amount.toString(),
@@ -410,15 +507,17 @@ export const getEditFormState = (expense: ExpenseToEdit) => {
     fileKey: expense.fileKey ?? undefined,
     group: expense.group ?? undefined,
     paidBy: expense.paidByUser,
-    participants: calculateSplitShareBasedOnAmount(
-      amount,
-      withPayer,
-      expense.splitType,
-      expense.paidByUser,
-    ),
+    participants,
     showFriends: false,
     splitType: expense.splitType,
     splitTypeSource: undefined,
+    editSnapshot: {
+      amountCents: expense.amount,
+      currency: expense.currency,
+      paidById: expense.paidByUser.id,
+      splitType: expense.splitType,
+      participants,
+    },
   } satisfies Partial<AddExpenseState>;
 };
 
@@ -548,8 +647,7 @@ export const inviteParticipant = async (
       return;
     }
 
-    actions.removeParticipant(-1);
-    actions.addOrUpdateParticipant(user);
+    actions.replaceParticipant(-1, user);
     actions.setNameOrEmail('');
   } catch (error) {
     if (!isCurrentForm(formGeneration)) {
@@ -564,12 +662,14 @@ export const inviteParticipant = async (
 type UploadUrlInput = { fileName: string; fileType: string; fileSize: number };
 
 /**
- * Uploads a receipt for the current form. Resetting the form aborts the upload, and a result for a
- * form that was reset in the meantime is dropped.
+ * Uploads a receipt for the current form. The form is captured before anything async, including
+ * `prepare` (e.g. checking the image), so resetting the form at any point aborts the upload and
+ * drops its result.
  */
 export const uploadReceipt = async (
   file: { name: string; type: string; size: number } & BodyInit,
   getUploadUrl: (input: UploadUrlInput) => Promise<{ fileUrl: string; key: string }>,
+  prepare?: () => Promise<unknown>,
 ): Promise<'uploaded' | 'failed' | 'stale'> => {
   const { formGeneration, actions } = useAddExpenseStore.getState();
   const controller = new AbortController();
@@ -582,6 +682,11 @@ export const uploadReceipt = async (
 
   actions.setFileUploading(true);
   try {
+    await prepare?.();
+    if (!isCurrent()) {
+      return 'stale';
+    }
+
     const { fileUrl, key } = await getUploadUrl({
       fileName: file.name,
       fileType: file.type,

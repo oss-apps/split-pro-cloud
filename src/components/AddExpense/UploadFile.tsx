@@ -38,11 +38,13 @@ export const UploadFile: React.FC = () => {
       return;
     }
 
-    const { height, width } = await getImgHeightAndWidth(file);
-    console.log('height:', height, 'width:', width);
-
     try {
-      const result = await uploadReceipt(file, (input) => getUploadUrl.mutateAsync(input));
+      // No await before this call: it ties the upload to the current form.
+      const result = await uploadReceipt(
+        file,
+        (input) => getUploadUrl.mutateAsync(input),
+        () => getImgHeightAndWidth(file),
+      );
       if ('uploaded' === result) {
         toast.success('File uploaded successfully');
       } else if ('failed' === result) {
