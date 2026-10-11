@@ -498,6 +498,17 @@ export const userRouter = createTRPCRouter({
     .input(z.object({ friendId: z.number() }))
     .mutation(async ({ input, ctx }) => {
       const pausedIds = await runBalanceTransaction(async (tx) => {
+        // Rules are locked first, like everywhere else; a failing check below undoes this.
+        const friend = await tx.user.findUnique({
+          where: { id: input.friendId },
+          select: { name: true, email: true },
+        });
+        const pausedIds = await pauseRulesWith(tx, {
+          groupId: null,
+          userIds: [ctx.session.user.id, input.friendId],
+          reason: `${ctx.session.user.name ?? ctx.session.user.email ?? 'Someone'} and ${friend?.name ?? friend?.email ?? 'someone'} aren't friends anymore`,
+        });
+
         const friendBalances = await tx.balance.findMany({
           where: {
             OR: [
@@ -526,15 +537,7 @@ export const userRouter = createTRPCRouter({
           },
         });
 
-        const friend = await tx.user.findUnique({
-          where: { id: input.friendId },
-          select: { name: true, email: true },
-        });
-        return pauseRulesWith(tx, {
-          groupId: null,
-          userIds: [ctx.session.user.id, input.friendId],
-          reason: `${ctx.session.user.name ?? ctx.session.user.email ?? 'Someone'} and ${friend?.name ?? friend?.email ?? 'someone'} aren't friends anymore`,
-        });
+        return pausedIds;
       });
 
       await deleteFriendship(ctx.session.user.id, input.friendId);

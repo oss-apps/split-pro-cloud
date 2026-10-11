@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { createTRPCRouter, groupProcedure, protectedProcedure } from '~/server/api/trpc';
 import { db } from '~/server/db';
 import { canViewExpense } from '../services/accessControl';
-import { canManageRule, getManageableRule, setRulePaused } from '../services/recurringService';
+import { canManageRule, deleteRule, setRulePaused } from '../services/recurringService';
 
 const ruleInclude = {
   createdBy: { select: { id: true, name: true, email: true } },
@@ -66,7 +66,6 @@ export const recurringRouter = createTRPCRouter({
   setPaused: protectedProcedure
     .input(z.object({ ruleId: z.number(), paused: z.boolean() }))
     .mutation(async ({ input, ctx }) => {
-      await getManageableRule(ctx.session.user.id, input.ruleId);
       return setRulePaused(input.ruleId, input.paused, ctx.session.user.id);
     }),
 
@@ -74,7 +73,6 @@ export const recurringRouter = createTRPCRouter({
   delete: protectedProcedure
     .input(z.object({ ruleId: z.number() }))
     .mutation(async ({ input, ctx }) => {
-      await getManageableRule(ctx.session.user.id, input.ruleId);
-      await db.recurringExpense.delete({ where: { id: input.ruleId } });
+      await deleteRule(input.ruleId, ctx.session.user.id);
     }),
 });

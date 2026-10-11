@@ -20,7 +20,11 @@ import {
   sendRecurringGroupDeletedPushNotification,
   sendRecurringStatusPushNotification,
 } from '../services/notificationService';
-import { pauseRulesWith, recurrenceInputSchema } from '../services/recurringService';
+import {
+  lockRulesOfGroup,
+  pauseRulesWith,
+  recurrenceInputSchema,
+} from '../services/recurringService';
 
 export const groupRouter = createTRPCRouter({
   create: protectedProcedure
@@ -364,6 +368,14 @@ export const groupRouter = createTRPCRouter({
     .input(z.object({ groupId: z.number() }))
     .mutation(async ({ input, ctx }) => {
       const { left, pausedIds } = await runBalanceTransaction(async (tx) => {
+        // Repeating an expense they are in would add it without them, so it waits for a decision.
+        // Rules are locked first, like everywhere else; a failing check below undoes this.
+        const pausedIds = await pauseRulesWith(tx, {
+          groupId: input.groupId,
+          userIds: [ctx.session.user.id],
+          reason: `${ctx.session.user.name ?? ctx.session.user.email ?? 'Someone'} left the group`,
+        });
+
         const nonZeroBalance = await tx.groupBalance.findFirst({
           where: {
             groupId: input.groupId,
@@ -390,13 +402,6 @@ export const groupRouter = createTRPCRouter({
           },
         });
 
-        // Repeating an expense they are in would add it without them, so it waits for a decision.
-        const pausedIds = await pauseRulesWith(tx, {
-          groupId: input.groupId,
-          userIds: [ctx.session.user.id],
-          reason: `${ctx.session.user.name ?? ctx.session.user.email ?? 'Someone'} left the group`,
-        });
-
         return { left, pausedIds };
       });
 
@@ -410,6 +415,7 @@ export const groupRouter = createTRPCRouter({
     .input(z.object({ groupId: z.number() }))
     .mutation(async ({ input, ctx }) => {
       const { group, rules } = await runBalanceTransaction(async (tx) => {
+        await lockRulesOfGroup(tx, input.groupId);
         const group = await tx.group.findUnique({
           where: {
             id: input.groupId,

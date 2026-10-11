@@ -15,6 +15,7 @@ import {
   type RecurrenceInput,
   assertCanChangeRecurrence,
   createRecurringRule,
+  lockRuleOfExpense,
   onOccurrenceDeleted,
   setExpenseRecurrence,
   setRuleTemplate,
@@ -328,6 +329,7 @@ export async function addUserExpense(
 
 export async function deleteExpense(expenseId: string, deletedBy: number) {
   const deleted = await runBalanceTransaction(async (tx) => {
+    await lockRuleOfExpense(tx, expenseId);
     const expense = await tx.expense.findUnique({
       where: { id: expenseId },
       include: { expenseParticipants: true },
@@ -500,21 +502,25 @@ export async function editExpense(
     fileKey,
   };
 
-  const result = await runBalanceTransaction(async (tx) => {
+  const { edited, changedRuleIds } = await runBalanceTransaction(async (tx) => {
+    const recurringId = await lockRuleOfExpense(tx, expenseId);
     // Checked against the rule and expense as they were before this edit.
     const changesRecurrence =
       undefined !== recurrence &&
       (await assertCanChangeRecurrence(tx, expenseId, recurrence, currentUserId));
     const edited = await updateExpense(tx, expenseId, input);
-    await syncRuleTemplate(tx, expenseId);
+    const changedRuleIds = await syncRuleTemplate(tx, expenseId, recurringId);
     if (changesRecurrence) {
       await setExpenseRecurrence(tx, expenseId, recurrence, currentUserId);
     }
-    return edited;
+    return { edited, changedRuleIds };
   });
 
   sendExpensePushNotification(expenseId).catch(console.error);
-  return result;
+  changedRuleIds.forEach((ruleId) => {
+    sendRecurringStatusPushNotification(ruleId).catch(console.error);
+  });
+  return edited;
 }
 
 export async function getCompleteFriendsDetails(userId: number) {

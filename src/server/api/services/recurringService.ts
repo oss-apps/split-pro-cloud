@@ -1,5 +1,5 @@
 import {
-  type Prisma,
+  Prisma,
   type RecurringExpense,
   type RecurringFrequency,
   RecurringStatus,
@@ -53,6 +53,39 @@ const isSameIds = (a: number[], b: number[]) =>
   a.length === b.length && a.every((id) => b.includes(id));
 
 /**
+ * Locks the matching rules until the transaction ends, in id order. Every path that changes a rule
+ * locks it first, before any expense or balance (as the runner does), so they wait for each other
+ * instead of deadlocking. Who may change it is checked only after, against the rule as committed.
+ */
+const lockRules = async (tx: Prisma.TransactionClient, where: Prisma.Sql) =>
+  (
+    await tx.$queryRaw<Array<{ id: number }>>`
+      SELECT id FROM "RecurringExpense" WHERE ${where} ORDER BY id FOR UPDATE`
+  ).map((rule) => rule.id);
+
+/**
+ * Locks the rule the expense belongs to, the only one that can copy it next, and returns its id.
+ * An expense that doesn't repeat touches no rule at all.
+ */
+export const lockRuleOfExpense = async (tx: Prisma.TransactionClient, expenseId: string) => {
+  const expense = await tx.expense.findUnique({
+    where: { id: expenseId },
+    select: { recurringId: true },
+  });
+  if (!expense?.recurringId) {
+    return undefined;
+  }
+  await lockRules(tx, Prisma.sql`id = ${expense.recurringId}`);
+  return expense.recurringId;
+};
+
+export const lockRulesOfGroup = (tx: Prisma.TransactionClient, groupId: number) =>
+  lockRules(tx, Prisma.sql`"groupId" = ${groupId}`);
+
+const lockRulesOfUser = (tx: Prisma.TransactionClient, userId: number) =>
+  lockRules(tx, Prisma.sql`"createdById" = ${userId} OR ${userId} = ANY("templateUserIds")`);
+
+/**
  * Records the expense the rule's next occurrence copies, with everyone in it. Called in the
  * transaction that adds the occurrence (or the expense it was set up on).
  */
@@ -71,15 +104,66 @@ export async function setRuleTemplate(
   });
 }
 
-/** Editing the occurrence a rule copies changes who is in its next ones, in the same transaction. */
-export async function syncRuleTemplate(tx: Prisma.TransactionClient, expenseId: string) {
-  const rules = await tx.recurringExpense.findMany({
-    where: { templateExpenseId: expenseId },
-    select: { id: true },
-  });
-  for (const rule of rules) {
-    await setRuleTemplate(tx, rule.id, expenseId);
+/**
+ * Why the rule can't go on because someone it recorded has no account anymore, if so. Their rows
+ * are gone from the expense with their account, so only the recorded ids still show they were in.
+ */
+const getAccountGoneProblem = async (
+  tx: Prisma.TransactionClient,
+  rule: Pick<RecurringExpense, 'createdById' | 'templateUserIds'>,
+): Promise<RuleProblem | undefined> => {
+  const ids = [
+    ...new Set([...rule.templateUserIds, ...(rule.createdById ? [rule.createdById] : [])]),
+  ];
+  const existing = new Set(
+    (await tx.user.findMany({ where: { id: { in: ids } }, select: { id: true } })).map((u) => u.id),
+  );
+  if (null === rule.createdById || !existing.has(rule.createdById)) {
+    return { status: RecurringStatus.STOPPED, reason: CREATOR_GONE_REASON };
   }
+  return rule.templateUserIds.every((id) => existing.has(id))
+    ? undefined
+    : { status: RecurringStatus.PAUSED, reason: ACCOUNT_GONE_REASON };
+};
+
+/**
+ * Editing the occurrence a rule copies changes who is in its next ones, in the same transaction
+ * (the rule is locked by then). If someone it recorded has no account anymore, the record is kept
+ * as it is and the rule pauses (or stops, without its creator) instead: the edit must not make it
+ * go on without them. Returns the rules that paused or stopped, whose creators should be told.
+ */
+export async function syncRuleTemplate(
+  tx: Prisma.TransactionClient,
+  expenseId: string,
+  recurringId: number | undefined,
+) {
+  if (undefined === recurringId) {
+    return [];
+  }
+
+  const rules = await tx.recurringExpense.findMany({
+    where: { id: recurringId, templateExpenseId: expenseId },
+  });
+  const changedIds: number[] = [];
+  for (const rule of rules) {
+    const problem = await getAccountGoneProblem(tx, rule);
+    if (!problem) {
+      await setRuleTemplate(tx, rule.id, expenseId);
+      continue;
+    }
+
+    if (RecurringStatus.STOPPED === rule.status) {
+      continue;
+    }
+    await tx.recurringExpense.update({
+      where: { id: rule.id },
+      data: { status: problem.status, statusReason: problem.reason },
+    });
+    if (RecurringStatus.ACTIVE === rule.status || problem.status !== rule.status) {
+      changedIds.push(rule.id);
+    }
+  }
+  return changedIds;
 }
 
 /** The latest date the rule has an occurrence for, deleted ones included. */
@@ -254,7 +338,8 @@ export async function createRecurringRule(
 
 /**
  * Whether an edit asks to change how the expense repeats, after checking the caller may. Call it
- * in the edit's transaction, before the edit, so it sees the rule as it was.
+ * in the edit's transaction once its rule is locked (`lockRuleOfExpense`) and before the edit,
+ * so it sees the rule as committed and as it was before this edit.
  *
  * A rule keeps the time zone it was set up in, so only starting, stopping or changing the frequency
  * is a change. Asking for what it already is changes nothing and never fails, so anyone who may
@@ -391,8 +476,14 @@ export async function pauseRulesWith(
   tx: Prisma.TransactionClient,
   { groupId, userIds, reason }: { groupId: number | null; userIds: number[]; reason: string },
 ) {
+  // Paused ones too, so one being resumed meanwhile either waits for this or is seen resumed.
+  const lockedIds = await lockRules(
+    tx,
+    Prisma.sql`${null === groupId ? Prisma.sql`"groupId" IS NULL` : Prisma.sql`"groupId" = ${groupId}`}
+      AND "templateUserIds" @> ${userIds}::integer[]`,
+  );
   const rules = await tx.recurringExpense.findMany({
-    where: { groupId, status: RecurringStatus.ACTIVE, templateUserIds: { hasEvery: userIds } },
+    where: { id: { in: lockedIds }, status: RecurringStatus.ACTIVE },
     select: { id: true },
   });
   await tx.recurringExpense.updateMany({
@@ -409,12 +500,21 @@ export async function pauseRulesWith(
  * be told.
  */
 export async function prepareAccountDeletion(tx: Prisma.TransactionClient, userId: number) {
+  const lockedIds = await lockRulesOfUser(tx, userId);
   await tx.recurringExpense.updateMany({
-    where: { createdById: userId, status: { not: RecurringStatus.STOPPED } },
+    where: {
+      id: { in: lockedIds },
+      createdById: userId,
+      status: { not: RecurringStatus.STOPPED },
+    },
     data: { status: RecurringStatus.STOPPED, statusReason: CREATOR_GONE_REASON },
   });
   const rules = await tx.recurringExpense.findMany({
-    where: { status: RecurringStatus.ACTIVE, templateUserIds: { has: userId } },
+    where: {
+      id: { in: lockedIds },
+      status: RecurringStatus.ACTIVE,
+      templateUserIds: { has: userId },
+    },
     select: { id: true },
   });
   await tx.recurringExpense.updateMany({
@@ -427,6 +527,10 @@ export async function prepareAccountDeletion(tx: Prisma.TransactionClient, userI
 /** Removes an account, pausing or stopping its recurring expenses first. */
 export async function deleteUserAccount(userId: number) {
   const { user, pausedIds } = await db.$transaction(async (tx) => {
+    // Their rules, then the account, then their rules again. An edit adding them to a rule either
+    // committed before the account was locked, and the second look finds it, or can't add them.
+    await lockRulesOfUser(tx, userId);
+    await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
     const pausedIds = await prepareAccountDeletion(tx, userId);
     const user = await tx.user.delete({ where: { id: userId } });
     return { user, pausedIds };
@@ -435,21 +539,25 @@ export async function deleteUserAccount(userId: number) {
 }
 
 /**
- * The rule, if the caller may pause, resume or delete it: they are in the occurrence it copies
- * next (and still in its group).
+ * Locks the rule and returns it as committed, if the caller may pause, resume or delete it: they
+ * are in the occurrence it copies next (and still in its group). Checked after the lock, so a
+ * change that was waiting for it (e.g. an edit taking them out) is always seen.
  */
-export async function getManageableRule(callerId: number, ruleId: number) {
-  const rule = await db.recurringExpense.findUnique({ where: { id: ruleId } });
+const lockManageableRule = async (
+  tx: Prisma.TransactionClient,
+  callerId: number,
+  ruleId: number,
+) => {
+  await lockRules(tx, Prisma.sql`id = ${ruleId}`);
+  const rule = await tx.recurringExpense.findUnique({ where: { id: ruleId } });
   if (!rule) {
     throw new TRPCError({ code: 'NOT_FOUND', message: 'Recurring expense not found' });
   }
-
-  if (!(await canManageRule(db, callerId, rule))) {
+  if (!(await canManageRule(tx, callerId, rule))) {
     throw new TRPCError({ code: 'FORBIDDEN', message: NOT_IN_EXPENSE_MESSAGE });
   }
-
   return rule;
-}
+};
 
 export async function canManageRule(
   client: Prisma.TransactionClient,
@@ -479,9 +587,8 @@ export async function setRulePaused(
   now = new Date(),
 ) {
   return db.$transaction(async (tx) => {
-    // Waits for a runner working on this rule, so the two never interleave.
-    await tx.$queryRaw`SELECT id FROM "RecurringExpense" WHERE id = ${ruleId} FOR UPDATE`;
-    const rule = await tx.recurringExpense.findUniqueOrThrow({ where: { id: ruleId } });
+    // Also waits for a runner or an edit working on this rule, so they never interleave.
+    const rule = await lockManageableRule(tx, callerId, ruleId);
 
     if (RecurringStatus.STOPPED === rule.status) {
       throw new TRPCError({
@@ -514,5 +621,13 @@ export async function setRulePaused(
         ...(await getNextPointer(tx, rule, rule.frequency, now)),
       },
     });
+  });
+}
+
+/** Stops repeating for good. The expenses it added stay. */
+export async function deleteRule(ruleId: number, callerId: number) {
+  await db.$transaction(async (tx) => {
+    await lockManageableRule(tx, callerId, ruleId);
+    await tx.recurringExpense.delete({ where: { id: ruleId } });
   });
 }
