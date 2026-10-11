@@ -30,7 +30,9 @@ const AddPage: NextPageWithUser<{
   const _groupId = parseInt(groupId as string);
   const _friendId = parseInt(friendId as string);
   const _expenseId = expenseId as string | undefined;
-  const formKey = _expenseId ?? '';
+  // Removing a group or friend inside the form leaves the URL alone, so a change here is a
+  // navigation, e.g. from a group's add page to the plain one.
+  const formKey = [_expenseId, groupId, friendId].map((value) => value ?? '').join('|');
 
   // The form is seeded at most once per group, friend and expense, so refetches never overwrite edits.
   const seededGroupId = useRef<number | null>(null);
@@ -39,8 +41,8 @@ const AddPage: NextPageWithUser<{
   const [resetFor, setResetFor] = useState<string | null>(null);
   const isFormReady = resetFor === formKey;
 
-  // Start from a clean form on entering the page and whenever it switches between adding and
-  // editing (the page stays mounted when going from /add?expenseId=… to /add).
+  // Start from a clean form on entering the page and on every navigation to another add or edit
+  // form (the page stays mounted, e.g. going from /add?groupId=… to /add).
   useEffect(() => {
     setCurrentUser({
       ...user,

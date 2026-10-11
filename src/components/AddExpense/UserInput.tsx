@@ -2,7 +2,6 @@ import { useAddExpenseStore } from '~/store/addStore';
 import { GroupAvatar, UserAvatar } from '../ui/avatar';
 import { z } from 'zod';
 import { api } from '~/utils/api';
-import Router from 'next/router';
 
 export const UserInput: React.FC<{
   isEditing?: boolean;
@@ -27,11 +26,6 @@ export const UserInput: React.FC<{
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Backspace' && nameOrEmail === '') {
       if (group) {
-        const currentPath = window.location.pathname;
-        const searchParams = new URLSearchParams(window.location.search);
-        searchParams.delete('groupId');
-        Router.push(`${currentPath}?${searchParams.toString()}`).catch(console.error);
-
         setGroup(undefined);
         console.log('set Remove called 1', group);
 

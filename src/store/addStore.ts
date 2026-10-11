@@ -1,5 +1,4 @@
 import { type Group, SplitType, type User } from '@prisma/client';
-import Router from 'next/router';
 import { create } from 'zustand';
 import { toFixedNumber, toInteger } from '~/utils/numbers';
 
@@ -140,12 +139,6 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
       }),
     removeLastParticipant: () => {
       set((state) => {
-        const currentPath = window.location.pathname;
-        const searchParams = new URLSearchParams(window.location.search);
-        searchParams.delete('friendId');
-
-        Router.push(`${currentPath}?${searchParams.toString()}`).catch(console.error);
-
         if (state.participants.length === 1) return {};
         const newParticipants = [...state.participants];
         newParticipants.pop();
@@ -154,12 +147,6 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
     },
     removeParticipant: (userId) => {
       set((state) => {
-        const currentPath = window.location.pathname;
-        const searchParams = new URLSearchParams(window.location.search);
-        searchParams.delete('friendId');
-
-        Router.push(`${currentPath}?${searchParams.toString()}`).catch(console.error);
-
         const newParticipants = state.participants.filter((p) => p.id !== userId);
         return splitWithoutRemoved(state, newParticipants);
       });
