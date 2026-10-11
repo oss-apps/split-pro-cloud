@@ -1,7 +1,12 @@
 import { useRouter } from 'next/router';
 import React from 'react';
 import { toast } from 'sonner';
-import { getParticipantsToSave, isPendingInvite, useAddExpenseStore } from '~/store/addStore';
+import {
+  getParticipantsToSave,
+  hasUnresolvedInvite,
+  isSplitWaitingForInvite,
+  useAddExpenseStore,
+} from '~/store/addStore';
 import { api } from '~/utils/api';
 import { UserInput } from './UserInput';
 import { SelectUserOrGroup } from './SelectUserOrGroup';
@@ -23,6 +28,7 @@ import { env } from '~/env';
 import { AMOUNT_TOO_LARGE_MESSAGE, isAmountWithinLimit } from '~/utils/numbers';
 import { AdSlot } from '../Ads/AdSlot';
 import { useRecentCurrencies } from '~/hooks/useRecentCurrencies';
+import { SPLIT_WAITING_MESSAGE, getDefaultSplitNote } from '~/utils/defaultSplit';
 
 const categories = {
   entertainment: {
@@ -127,6 +133,7 @@ export const AddOrEditExpensePage: React.FC<{
   const isFileUploading = useAddExpenseStore((s) => s.isFileUploading);
   const amtStr = useAddExpenseStore((s) => s.amountStr);
   const expenseDate = useAddExpenseStore((s) => s.expenseDate);
+  const defaultSplitHint = useAddExpenseStore((s) => s.defaultSplitHint);
 
   const {
     setCurrency,
@@ -147,8 +154,18 @@ export const AddOrEditExpensePage: React.FC<{
 
   const router = useRouter();
 
+  const defaultSplitNote = defaultSplitHint
+    ? getDefaultSplitNote(
+        defaultSplitHint,
+        participants
+          .filter((p) => defaultSplitHint.addedIds.includes(p.id))
+          .map((p) => p.name ?? p.email ?? ''),
+        defaultSplitHint.outdated,
+      ) ?? "Using the group's default split."
+    : undefined;
   const isAmountTooLarge = !isAmountWithinLimit(amount);
-  const hasPendingInvite = participants.some(isPendingInvite);
+  const hasPendingInvite = useAddExpenseStore(hasUnresolvedInvite);
+  const isWaitingForInvite = useAddExpenseStore(isSplitWaitingForInvite);
   const isSaveDisabled =
     addExpenseMutation.isLoading ||
     addGroupExpenseMutation.isLoading ||
@@ -187,7 +204,7 @@ export const AddOrEditExpensePage: React.FC<{
   function addExpense() {
     const { group, paidBy, splitType, fileKey, canSplitScreenClosed } =
       useAddExpenseStore.getState();
-    if (!paidBy || isSaveDisabled) {
+    if (!paidBy || isSaveDisabled || hasUnresolvedInvite(useAddExpenseStore.getState())) {
       return;
     }
 
@@ -435,6 +452,11 @@ export const AddOrEditExpensePage: React.FC<{
             ) : (
               <div className="h-[180px]">
                 <SplitTypeSection />
+                {isWaitingForInvite ? (
+                  <p className="mt-1 text-center text-xs text-gray-500">{SPLIT_WAITING_MESSAGE}</p>
+                ) : defaultSplitNote ? (
+                  <p className="mt-1 text-center text-xs text-gray-500">{defaultSplitNote}</p>
+                ) : null}
 
                 <div className="mt-4 flex  items-center justify-between">
                   <div className="flex items-center gap-4">

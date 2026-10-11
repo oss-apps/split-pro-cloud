@@ -1,6 +1,12 @@
 import { type Group, SplitType, type User } from '@prisma/client';
 import { create } from 'zustand';
-import { toFixedNumber, toInteger } from '~/utils/numbers';
+import {
+  type DefaultSplit,
+  getGroupDefaultSplit,
+  isDefaultSplitType,
+  resolveDefaultSplit,
+} from '~/utils/defaultSplit';
+import { sumHundredths, toFixedNumber, toInteger } from '~/utils/numbers';
 
 export type Participant = User & { amount?: number; splitShare?: number };
 
@@ -16,6 +22,13 @@ type EditSnapshot = {
   paidById: number;
   splitType: SplitType;
   participants: Array<Participant>;
+};
+
+/** How the selected group's default split fit its members, shown under the split. */
+export type DefaultSplitHint = {
+  splitType: DefaultSplit['splitType'];
+  addedIds: number[];
+  outdated: boolean;
 };
 
 interface AddExpenseState {
@@ -34,6 +47,20 @@ interface AddExpenseState {
    * an untouched currency follows the selected group.
    */
   currencyTouched: boolean;
+  /**
+   * Whether this form's split was changed by hand or loaded from the expense being edited. Only an
+   * untouched split takes the selected group's default.
+   */
+  splitTouched: boolean;
+  /** The split changed by hand, put back when the group is selected again. */
+  manualSplit: DefaultSplit | undefined;
+  /**
+   * Values of the manual split given to pending invites that left the form because a group was
+   * selected, by placeholder id. Each goes to the invitee if they are in the form once the invite
+   * returns, else it is dropped. Until then the split can't be changed or saved.
+   */
+  pendingInviteSplit: Record<number, number>;
+  defaultSplitHint: DefaultSplitHint | undefined;
   category: string;
   nameOrEmail: string;
   paidBy: User | undefined;
@@ -57,6 +84,8 @@ interface AddExpenseState {
     setAmountStr: (amountStr: string) => void;
     setSplitType: (splitType: SplitType) => void;
     setGroup: (group: Group | undefined) => void;
+    /** Splits with everyone in the group, using its default split unless the split was touched. */
+    selectGroup: (group: Group, members: Array<User>) => void;
     addOrUpdateParticipant: (user: Participant) => void;
     setParticipants: (participants: Array<Participant>) => void;
     removeParticipant: (userId: number) => void;
@@ -142,8 +171,147 @@ const splitWithParticipants = (
     splitType,
     splitTypeSource: undefined,
     editSnapshot: undefined,
+    defaultSplitHint: undefined,
     ...calculateParticipantSplit(state.amount, participants, splitType, paidBy),
   };
+};
+
+/** The split as changed by hand, kept while it is one a group could also use as its default. */
+const touchSplit = (participants: Array<Participant>, splitType: SplitType) => ({
+  splitTouched: true,
+  manualSplit: isDefaultSplitType(splitType)
+    ? {
+        splitType,
+        shares: Object.fromEntries(
+          participants.map((p) => [
+            p.id,
+            // Without a value, someone is in an equal split but has no percentage or share.
+            SplitType.EQUAL === splitType ? (0 === p.splitShare ? 0 : 1) : p.splitShare ?? 0,
+          ]),
+        ),
+      }
+    : undefined,
+  defaultSplitHint: undefined,
+});
+
+/**
+ * The split changed by hand, with a participant's value moved to who replaced them (an invite that
+ * returned their account) or dropped when they left the form, so selecting a group later never
+ * applies a value to the wrong person.
+ */
+const moveInManualSplit = (
+  manualSplit: DefaultSplit | undefined,
+  fromId: number,
+  toId?: number,
+): DefaultSplit | undefined => {
+  if (undefined === manualSplit?.shares[fromId]) {
+    return manualSplit;
+  }
+
+  const { [fromId]: value, ...shares } = manualSplit.shares;
+  return {
+    ...manualSplit,
+    shares: undefined === toId || undefined === value ? shares : { ...shares, [toId]: value },
+  };
+};
+
+/** Moves the values of pending invites out of a manual split, e.g. when a group replaces them. */
+const takePendingInvites = (
+  manualSplit: DefaultSplit | undefined,
+  pendingInviteSplit: Record<number, number>,
+) => {
+  if (!manualSplit) {
+    return { manualSplit, pendingInviteSplit };
+  }
+
+  const entries = Object.entries(manualSplit.shares);
+  const isInvite = ([id]: [string, number]) => isPendingInvite({ id: Number(id) });
+  return {
+    manualSplit: {
+      ...manualSplit,
+      shares: Object.fromEntries(entries.filter((entry) => !isInvite(entry))),
+    },
+    pendingInviteSplit: {
+      ...pendingInviteSplit,
+      ...Object.fromEntries(entries.filter(isInvite)),
+    },
+  };
+};
+
+const withoutPendingInvite = (pendingInviteSplit: Record<number, number>, placeholderId: number) =>
+  Object.fromEntries(
+    Object.entries(pendingInviteSplit).filter(([id]) => Number(id) !== placeholderId),
+  );
+
+/** The manual split applied to these participants, as when its group is selected. */
+const applyManualSplit = (
+  state: AddExpenseState,
+  manualSplit: DefaultSplit,
+  participants: Array<Participant>,
+) => {
+  const resolved = resolveDefaultSplit(
+    manualSplit,
+    participants.map((p) => p.id),
+  );
+  return splitWithParticipants(
+    state,
+    participants.map((p, index) => ({ ...p, splitShare: resolved.shares[index] ?? 0 })),
+    resolved.splitType,
+  );
+};
+
+/** Whether an invite in the form or in its split hasn't returned yet, so it can't be saved. */
+export const hasUnresolvedInvite = (
+  state: Pick<AddExpenseState, 'participants' | 'manualSplit' | 'pendingInviteSplit'>,
+) =>
+  state.participants.some(isPendingInvite) ||
+  Object.keys(state.manualSplit?.shares ?? {}).some((id) => isPendingInvite({ id: Number(id) })) ||
+  0 < Object.keys(state.pendingInviteSplit).length;
+
+/** Whether the split waits for an invite that left the form, so it can't be changed yet. */
+export const isSplitWaitingForInvite = (state: Pick<AddExpenseState, 'pendingInviteSplit'>) =>
+  0 < Object.keys(state.pendingInviteSplit).length;
+
+/**
+ * An invite whose placeholder left the form when a group was selected has returned. Its value goes
+ * to the invitee if they are in the form (e.g. a group member) and have no value of their own,
+ * else it is dropped. Nobody is added to the form.
+ */
+const resolvePendingInvite = (
+  state: AddExpenseState,
+  placeholderId: number,
+  user: User,
+): Partial<AddExpenseState> => {
+  const value = state.pendingInviteSplit[placeholderId];
+  if (undefined === value) {
+    return {};
+  }
+
+  const pendingInviteSplit = withoutPendingInvite(state.pendingInviteSplit, placeholderId);
+  const { manualSplit } = state;
+  const isParticipant = state.participants.some((p) => p.id === user.id);
+  if (!manualSplit || !isParticipant || undefined !== manualSplit.shares[user.id]) {
+    return { pendingInviteSplit };
+  }
+
+  const withInvitee = { ...manualSplit, shares: { ...manualSplit.shares, [user.id]: value } };
+  return {
+    ...applyManualSplit(state, withInvitee, state.participants),
+    manualSplit: withInvitee,
+    pendingInviteSplit,
+  };
+};
+
+/** An untouched currency follows the group, and goes back to the user's without one. */
+const getGroupCurrency = (state: AddExpenseState, group: Group | undefined) => {
+  if (state.currencyTouched) {
+    return state.currency;
+  }
+
+  const currency = group
+    ? group.defaultCurrency
+    : state.preferredCurrency ?? state.currentUser?.currency ?? state.currency;
+  return currency ?? state.currency;
 };
 
 export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
@@ -155,6 +323,10 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
   currency: 'USD',
   preferredCurrency: undefined,
   currencyTouched: false,
+  splitTouched: false,
+  manualSplit: undefined,
+  pendingInviteSplit: {},
+  defaultSplitHint: undefined,
   category: 'general',
   nameOrEmail: '',
   paidBy: undefined,
@@ -189,10 +361,15 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
     setAmountStr: (amountStr) => set({ amountStr }),
     setSplitType: (splitType) =>
       set((state) => {
+        if (isSplitWaitingForInvite(state)) {
+          return {};
+        }
+
         // Without an amount there is nothing to rebuild shares from, so keep the current ones
         if (0 === state.amount) {
           return {
             splitType,
+            ...touchSplit(state.participants, splitType),
             ...calculateParticipantSplit(state.amount, state.participants, splitType, state.paidBy),
           };
         }
@@ -208,31 +385,96 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
         return withEditSnapshot(state, {
           splitType,
           splitTypeSource: source,
+          ...touchSplit(participants, splitType),
           ...calculateParticipantSplit(state.amount, participants, splitType, state.paidBy),
         });
       }),
     setGroup: (group) =>
       set((s) => {
         if (s.currencyTouched) {
-          return { group };
+          return { group, defaultSplitHint: undefined };
         }
 
-        // An untouched currency follows the group, and goes back to the user's without one.
-        const currency = group
-          ? group.defaultCurrency
-          : s.preferredCurrency ?? s.currentUser?.currency ?? s.currency;
-        return withEditSnapshot(s, { group, currency: currency ?? s.currency });
+        return withEditSnapshot(s, {
+          group,
+          currency: getGroupCurrency(s, group),
+          defaultSplitHint: undefined,
+        });
+      }),
+    selectGroup: (group, members) =>
+      set((s) => {
+        const { currentUser } = s;
+        if (!currentUser) {
+          return {};
+        }
+
+        const participants: Array<Participant> = [
+          currentUser,
+          ...members.filter((member) => member.id !== currentUser.id),
+        ];
+        const state = { ...s, group, currency: getGroupCurrency(s, group) };
+        // Pending invites aren't group members. Their values wait for the invite to return.
+        const { manualSplit, pendingInviteSplit } = takePendingInvites(
+          s.manualSplit,
+          s.pendingInviteSplit,
+        );
+        const split = s.splitTouched ? manualSplit : getGroupDefaultSplit(group);
+        if (!split) {
+          return {
+            group,
+            currency: state.currency,
+            manualSplit,
+            pendingInviteSplit,
+            ...splitWithParticipants(
+              state,
+              participants.map((p) => ({ ...p, splitShare: 1 })),
+              SplitType.EQUAL,
+            ),
+          };
+        }
+
+        const resolved = resolveDefaultSplit(
+          split,
+          participants.map((p) => p.id),
+        );
+        return {
+          group,
+          currency: state.currency,
+          manualSplit,
+          pendingInviteSplit,
+          ...splitWithParticipants(
+            state,
+            participants.map((p, index) => ({ ...p, splitShare: resolved.shares[index] ?? 0 })),
+            resolved.splitType,
+          ),
+          defaultSplitHint: s.splitTouched
+            ? undefined
+            : {
+                splitType: split.splitType,
+                addedIds: resolved.addedIds,
+                outdated: resolved.outdated,
+              },
+        };
       }),
     addOrUpdateParticipant: (user) =>
       set((state) => {
         const participants = [...state.participants];
         const userIndex = participants.findIndex((p) => p.id === user.id);
-        if (userIndex !== -1) {
-          participants[userIndex] = user;
-        } else {
+        if (userIndex === -1) {
           participants.push({ ...user, splitShare: state.splitType === SplitType.EQUAL ? 1 : 0 });
+          return splitWithParticipants(state, participants);
         }
-        return splitWithParticipants(state, participants);
+
+        if (isSplitWaitingForInvite(state)) {
+          return {};
+        }
+
+        // Updating someone already in the split is a change to their split value.
+        participants[userIndex] = user;
+        return {
+          ...splitWithParticipants(state, participants),
+          ...touchSplit(participants, state.splitType),
+        };
       }),
     setParticipants: (_participants) =>
       set((state) => {
@@ -246,22 +488,37 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
       set((state) => {
         if (state.participants.length === 1) return {};
         const newParticipants = [...state.participants];
-        newParticipants.pop();
-        return splitWithParticipants(state, newParticipants);
+        const removed = newParticipants.pop();
+        return {
+          ...splitWithParticipants(state, newParticipants),
+          manualSplit: removed
+            ? moveInManualSplit(state.manualSplit, removed.id)
+            : state.manualSplit,
+        };
       });
     },
     removeParticipant: (userId) => {
-      set((state) =>
-        splitWithParticipants(
-          state,
-          state.participants.filter((p) => p.id !== userId),
-        ),
-      );
+      set((state) => {
+        const manualSplit = moveInManualSplit(state.manualSplit, userId);
+        const pendingInviteSplit = withoutPendingInvite(state.pendingInviteSplit, userId);
+        if (!state.participants.some((p) => p.id === userId)) {
+          return { manualSplit, pendingInviteSplit };
+        }
+
+        return {
+          ...splitWithParticipants(
+            state,
+            state.participants.filter((p) => p.id !== userId),
+          ),
+          manualSplit,
+          pendingInviteSplit,
+        };
+      });
     },
     replaceParticipant: (fromId, user) =>
       set((state) => {
         if (!state.participants.some((p) => p.id === fromId)) {
-          return {};
+          return resolvePendingInvite(state, fromId, user);
         }
 
         // Keeps the position, split value and payer choice. If they were already added, the
@@ -278,7 +535,15 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
         });
         const paidBy = state.paidBy?.id === fromId ? user : state.paidBy;
 
-        return splitWithParticipants({ ...state, paidBy }, participants);
+        return {
+          ...splitWithParticipants({ ...state, paidBy }, participants),
+          // Someone already in the form keeps their own value, as they do in the split.
+          manualSplit: moveInManualSplit(
+            state.manualSplit,
+            fromId,
+            isAlreadyParticipant ? undefined : user.id,
+          ),
+        };
       }),
     setCurrency: (currency) => set((s) => withEditSnapshot(s, { currency, currencyTouched: true })),
     setPreferredCurrency: (preferredCurrency) => set({ preferredCurrency }),
@@ -319,6 +584,10 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
         description: '',
         currency: s.preferredCurrency ?? s.currentUser?.currency ?? s.currency,
         currencyTouched: false,
+        splitTouched: false,
+        manualSplit: undefined,
+        pendingInviteSplit: {},
+        defaultSplitHint: undefined,
         fileKey: undefined,
         isFileUploading: false,
         category: 'general',
@@ -344,7 +613,7 @@ const sumSplitShares = (participants: Array<Participant>) =>
 
 /** Remaining percentage to assign, compared in hundredths so float noise never blocks a split. */
 export function getRemainingPercentage(participants: Array<Participant>) {
-  return (10_000 - Math.round(sumSplitShares(participants) * 100)) / 100;
+  return (10_000 - sumHundredths(participants.map((p) => p.splitShare ?? 0))) / 100;
 }
 
 export function calculateParticipantSplit(
@@ -520,6 +789,11 @@ export const getEditFormState = (expense: ExpenseToEdit) => {
     currency: expense.currency,
     // An edit keeps its stored currency, whatever the group's default.
     currencyTouched: true,
+    // And its stored split, whatever the group's default.
+    splitTouched: true,
+    manualSplit: undefined,
+    pendingInviteSplit: {},
+    defaultSplitHint: undefined,
     description: expense.name,
     expenseDate: expense.expenseDate,
     fileKey: expense.fileKey ?? undefined,

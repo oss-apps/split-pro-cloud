@@ -25,7 +25,7 @@ const AddPage: NextPageWithUser<{
   isStorageConfigured: boolean;
   enableSendingInvites: boolean;
 }> = ({ user, isStorageConfigured, enableSendingInvites }) => {
-  const { setCurrentUser, setGroup, setParticipants, resetState } = useAddExpenseStore(
+  const { setCurrentUser, selectGroup, setParticipants, resetState } = useAddExpenseStore(
     (s) => s.actions,
   );
   const currentUser = useAddExpenseStore((s) => s.currentUser);
@@ -100,11 +100,10 @@ const AddPage: NextPageWithUser<{
       return;
     }
 
-    setGroup(group);
-    setParticipants([
-      currentUser,
-      ...group.groupUsers.map((gu) => gu.user).filter((u) => u.id !== currentUser.id),
-    ]);
+    selectGroup(
+      group,
+      group.groupUsers.map((gu) => gu.user),
+    );
     useAddExpenseStore.setState({ showFriends: false });
     markSeeded('group');
     // eslint-disable-next-line react-hooks/exhaustive-deps

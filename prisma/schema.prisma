@@ -51,7 +51,8 @@ model User {
     currency            String               @default("USD")
     accounts            Account[]
     sessions            Session[]
-    groups              Group[]
+    groups              Group[]              @relation("GroupCreatedBy")
+    defaultSplitGroups  Group[]              @relation("GroupDefaultSplitBy")
     associatedGroups    GroupUser[]
     expenseParticipants ExpenseParticipant[]
     expenseNotes        ExpenseNote[]
@@ -109,7 +110,13 @@ model Group {
     createdAt        DateTime       @default(now())
     updatedAt        DateTime       @updatedAt
     splitwiseGroupId String?        @unique
-    createdBy        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+    /// Applied to new expenses in the group. Shares are a JSON object of user id to share.
+    defaultSplitType   SplitType?
+    defaultSplitShares Json?
+    defaultSplitById   Int?
+    defaultSplitAt     DateTime?
+    createdBy        User           @relation("GroupCreatedBy", fields: [userId], references: [id], onDelete: Cascade)
+    defaultSplitBy   User?          @relation("GroupDefaultSplitBy", fields: [defaultSplitById], references: [id], onDelete: SetNull)
     groupUsers       GroupUser[]
     expenses         Expense[]
     groupBalances    GroupBalance[]

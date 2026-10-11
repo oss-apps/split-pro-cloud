@@ -88,3 +88,40 @@ export async function sendExpensePushNotification(expenseId: string) {
 
   await Promise.all(pushNotifications);
 }
+
+/** Tells the other members of a group that its default split was changed or removed. */
+export async function sendDefaultSplitPushNotification(
+  groupId: number,
+  changedBy: number,
+  isSet: boolean,
+) {
+  const group = await db.group.findUnique({
+    where: { id: groupId },
+    select: {
+      name: true,
+      groupUsers: { select: { userId: true, user: { select: { name: true, email: true } } } },
+    },
+  });
+
+  if (!group) {
+    return;
+  }
+
+  const user = group.groupUsers.find((groupUser) => groupUser.userId === changedBy)?.user;
+  const subscriptions = await db.pushNotification.findMany({
+    where: {
+      userId: {
+        in: group.groupUsers
+          .map((groupUser) => groupUser.userId)
+          .filter((userId) => userId !== changedBy),
+      },
+    },
+  });
+
+  const pushData = {
+    title: group.name,
+    message: `${user?.name ?? user?.email ?? 'A member'} ${isSet ? 'changed' : 'removed'} the default split`,
+  };
+
+  await Promise.all(subscriptions.map((s) => pushNotification(s.subscription, pushData)));
+}
