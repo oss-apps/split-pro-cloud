@@ -45,6 +45,7 @@ import {
 import { toast } from 'sonner';
 import GroupMyBalance from '~/components/group/GroupMyBalance';
 import { GroupSettleUp } from '~/components/group/GroupSettleUp';
+import { GroupDefaultSplit } from '~/components/group/GroupDefaultSplit';
 
 const BalancePage: NextPageWithUser<{
   enableSendingInvites: boolean;
@@ -203,6 +204,7 @@ const BalancePage: NextPageWithUser<{
                   ))}
                 </div>
               </div>
+              {groupDetailQuery.data ? <GroupDefaultSplit group={groupDetailQuery.data} /> : null}
               {groupDetailQuery?.data?.createdAt && (
                 <div className="mt-8">
                   <p className="font-semibold ">Group created</p>

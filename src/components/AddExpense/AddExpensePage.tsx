@@ -23,6 +23,7 @@ import { env } from '~/env';
 import { AMOUNT_TOO_LARGE_MESSAGE, isAmountWithinLimit } from '~/utils/numbers';
 import { AdSlot } from '../Ads/AdSlot';
 import { useRecentCurrencies } from '~/hooks/useRecentCurrencies';
+import { getDefaultSplitNote } from '~/utils/defaultSplit';
 
 const categories = {
   entertainment: {
@@ -127,6 +128,7 @@ export const AddOrEditExpensePage: React.FC<{
   const isFileUploading = useAddExpenseStore((s) => s.isFileUploading);
   const amtStr = useAddExpenseStore((s) => s.amountStr);
   const expenseDate = useAddExpenseStore((s) => s.expenseDate);
+  const defaultSplitHint = useAddExpenseStore((s) => s.defaultSplitHint);
 
   const {
     setCurrency,
@@ -147,6 +149,15 @@ export const AddOrEditExpensePage: React.FC<{
 
   const router = useRouter();
 
+  const defaultSplitNote = defaultSplitHint
+    ? getDefaultSplitNote(
+        defaultSplitHint,
+        participants
+          .filter((p) => defaultSplitHint.addedIds.includes(p.id))
+          .map((p) => p.name ?? p.email ?? ''),
+        defaultSplitHint.outdated,
+      ) ?? "Using the group's default split."
+    : undefined;
   const isAmountTooLarge = !isAmountWithinLimit(amount);
   const hasPendingInvite = participants.some(isPendingInvite);
   const isSaveDisabled =
@@ -435,6 +446,9 @@ export const AddOrEditExpensePage: React.FC<{
             ) : (
               <div className="h-[180px]">
                 <SplitTypeSection />
+                {defaultSplitNote ? (
+                  <p className="mt-1 text-center text-xs text-gray-500">{defaultSplitNote}</p>
+                ) : null}
 
                 <div className="mt-4 flex  items-center justify-between">
                   <div className="flex items-center gap-4">

@@ -19,7 +19,7 @@ export const SelectUserOrGroup: React.FC<{
   const nameOrEmail = useAddExpenseStore((s) => s.nameOrEmail);
   const participants = useAddExpenseStore((s) => s.participants);
   const group = useAddExpenseStore((s) => s.group);
-  const { addOrUpdateParticipant, removeParticipant, setNameOrEmail, setGroup, setParticipants } =
+  const { addOrUpdateParticipant, removeParticipant, setNameOrEmail, selectGroup } =
     useAddExpenseStore((s) => s.actions);
 
   const friendsQuery = api.user.getFriends.useQuery();
@@ -48,14 +48,10 @@ export const SelectUserOrGroup: React.FC<{
   }
 
   function onGroupSelect(group: Group & { groupUsers: Array<GroupUser & { user: User }> }) {
-    setGroup(group);
-    const { currentUser } = useAddExpenseStore.getState();
-    if (currentUser) {
-      setParticipants([
-        currentUser,
-        ...group.groupUsers.map((gu) => gu.user).filter((u) => u.id !== currentUser.id),
-      ]);
-    }
+    selectGroup(
+      group,
+      group.groupUsers.map((gu) => gu.user),
+    );
     setNameOrEmail('');
   }
 

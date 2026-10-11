@@ -1,5 +1,11 @@
 import { type Group, SplitType, type User } from '@prisma/client';
 import { create } from 'zustand';
+import {
+  type DefaultSplit,
+  getGroupDefaultSplit,
+  isDefaultSplitType,
+  resolveDefaultSplit,
+} from '~/utils/defaultSplit';
 import { toFixedNumber, toInteger } from '~/utils/numbers';
 
 export type Participant = User & { amount?: number; splitShare?: number };
@@ -18,6 +24,13 @@ type EditSnapshot = {
   participants: Array<Participant>;
 };
 
+/** How the selected group's default split fit its members, shown under the split. */
+export type DefaultSplitHint = {
+  splitType: DefaultSplit['splitType'];
+  addedIds: number[];
+  outdated: boolean;
+};
+
 interface AddExpenseState {
   amount: number;
   amountStr: string;
@@ -34,6 +47,14 @@ interface AddExpenseState {
    * an untouched currency follows the selected group.
    */
   currencyTouched: boolean;
+  /**
+   * Whether this form's split was changed by hand or loaded from the expense being edited. Only an
+   * untouched split takes the selected group's default.
+   */
+  splitTouched: boolean;
+  /** The split changed by hand, put back when the group is selected again. */
+  manualSplit: DefaultSplit | undefined;
+  defaultSplitHint: DefaultSplitHint | undefined;
   category: string;
   nameOrEmail: string;
   paidBy: User | undefined;
@@ -57,6 +78,8 @@ interface AddExpenseState {
     setAmountStr: (amountStr: string) => void;
     setSplitType: (splitType: SplitType) => void;
     setGroup: (group: Group | undefined) => void;
+    /** Splits with everyone in the group, using its default split unless the split was touched. */
+    selectGroup: (group: Group, members: Array<User>) => void;
     addOrUpdateParticipant: (user: Participant) => void;
     setParticipants: (participants: Array<Participant>) => void;
     removeParticipant: (userId: number) => void;
@@ -142,8 +165,39 @@ const splitWithParticipants = (
     splitType,
     splitTypeSource: undefined,
     editSnapshot: undefined,
+    defaultSplitHint: undefined,
     ...calculateParticipantSplit(state.amount, participants, splitType, paidBy),
   };
+};
+
+/** The split as changed by hand, kept while it is one a group could also use as its default. */
+const touchSplit = (participants: Array<Participant>, splitType: SplitType) => ({
+  splitTouched: true,
+  manualSplit: isDefaultSplitType(splitType)
+    ? {
+        splitType,
+        shares: Object.fromEntries(
+          participants.map((p) => [
+            p.id,
+            // Without a value, someone is in an equal split but has no percentage or share.
+            SplitType.EQUAL === splitType ? (0 === p.splitShare ? 0 : 1) : p.splitShare ?? 0,
+          ]),
+        ),
+      }
+    : undefined,
+  defaultSplitHint: undefined,
+});
+
+/** An untouched currency follows the group, and goes back to the user's without one. */
+const getGroupCurrency = (state: AddExpenseState, group: Group | undefined) => {
+  if (state.currencyTouched) {
+    return state.currency;
+  }
+
+  const currency = group
+    ? group.defaultCurrency
+    : state.preferredCurrency ?? state.currentUser?.currency ?? state.currency;
+  return currency ?? state.currency;
 };
 
 export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
@@ -155,6 +209,9 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
   currency: 'USD',
   preferredCurrency: undefined,
   currencyTouched: false,
+  splitTouched: false,
+  manualSplit: undefined,
+  defaultSplitHint: undefined,
   category: 'general',
   nameOrEmail: '',
   paidBy: undefined,
@@ -193,6 +250,7 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
         if (0 === state.amount) {
           return {
             splitType,
+            ...touchSplit(state.participants, splitType),
             ...calculateParticipantSplit(state.amount, state.participants, splitType, state.paidBy),
           };
         }
@@ -208,31 +266,83 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
         return withEditSnapshot(state, {
           splitType,
           splitTypeSource: source,
+          ...touchSplit(participants, splitType),
           ...calculateParticipantSplit(state.amount, participants, splitType, state.paidBy),
         });
       }),
     setGroup: (group) =>
       set((s) => {
         if (s.currencyTouched) {
-          return { group };
+          return { group, defaultSplitHint: undefined };
         }
 
-        // An untouched currency follows the group, and goes back to the user's without one.
-        const currency = group
-          ? group.defaultCurrency
-          : s.preferredCurrency ?? s.currentUser?.currency ?? s.currency;
-        return withEditSnapshot(s, { group, currency: currency ?? s.currency });
+        return withEditSnapshot(s, {
+          group,
+          currency: getGroupCurrency(s, group),
+          defaultSplitHint: undefined,
+        });
+      }),
+    selectGroup: (group, members) =>
+      set((s) => {
+        const { currentUser } = s;
+        if (!currentUser) {
+          return {};
+        }
+
+        const participants: Array<Participant> = [
+          currentUser,
+          ...members.filter((member) => member.id !== currentUser.id),
+        ];
+        const state = { ...s, group, currency: getGroupCurrency(s, group) };
+        const split = s.splitTouched ? s.manualSplit : getGroupDefaultSplit(group);
+        if (!split) {
+          return {
+            group,
+            currency: state.currency,
+            ...splitWithParticipants(
+              state,
+              participants.map((p) => ({ ...p, splitShare: 1 })),
+              SplitType.EQUAL,
+            ),
+          };
+        }
+
+        const resolved = resolveDefaultSplit(
+          split,
+          participants.map((p) => p.id),
+        );
+        return {
+          group,
+          currency: state.currency,
+          ...splitWithParticipants(
+            state,
+            participants.map((p, index) => ({ ...p, splitShare: resolved.shares[index] ?? 0 })),
+            resolved.splitType,
+          ),
+          defaultSplitHint: s.splitTouched
+            ? undefined
+            : {
+                splitType: split.splitType,
+                addedIds: resolved.addedIds,
+                outdated: resolved.outdated,
+              },
+        };
       }),
     addOrUpdateParticipant: (user) =>
       set((state) => {
         const participants = [...state.participants];
         const userIndex = participants.findIndex((p) => p.id === user.id);
-        if (userIndex !== -1) {
-          participants[userIndex] = user;
-        } else {
+        if (userIndex === -1) {
           participants.push({ ...user, splitShare: state.splitType === SplitType.EQUAL ? 1 : 0 });
+          return splitWithParticipants(state, participants);
         }
-        return splitWithParticipants(state, participants);
+
+        // Updating someone already in the split is a change to their split value.
+        participants[userIndex] = user;
+        return {
+          ...splitWithParticipants(state, participants),
+          ...touchSplit(participants, state.splitType),
+        };
       }),
     setParticipants: (_participants) =>
       set((state) => {
@@ -319,6 +429,9 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
         description: '',
         currency: s.preferredCurrency ?? s.currentUser?.currency ?? s.currency,
         currencyTouched: false,
+        splitTouched: false,
+        manualSplit: undefined,
+        defaultSplitHint: undefined,
         fileKey: undefined,
         isFileUploading: false,
         category: 'general',
@@ -520,6 +633,10 @@ export const getEditFormState = (expense: ExpenseToEdit) => {
     currency: expense.currency,
     // An edit keeps its stored currency, whatever the group's default.
     currencyTouched: true,
+    // And its stored split, whatever the group's default.
+    splitTouched: true,
+    manualSplit: undefined,
+    defaultSplitHint: undefined,
     description: expense.name,
     expenseDate: expense.expenseDate,
     fileKey: expense.fileKey ?? undefined,

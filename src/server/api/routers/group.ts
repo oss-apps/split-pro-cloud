@@ -1,4 +1,4 @@
-import { SplitType } from '@prisma/client';
+import { Prisma, SplitType } from '@prisma/client';
 import { z } from 'zod';
 import { getGroupTotalsWhere } from '~/utils/balances';
 import { createTRPCRouter, groupProcedure, protectedProcedure } from '~/server/api/trpc';
@@ -9,6 +9,8 @@ import { assertCanSaveGroupExpense, assertKnownUsers } from '../services/accessC
 import { TRPCError } from '@trpc/server';
 import { nanoid } from 'nanoid';
 import { CURRENCIES } from '~/lib/currency';
+import { defaultSplitSchema, getDefaultSplitError } from '~/utils/defaultSplit';
+import { sendDefaultSplitPushNotification } from '../services/notificationService';
 
 export const groupRouter = createTRPCRouter({
   create: protectedProcedure
@@ -258,11 +260,52 @@ export const groupRouter = createTRPCRouter({
           },
         },
         groupBalances: true,
+        defaultSplitBy: { select: { id: true, name: true, email: true } },
       },
     });
 
     return group;
   }),
+
+  /** Sets the split new expenses in the group start with, or removes it with `null`. */
+  setDefaultSplit: groupProcedure
+    .input(z.object({ split: defaultSplitSchema.nullable() }))
+    .mutation(async ({ input, ctx }) => {
+      const { split, groupId } = input;
+      if (split) {
+        const members = await ctx.db.groupUser.findMany({
+          where: { groupId },
+          select: { userId: true },
+        });
+        const error = getDefaultSplitError(
+          { splitType: split.splitType, shares: split.shares },
+          members.map((member) => member.userId),
+        );
+        if (error) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: error });
+        }
+      }
+
+      const group = await ctx.db.group.update({
+        where: { id: groupId },
+        data: split
+          ? {
+              defaultSplitType: split.splitType,
+              defaultSplitShares: split.shares,
+              defaultSplitById: ctx.session.user.id,
+              defaultSplitAt: new Date(),
+            }
+          : {
+              defaultSplitType: null,
+              defaultSplitShares: Prisma.DbNull,
+              defaultSplitById: null,
+              defaultSplitAt: null,
+            },
+      });
+
+      sendDefaultSplitPushNotification(groupId, ctx.session.user.id, !!split).catch(console.error);
+      return group;
+    }),
 
   getGroupTotals: groupProcedure.query(async ({ input, ctx }) => {
     const totals = await ctx.db.expense.groupBy({
