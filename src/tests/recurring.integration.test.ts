@@ -34,6 +34,7 @@ const setup = async () => {
     import('~/pages/api/healthz'),
     import('~/server/api/services/recurringService'),
   ]);
+  const { toFixedNumber } = await import('~/utils/numbers');
 
   db.pushNotification.findMany = (async (args: {
     where: { userId: number | { in: number[] } };
@@ -182,6 +183,38 @@ const setup = async () => {
     assert.deepEqual(nonZero(actual), nonZero(expected));
   };
 
+  /** An edit of a stored expense that changes nothing, as the edit form sends it. */
+  const editInput = async (expenseId: string) => {
+    const e = await db.expense.findUniqueOrThrow({
+      where: { id: expenseId },
+      include: { expenseParticipants: true },
+    });
+    return {
+      expenseId,
+      groupId: e.groupId!,
+      paidBy: e.paidBy,
+      name: e.name,
+      category: e.category,
+      amount: toFixedNumber(e.amount),
+      currency: e.currency,
+      splitType: e.splitType,
+      participants: e.expenseParticipants.map((p) => ({
+        userId: p.userId,
+        amount: toFixedNumber(p.amount),
+      })),
+      expenseDate: e.expenseDate,
+    };
+  };
+
+  /** Each participant's stored cents, by user id. */
+  const cents = async (expenseId: string) =>
+    (
+      await db.expenseParticipant.findMany({
+        where: { expenseId },
+        orderBy: { userId: 'asc' },
+      })
+    ).map((p) => [p.userId, p.amount]);
+
   const cleanUp = () => db.user.deleteMany({ where: { id: { in: userIds } } });
 
   const isTrpcError = (code: string, message?: RegExp) => (error: unknown) => {
@@ -213,6 +246,8 @@ const setup = async () => {
     assertBalancesMatchExpenses,
     cleanUp,
     isTrpcError,
+    editInput,
+    cents,
   };
 };
 
@@ -555,7 +590,7 @@ void test(
 );
 
 void test(
-  "deleting the first expense stops the rule, and a deleted occurrence isn't added again",
+  'deleting the latest occurrence pauses the rule instead of copying an older one, and the first stops it',
   { skip: !databaseUrl },
   async () => {
     const t = await setup();
@@ -572,36 +607,51 @@ void test(
       });
       const rule = await t.getRule(source.id);
       await t.setNext(rule.id, '2026-01-02');
-      await t.runRecurringTick({ now: new Date('2026-01-03T01:00:00Z') });
-      const [, second, third] = await t.occurrences(rule.id);
-      assert.ok(second && third);
+      await t.runRecurringTick({ now: new Date('2026-01-04T01:00:00Z') });
+      const [, second, third, fourth] = await t.occurrences(rule.id);
+      assert.ok(second && third && fourth);
+      assert.equal((await t.getRule(source.id)).templateExpenseId, fourth.id);
 
-      // Deleting the latest: the next copies the one before, and the deleted date stays taken.
-      await t.callerFor(bob).user.deleteExpense({ expenseId: third.id });
-      await t.setNext(rule.id, '2026-01-03');
-      const retry = await t.runRecurringTick({ now: new Date('2026-01-03T02:00:00Z') });
-      assert.equal(retry.created, 0);
-      assert.deepEqual(await t.dates(rule.id), ['2026-01-01', '2026-01-02', '2026-01-03']);
-      assert.equal(
-        await t.db.expense.count({ where: { recurringId: rule.id, deletedAt: null } }),
-        2,
-      );
-
-      // Pausing and resuming on that day never goes back to it either.
+      // Deleting one in between changes nothing, and its date is never added again.
+      await t.callerFor(bob).user.deleteExpense({ expenseId: second.id });
+      assert.equal((await t.getRule(source.id)).status, 'ACTIVE');
       await t.callerFor(bob).recurring.setPaused({ ruleId: rule.id, paused: true });
       const resumed = await t.setRulePaused(
         rule.id,
         false,
         bob.id,
-        new Date('2026-01-03T05:00:00Z'),
+        new Date('2026-01-04T05:00:00Z'),
       );
-      assert.deepEqual(t.fromDbDate(resumed.nextOccurrenceDate), t.d('2026-01-04'));
+      assert.deepEqual(t.fromDbDate(resumed.nextOccurrenceDate), t.d('2026-01-05'));
+
+      // Deleting the one it copies pauses it and tells its creator. It never falls back to an
+      // older occurrence, also not when resumed.
+      notifiedUserIds.length = 0;
+      await t.callerFor(bob).user.deleteExpense({ expenseId: fourth.id });
+      const paused = await t.getRule(source.id);
+      assert.equal(paused.status, 'PAUSED');
+      assert.equal(paused.statusReason, t.LATEST_DELETED_REASON);
+      await settle();
+      assert.ok(notifiedUserIds.includes(alice.id));
+      await t.db.recurringExpense.update({ where: { id: rule.id }, data: { status: 'ACTIVE' } });
+      const tick = await t.runRecurringTick({ now: new Date('2026-01-06T00:00:00Z') });
+      assert.deepEqual([tick.created, tick.paused], [0, 1]);
+      assert.equal((await t.getRule(source.id)).statusReason, t.LATEST_DELETED_REASON);
+      await assert.rejects(
+        t.callerFor(bob).recurring.setPaused({ ruleId: rule.id, paused: false }),
+        t.isTrpcError('BAD_REQUEST', /latest expense was deleted/),
+      );
+      assert.deepEqual(await t.dates(rule.id), [
+        '2026-01-01',
+        '2026-01-02',
+        '2026-01-03',
+        '2026-01-04',
+      ]);
 
       await t.callerFor(bob).user.deleteExpense({ expenseId: source.id });
-      const stopped = await t.getRule(second.id);
+      const stopped = await t.getRule(third.id);
       assert.equal(stopped.status, 'STOPPED');
       assert.equal(stopped.statusReason, 'The first expense was deleted');
-      await t.setNext(rule.id, '2026-01-04');
       assert.equal(
         (await t.runRecurringTick({ now: new Date('2026-02-01T00:00:00Z') })).created,
         0,
@@ -612,7 +662,7 @@ void test(
       );
       // What it added stays.
       assert.equal(
-        (await t.db.expense.findUniqueOrThrow({ where: { id: second.id } })).deletedAt,
+        (await t.db.expense.findUniqueOrThrow({ where: { id: third.id } })).deletedAt,
         null,
       );
       await t.assertBalancesMatchExpenses([alice.id, bob.id]);
@@ -923,6 +973,285 @@ void test(
       const paused = await t.getRule(source.id);
       assert.equal(paused.status, 'PAUSED');
       assert.equal(paused.statusReason, t.ACCOUNT_GONE_REASON);
+    } finally {
+      await t.cleanUp();
+    }
+  },
+);
+
+void test(
+  'only who may manage a rule can change it from an old occurrence, and unchanged edits still save',
+  { skip: !databaseUrl },
+  async () => {
+    const t = await setup();
+    try {
+      const alice = await t.createUser('Alice');
+      const bob = await t.createUser('Bob');
+      const carol = await t.createUser('Carol');
+      const group = await t.createGroup('Flat', alice.id, [alice.id, bob.id, carol.id]);
+      const source = await t.addEqualExpense(alice, {
+        groupId: group.id,
+        amount: 10,
+        userIds: [alice.id, bob.id],
+        date: '2026-01-01',
+        frequency: 'DAILY',
+      });
+      const rule = await t.getRule(source.id);
+      await t.setNext(rule.id, '2026-01-02');
+      await t.runRecurringTick({ now: new Date('2026-01-02T01:00:00Z') });
+      const [, latest] = await t.occurrences(rule.id);
+      assert.ok(latest);
+
+      // Alice moves the next ones to Alice and Carol, and makes them yearly.
+      await t.callerFor(alice).group.addOrEditExpense({
+        ...(await t.editInput(latest.id)),
+        participants: [
+          { userId: alice.id, amount: 5 },
+          { userId: carol.id, amount: -5 },
+        ],
+        recurrence: { frequency: 'YEARLY', timezone: 'UTC' },
+      });
+      const before = await t.getRule(source.id);
+      assert.equal(before.frequency, 'YEARLY');
+      assert.deepEqual([...before.templateUserIds].sort(), [alice.id, carol.id].sort());
+
+      // Bob is only in the first one: he can't change or stop the rule through it.
+      const sourceCents = await t.cents(source.id);
+      for (const recurrence of [{ frequency: 'DAILY' as const, timezone: 'UTC' }, null]) {
+        await assert.rejects(
+          t.callerFor(bob).group.addOrEditExpense({
+            ...(await t.editInput(source.id)),
+            name: 'Renamed by Bob',
+            recurrence,
+          }),
+          t.isTrpcError('FORBIDDEN', /Only people in this expense/),
+        );
+      }
+      const after = await t.getRule(source.id);
+      assert.deepEqual(after, before);
+      // The whole edit was refused.
+      assert.equal(
+        (await t.db.expense.findUniqueOrThrow({ where: { id: source.id } })).name,
+        'Rent',
+      );
+
+      // Asking for what it already is, or nothing, is an ordinary edit he may still make.
+      for (const recurrence of [
+        { frequency: 'YEARLY' as const, timezone: 'Asia/Tokyo' },
+        undefined,
+      ]) {
+        await t.callerFor(bob).group.addOrEditExpense({
+          ...(await t.editInput(source.id)),
+          name: 'Rent, January',
+          recurrence,
+        });
+      }
+      assert.equal(
+        (await t.db.expense.findUniqueOrThrow({ where: { id: source.id } })).name,
+        'Rent, January',
+      );
+      assert.deepEqual(await t.cents(source.id), sourceCents);
+      assert.deepEqual(await t.getRule(source.id), before);
+
+      // Alice may change it from any of its occurrences, like through the recurring API.
+      await t.callerFor(alice).group.addOrEditExpense({
+        ...(await t.editInput(source.id)),
+        recurrence: { frequency: 'MONTHLY', timezone: 'UTC' },
+      });
+      assert.equal((await t.getRule(source.id)).frequency, 'MONTHLY');
+      // Carol, now in it, may stop it from the latest one.
+      await t.callerFor(carol).group.addOrEditExpense({
+        ...(await t.editInput(latest.id)),
+        recurrence: null,
+      });
+      assert.equal(await t.db.recurringExpense.count({ where: { id: rule.id } }), 0);
+      await t.assertBalancesMatchExpenses([alice.id, bob.id, carol.id]);
+    } finally {
+      await t.cleanUp();
+    }
+  },
+);
+
+void test(
+  'an account being removed never makes the rule copy an older occurrence',
+  { skip: !databaseUrl },
+  async () => {
+    const t = await setup();
+    try {
+      const [alice, carol, dave, zoe, eve] = await Promise.all(
+        ['Alice', 'Carol', 'Dave', 'Zoe', 'Eve'].map((name) => t.createUser(name)),
+      );
+      assert.ok(alice && carol && dave && zoe && eve);
+      const group = await t.createGroup('Flat', alice.id, [
+        alice.id,
+        carol.id,
+        dave.id,
+        zoe.id,
+        eve.id,
+      ]);
+
+      // USD 10 paid by Alice, then the latest is changed to EUR 20 paid by Dave.
+      const source = await t.addEqualExpense(alice, {
+        groupId: group.id,
+        amount: 10,
+        userIds: [alice.id, carol.id],
+        date: '2026-01-01',
+        frequency: 'DAILY',
+      });
+      const rule = await t.getRule(source.id);
+      await t.setNext(rule.id, '2026-01-02');
+      await t.runRecurringTick({ now: new Date('2026-01-02T01:00:00Z') });
+      const [, latest] = await t.occurrences(rule.id);
+      assert.ok(latest);
+      await t.callerFor(alice).group.addOrEditExpense({
+        ...(await t.editInput(latest.id)),
+        paidBy: dave.id,
+        amount: 20,
+        currency: 'EUR',
+        participants: [
+          { userId: dave.id, amount: 10 },
+          { userId: carol.id, amount: -10 },
+        ],
+      });
+      assert.deepEqual(
+        [...(await t.getRule(source.id)).templateUserIds].sort(),
+        [carol.id, dave.id].sort(),
+      );
+
+      // Removed straight from the database: the EUR expense goes with Dave's account.
+      await t.db.user.delete({ where: { id: dave.id } });
+      assert.equal(await t.db.expense.count({ where: { id: latest.id } }), 0);
+      notifiedUserIds.length = 0;
+      const tick = await t.runRecurringTick({ now: new Date('2026-01-03T01:00:00Z') });
+      assert.deepEqual([tick.created, tick.paused], [0, 1]);
+      const paused = await t.getRule(source.id);
+      assert.deepEqual([paused.status, paused.statusReason], ['PAUSED', t.ACCOUNT_GONE_REASON]);
+      assert.deepEqual(await t.dates(rule.id), ['2026-01-01']);
+      await settle();
+      assert.deepEqual(notifiedUserIds, [alice.id]);
+      await assert.rejects(
+        t.callerFor(carol).recurring.setPaused({ ruleId: rule.id, paused: false }),
+        t.isTrpcError('BAD_REQUEST', /account/),
+      );
+
+      // Someone with a zero share counts too.
+      const withZero = await t.callerFor(alice).group.addOrEditExpense({
+        groupId: group.id,
+        paidBy: alice.id,
+        name: 'Internet',
+        category: 'general',
+        amount: 10,
+        currency: 'USD',
+        splitType: 'EXACT',
+        participants: [
+          { userId: alice.id, amount: 5 },
+          { userId: carol.id, amount: -5 },
+          { userId: zoe.id, amount: 0 },
+        ],
+        expenseDate: new Date('2026-01-01T12:00:00Z'),
+        recurrence: { frequency: 'DAILY', timezone: 'UTC' },
+      });
+      const zeroRule = await t.getRule(withZero.id);
+      assert.ok(zeroRule.templateUserIds.includes(zoe.id));
+      await t.setNext(zeroRule.id, '2026-01-02');
+      await t.db.user.delete({ where: { id: zoe.id } });
+      const zeroTick = await t.runRecurringTick({ now: new Date('2026-01-02T01:00:00Z') });
+      assert.deepEqual([zeroTick.created, zeroTick.paused], [0, 1]);
+      const zeroPaused = await t.getRule(withZero.id);
+      assert.deepEqual(
+        [zeroPaused.status, zeroPaused.statusReason],
+        ['PAUSED', t.ACCOUNT_GONE_REASON],
+      );
+
+      // Through the app's account removal, the rule pauses in the same transaction.
+      const viaApp = await t.addEqualExpense(alice, {
+        groupId: group.id,
+        amount: 30,
+        userIds: [alice.id, carol.id, eve.id],
+        date: '2026-01-01',
+        frequency: 'WEEKLY',
+      });
+      const viaAppRule = await t.getRule(viaApp.id);
+      notifiedUserIds.length = 0;
+      const removed = await t.deleteUserAccount(eve.id);
+      assert.deepEqual(removed.pausedIds, [viaAppRule.id]);
+      const pausedViaApp = await t.getRule(viaApp.id);
+      assert.deepEqual(
+        [pausedViaApp.status, pausedViaApp.statusReason],
+        ['PAUSED', t.ACCOUNT_GONE_REASON],
+      );
+
+      // A rule whose creator's account is gone stops: there is no one to add it or tell.
+      const byCarol = await t.callerFor(carol).group.addOrEditExpense({
+        groupId: group.id,
+        paidBy: alice.id,
+        name: 'Water',
+        category: 'general',
+        amount: 10,
+        currency: 'USD',
+        splitType: 'EQUAL',
+        participants: [
+          { userId: alice.id, amount: 5 },
+          { userId: carol.id, amount: -5 },
+        ],
+        expenseDate: new Date('2026-01-01T12:00:00Z'),
+        recurrence: { frequency: 'DAILY', timezone: 'UTC' },
+      });
+      const carolRule = await t.getRule(byCarol.id);
+      await t.setNext(carolRule.id, '2026-01-02');
+      await t.deleteUserAccount(carol.id);
+      const stopped = await t.db.recurringExpense.findUniqueOrThrow({
+        where: { id: carolRule.id },
+      });
+      assert.deepEqual(
+        [stopped.status, stopped.statusReason, stopped.createdById],
+        ['STOPPED', t.CREATOR_GONE_REASON, null],
+      );
+      assert.equal(
+        (await t.runRecurringTick({ now: new Date('2026-01-02T01:00:00Z') })).created,
+        0,
+      );
+      await t.assertBalancesMatchExpenses([alice.id]);
+    } finally {
+      await t.cleanUp();
+    }
+  },
+);
+
+void test(
+  'a creator removed straight from the database stops their rule when the runner gets to it',
+  { skip: !databaseUrl },
+  async () => {
+    const t = await setup();
+    try {
+      const [alice, bob, carol] = await Promise.all(
+        ['Alice', 'Bob', 'Carol'].map((name) => t.createUser(name)),
+      );
+      assert.ok(alice && bob && carol);
+      const group = await t.createGroup('Flat', alice.id, [alice.id, bob.id, carol.id]);
+      const expense = await t.callerFor(carol).group.addOrEditExpense({
+        groupId: group.id,
+        paidBy: alice.id,
+        name: 'Water',
+        category: 'general',
+        amount: 10,
+        currency: 'USD',
+        splitType: 'EQUAL',
+        participants: [
+          { userId: alice.id, amount: 5 },
+          { userId: bob.id, amount: -5 },
+        ],
+        expenseDate: new Date('2026-01-01T12:00:00Z'),
+        recurrence: { frequency: 'DAILY', timezone: 'UTC' },
+      });
+      const rule = await t.getRule(expense.id);
+      await t.setNext(rule.id, '2026-01-02');
+      // Expenses Carol added go with her account.
+      await t.db.user.delete({ where: { id: carol.id } });
+      const tick = await t.runRecurringTick({ now: new Date('2026-01-02T01:00:00Z') });
+      assert.deepEqual([tick.created, tick.paused], [0, 1]);
+      const stopped = await t.db.recurringExpense.findUniqueOrThrow({ where: { id: rule.id } });
+      assert.deepEqual([stopped.status, stopped.statusReason], ['STOPPED', t.CREATOR_GONE_REASON]);
     } finally {
       await t.cleanUp();
     }

@@ -220,12 +220,17 @@ model RecurringExpense {
     nextOccurrenceAt   DateTime
     status             RecurringStatus    @default(ACTIVE)
     statusReason       String?
+    /// The occurrence the next one copies, and everyone in it (payer and zero shares included).
+    /// Kept without relations, so an account being removed can't silently change or clear them.
+    templateExpenseId  String?
+    templateUserIds    Int[]              @default([])
     groupId            Int?
-    createdById        Int
+    /// Null once their account is removed, which stops the rule.
+    createdById        Int?
     createdAt          DateTime           @default(now())
     updatedAt          DateTime           @updatedAt
     group              Group?             @relation(fields: [groupId], references: [id], onDelete: Cascade)
-    createdBy          User               @relation(fields: [createdById], references: [id], onDelete: Cascade)
+    createdBy          User?              @relation(fields: [createdById], references: [id], onDelete: SetNull)
     occurrences        Expense[]
 
     @@index([status, nextOccurrenceAt])

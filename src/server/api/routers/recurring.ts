@@ -33,7 +33,7 @@ const toRuleView = async (rule: RuleWithLatest, callerId: number) => {
   return {
     ...rest,
     latest: occurrences[0] ?? null,
-    canManage: await canManageRule(callerId, rule),
+    canManage: await canManageRule(db, callerId, rule),
   };
 };
 

@@ -18,8 +18,10 @@ CREATE TABLE "RecurringExpense" (
     "nextOccurrenceAt" TIMESTAMP(3) NOT NULL,
     "status" "RecurringStatus" NOT NULL DEFAULT 'ACTIVE',
     "statusReason" TEXT,
+    "templateExpenseId" TEXT,
+    "templateUserIds" INTEGER[] DEFAULT ARRAY[]::INTEGER[],
     "groupId" INTEGER,
-    "createdById" INTEGER NOT NULL,
+    "createdById" INTEGER,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -45,7 +47,7 @@ CREATE INDEX "RecurringExpense_groupId_idx" ON "RecurringExpense"("groupId");
 ALTER TABLE "RecurringExpense" ADD CONSTRAINT "RecurringExpense_groupId_fkey" FOREIGN KEY ("groupId") REFERENCES "Group"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "RecurringExpense" ADD CONSTRAINT "RecurringExpense_createdById_fkey" FOREIGN KEY ("createdById") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "RecurringExpense" ADD CONSTRAINT "RecurringExpense_createdById_fkey" FOREIGN KEY ("createdById") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AlterTable: nullable columns without a default, so existing rows are not rewritten.
 ALTER TABLE "Expense" ADD COLUMN     "occurrenceDate" DATE,

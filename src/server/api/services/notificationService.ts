@@ -143,7 +143,8 @@ export async function sendRecurringStatusPushNotification(recurringId: number) {
     },
   });
 
-  if (!rule || 'ACTIVE' === rule.status) {
+  // Without a creator (their account is gone) there's no one to tell.
+  if (!rule || 'ACTIVE' === rule.status || null === rule.createdById) {
     return;
   }
 

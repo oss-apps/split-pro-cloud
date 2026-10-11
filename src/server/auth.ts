@@ -104,6 +104,19 @@ const SplitProPrismaAdapter = (...args: Parameters<typeof PrismaAdapter>): Adapt
 
       return prismaCreateUser(user);
     },
+    // The only way an account is removed in code. Its recurring expenses pause or stop first.
+    deleteUser: async (id: string) => {
+      // Loaded here, so signing in never pulls in the expense services.
+      const [{ deleteUserAccount }, { sendRecurringStatusPushNotification }] = await Promise.all([
+        import('./api/services/recurringService'),
+        import('./api/services/notificationService'),
+      ]);
+      const { user, pausedIds } = await deleteUserAccount(Number(id));
+      pausedIds.forEach((ruleId) => {
+        sendRecurringStatusPushNotification(ruleId).catch(console.error);
+      });
+      return { ...user, id: String(user.id) } as unknown as AdapterUser;
+    },
     createVerificationToken: async (verificationToken) => {
       // Only the newest code works, and it gets a fresh set of verification attempts.
       const [, created] = await db.$transaction([

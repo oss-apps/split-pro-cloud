@@ -7,12 +7,18 @@ import { toFixedNumber, toInteger } from '~/utils/numbers';
 import { InvalidExpenseError, assertGroupSettlement, toBalancedParticipants } from '~/utils/splits';
 import { captureSettlementAllocations, restoreSettlementAllocations } from './balanceProjection';
 import { runBalanceTransaction } from './balanceTransaction';
-import { sendExpensePushNotification } from './notificationService';
+import {
+  sendExpensePushNotification,
+  sendRecurringStatusPushNotification,
+} from './notificationService';
 import {
   type RecurrenceInput,
+  assertCanChangeRecurrence,
   createRecurringRule,
+  onOccurrenceDeleted,
   setExpenseRecurrence,
-  stopRuleOfDeletedSource,
+  setRuleTemplate,
+  syncRuleTemplate,
 } from './recurringService';
 
 type StoredParticipant = { userId: number; amount: number };
@@ -237,21 +243,21 @@ const createExpense = async (
   input: ExpenseInput,
   recurrence?: RecurrenceInput,
 ) => {
-  const expense = await runBalanceTransaction(async (tx) =>
-    insertExpense(
-      tx,
-      groupId,
-      input,
-      recurrence
-        ? await createRecurringRule(
-            tx,
-            { groupId, expenseDate: input.expenseDate, splitType: input.splitType },
-            recurrence,
-            input.currentUserId,
-          )
-        : undefined,
-    ),
-  );
+  const expense = await runBalanceTransaction(async (tx) => {
+    const occurrence = recurrence
+      ? await createRecurringRule(
+          tx,
+          { groupId, expenseDate: input.expenseDate, splitType: input.splitType },
+          recurrence,
+          input.currentUserId,
+        )
+      : undefined;
+    const expense = await insertExpense(tx, groupId, input, occurrence);
+    if (occurrence) {
+      await setRuleTemplate(tx, occurrence.recurringId, expense.id);
+    }
+    return expense;
+  });
 
   sendExpensePushNotification(expense.id).catch(console.error);
   return expense;
@@ -333,7 +339,7 @@ export async function deleteExpense(expenseId: string, deletedBy: number) {
 
     // Deleting twice must never revert the balances twice.
     if (expense.deletedAt) {
-      return false;
+      return { deleted: false };
     }
 
     const { count } = await tx.expense.updateMany({
@@ -342,10 +348,10 @@ export async function deleteExpense(expenseId: string, deletedBy: number) {
     });
 
     if (0 === count) {
-      return false;
+      return { deleted: false };
     }
 
-    await stopRuleOfDeletedSource(tx, expense);
+    const changedRuleId = await onOccurrenceDeleted(tx, expense);
     await restoreSettlementAllocations(tx, expenseId);
     await updateBalances(
       tx,
@@ -358,11 +364,14 @@ export async function deleteExpense(expenseId: string, deletedBy: number) {
       -1,
     );
 
-    return true;
+    return { deleted: true, changedRuleId };
   });
 
-  if (deleted) {
+  if (deleted.deleted) {
     sendExpensePushNotification(expenseId).catch(console.error);
+  }
+  if (deleted.changedRuleId) {
+    sendRecurringStatusPushNotification(deleted.changedRuleId).catch(console.error);
   }
 }
 
@@ -492,8 +501,13 @@ export async function editExpense(
   };
 
   const result = await runBalanceTransaction(async (tx) => {
+    // Checked against the rule and expense as they were before this edit.
+    const changesRecurrence =
+      undefined !== recurrence &&
+      (await assertCanChangeRecurrence(tx, expenseId, recurrence, currentUserId));
     const edited = await updateExpense(tx, expenseId, input);
-    if (undefined !== recurrence) {
+    await syncRuleTemplate(tx, expenseId);
+    if (changesRecurrence) {
       await setExpenseRecurrence(tx, expenseId, recurrence, currentUserId);
     }
     return edited;

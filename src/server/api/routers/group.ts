@@ -454,10 +454,16 @@ export const groupRouter = createTRPCRouter({
       });
 
       sendRecurringGroupDeletedPushNotification(
-        rules.map((rule) => ({
-          createdById: rule.createdById,
-          name: rule.occurrences[0]?.name ?? 'A recurring expense',
-        })),
+        rules.flatMap((rule) =>
+          null === rule.createdById
+            ? []
+            : [
+                {
+                  createdById: rule.createdById,
+                  name: rule.occurrences[0]?.name ?? 'A recurring expense',
+                },
+              ],
+        ),
         group.name,
       ).catch(console.error);
       return group;

@@ -77,7 +77,7 @@ const processRule = async (ruleId: number, now: Date): Promise<RuleOutcome> => {
         return { kind: 'paused' };
       }
 
-      const { template } = check;
+      const { template, createdById } = check;
       const expense = await insertExpense(
         tx,
         rule.groupId,
@@ -92,18 +92,21 @@ const processRule = async (ruleId: number, now: Date): Promise<RuleOutcome> => {
             userId: participant.userId,
             amount: toFixedNumber(participant.amount),
           })),
-          currentUserId: rule.createdById,
+          currentUserId: createdById,
           expenseDate: getOccurrenceExpenseDate(date, rule.timezone),
         },
         { recurringId: ruleId, occurrenceDate: toDbDate(date) },
       );
 
+      // The new occurrence is what the next one copies, with the same people.
       const next = getOccurrenceAfter(rule.frequency, fromDbDate(rule.startDate), date);
       await tx.recurringExpense.update({
         where: { id: ruleId },
         data: {
           nextOccurrenceDate: toDbDate(next),
           nextOccurrenceAt: getDueAt(next, rule.timezone),
+          templateExpenseId: expense.id,
+          templateUserIds: rule.templateUserIds,
         },
       });
 
