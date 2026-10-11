@@ -19,8 +19,8 @@ const setup = async () => {
   ]);
 
   const suffix = `${Date.now()}-${Math.random()}`;
-  const [a, b, d] = await Promise.all(
-    ['a', 'b', 'd'].map((name) =>
+  const [a, b, d, e, f] = await Promise.all(
+    ['a', 'b', 'd', 'e', 'f'].map((name) =>
       db.user.create({ data: { email: `${name}-${suffix}@example.com`, name } }),
     ),
   );
@@ -61,12 +61,13 @@ const setup = async () => {
     { userId: b!.id, amount: -500 },
     { userId: d!.id, amount: 0 },
   ]);
-  // A settlement the old editor left at 0 / 0, which the script must only report.
+  // A settlement the old editor left at 0 / 0 between two other people, which the script must
+  // only report.
   const brokenSettlement = await db.expense.create({
     data: {
-      paidBy: d!.id,
-      addedBy: d!.id,
-      updatedBy: d!.id,
+      paidBy: e!.id,
+      addedBy: e!.id,
+      updatedBy: e!.id,
       name: 'Settle up',
       category: 'general',
       amount: 700,
@@ -76,8 +77,8 @@ const setup = async () => {
       updatedAt: at(3),
       expenseParticipants: {
         create: [
-          { userId: d!.id, amount: 0 },
-          { userId: b!.id, amount: 0 },
+          { userId: e!.id, amount: 0 },
+          { userId: f!.id, amount: 0 },
         ],
       },
     },
@@ -125,7 +126,7 @@ const setup = async () => {
       planned: {
         setId,
         keys,
-        rows: plan.getSetRows(keys, built.stored),
+        rows: built.directedRows(keys),
         changes: analysis.changes,
         expenseIds: built.expenseIdsBySet.get(setId) ?? [],
       },
@@ -166,7 +167,7 @@ const setup = async () => {
     );
   const cleanup = async () => {
     await db.group.deleteMany({ where: { id: group.id } });
-    await db.user.deleteMany({ where: { id: { in: [a!.id, b!.id, d!.id] } } });
+    await db.user.deleteMany({ where: { id: { in: [a!.id, b!.id, d!.id, e!.id, f!.id] } } });
   };
 
   return {
@@ -207,6 +208,17 @@ void test(
       const outcome = await t.apply.applySetRepair(t.db, runId, snapshot.loadedAt, planned);
       assert.equal(outcome.status, 'applied');
       assert.equal(await t.groupRowAB(), 1500);
+      const reverse = await t.db.groupBalance.findUniqueOrThrow({
+        where: {
+          groupId_currency_firendId_userId: {
+            groupId: t.group.id,
+            currency: 'USD',
+            userId: t.b.id,
+            firendId: t.a.id,
+          },
+        },
+      });
+      assert.equal(reverse.amount, -1500);
 
       const logs = await t.db.balanceRepairLog.findMany({ where: { runId } });
       assert.ok(logs.length > 0);
@@ -308,3 +320,50 @@ void test(
     }
   },
 );
+
+void test(
+  'refuses to apply when only the reverse GroupBalance row drifted',
+  { skip: !databaseUrl },
+  async () => {
+    const t = await setup();
+    try {
+      const { snapshot, analysis, planned } = await t.makePlan();
+      assert.equal(analysis.verdict, 'repair');
+
+      await t.db.groupBalance.update({
+        where: {
+          groupId_currency_firendId_userId: {
+            groupId: t.group.id,
+            currency: 'USD',
+            userId: t.b.id,
+            firendId: t.a.id,
+          },
+        },
+        data: { amount: 3 },
+      });
+
+      const outcome = await t.apply.applySetRepair(t.db, 'test-mirror', snapshot.loadedAt, planned);
+      assert.equal(outcome.status, 'changed-since-plan');
+      assert.equal(await t.groupRowAB(), 0);
+      assert.equal(await t.db.balanceRepairLog.count({ where: { runId: 'test-mirror' } }), 0);
+    } finally {
+      await t.cleanup();
+    }
+  },
+);
+
+void test('refuses to apply after a member left the group', { skip: !databaseUrl }, async () => {
+  const t = await setup();
+  try {
+    const { snapshot, planned } = await t.makePlan();
+    await t.db.groupUser.delete({
+      where: { groupId_userId: { groupId: t.group.id, userId: t.b.id } },
+    });
+
+    const outcome = await t.apply.applySetRepair(t.db, 'test-left', snapshot.loadedAt, planned);
+    assert.equal(outcome.status, 'changed-since-plan');
+    assert.equal(await t.groupRowAB(), 0);
+  } finally {
+    await t.cleanup();
+  }
+});

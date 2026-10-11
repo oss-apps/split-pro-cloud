@@ -15,7 +15,15 @@ export const hasHiddenVersion = (expense: ReplayExpense) =>
   expense.edited ||
   (null === expense.deletedAt && expense.updatedAt > expense.createdAt + EDIT_SLACK_MS);
 
+/** The definition of an edited expense for the person-level rule, deleted ones included. */
+export const isEditedAtAll = (expense: ReplayExpense) =>
+  expense.edited ||
+  null !== expense.updatedBy ||
+  expense.updatedAt > expense.createdAt + EDIT_SLACK_MS;
+
 export type PairIssue =
+  | 'pair-settlement-ever'
+  | 'edited-personal-expense-touching-pair-user'
   | 'deleted-expense'
   | 'edited-expense'
   | 'edited-expense-other-currency'
@@ -59,8 +67,17 @@ const insideAnyWindow = (windows: EditWindow[]) => {
 const userPair = (a: number, b: number) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 
 /**
- * Why a (currency, pair) cannot be repaired. Only pairs whose whole history is on record
- * qualify:
+ * Why a (currency, pair) cannot be repaired. Under the corrected rule only a personal
+ * settlement between A and B can legitimately clear a group between them, so the first two
+ * rules make the correct value simply the sum of the live group expenses, whatever happened
+ * elsewhere:
+ * - no SETTLEMENT has ever had both A and B on it, in any currency, live or deleted;
+ * - neither A nor B appears in any edited personal expense, in any currency and any role
+ *   (participant, payer, added by, updated by). A settlement edited off the pair (say B paid A,
+ *   later changed to B paid C) still has B on it. `addedBy` covers edits from before
+ *   `updatedBy` was recorded.
+ *
+ * On top of that, only pairs whose whole history is on record qualify:
  * - every expense between them, personal or group, is live and was never edited;
  * - no Splitwise import, and the stored Balance equals the sum of the live expenses exactly
  *   (so nothing unexplained, such as expenses of a deleted group);
@@ -149,6 +166,39 @@ export const getPairIssues = (
       }
     }),
   );
+
+  const settledUserPairs = new Set<string>();
+  const usersInEditedPersonalExpenses = new Set<number>();
+  input.expenses.forEach((expense) => {
+    const people = [...new Set([expense.paidBy, ...expense.participants.map((p) => p.userId)])];
+    if (expense.isSettlement) {
+      people.forEach((a) =>
+        people.forEach((b) => {
+          if (a < b) {
+            settledUserPairs.add(userPair(a, b));
+          }
+        }),
+      );
+    }
+    if (null === expense.groupId && isEditedAtAll(expense)) {
+      [...people, expense.addedBy, expense.updatedBy].forEach((userId) => {
+        if (null !== userId) {
+          usersInEditedPersonalExpenses.add(userId);
+        }
+      });
+    }
+  });
+  keysByUserPair.forEach((keys, users) => {
+    const [a = 0, b = 0] = users.split('|').map(Number);
+    keys.forEach((key) => {
+      if (settledUserPairs.has(users)) {
+        add(key, 'pair-settlement-ever');
+      }
+      if (usersInEditedPersonalExpenses.has(a) || usersInEditedPersonalExpenses.has(b)) {
+        add(key, 'edited-personal-expense-touching-pair-user');
+      }
+    });
+  });
 
   const inEditWindow = insideAnyWindow(editWindows);
   input.expenses

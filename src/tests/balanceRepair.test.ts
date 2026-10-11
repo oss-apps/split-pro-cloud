@@ -31,6 +31,8 @@ const expense = (
   isSettlement: false,
   updatedAt: overrides.createdAt,
   deletedAt: null,
+  addedBy: overrides.paidBy,
+  updatedBy: null,
   edited: false,
   allocationVersion: null,
   ...overrides,
@@ -84,6 +86,9 @@ const input = (expenses: ReplayExpense[], overrides: Partial<ReplayInput> = {}):
   balances: [],
   groupBalances: [],
   allocations: [],
+  memberships: new Set(
+    [GROUP, OTHER_GROUP].flatMap((groupId) => [A, B, C, D].map((userId) => `${groupId}:${userId}`)),
+  ),
   cutoff: Number.POSITIVE_INFINITY,
   ...overrides,
 });
@@ -269,6 +274,112 @@ void describe('repair eligibility', () => {
     // The settlement between A and B happened while the edited expense's earlier version
     // existed, so A-B is not trusted either.
     assert.ok(issues.get(pairKey('USD', A, B))?.has('settlement-during-other-edit'));
+  });
+
+  void it('skips a pair whose settlement was edited over to someone else', () => {
+    // Review counterexample: B settled with A, clearing their group. The old editor later
+    // moved the settlement to C, which only changed Balance. Nothing on A-B shows it now.
+    const expenses = [
+      pays(C, B, 1000, 0),
+      expense({
+        paidBy: A,
+        groupId: GROUP,
+        createdAt: 1,
+        participants: [
+          { userId: A, amount: 1000 },
+          { userId: B, amount: -1000 },
+        ],
+      }),
+      { ...settlement(B, C, 1000, 2), edited: true, updatedBy: B, updatedAt: 4 },
+      expense({
+        paidBy: A,
+        groupId: GROUP,
+        createdAt: 5,
+        participants: [
+          { userId: A, amount: 100 },
+          { userId: B, amount: 0 },
+          { userId: D, amount: 0 },
+        ],
+      }),
+    ];
+    const set = analyse(expenses).setOf(A, B);
+    assert.equal(set?.verdict, 'skipped');
+    assert.match(set?.reasons.join(' ') ?? '', /edited-personal-expense-touching-pair-user/);
+  });
+
+  void it('skips a pair that ever had a settlement, even if a deleted group hid its history', () => {
+    // Review counterexample: a charge and a refund in a group that was later deleted net to
+    // zero, so Balance and the old-rule replay still match without them. They decided whether
+    // B's settlement paid A in full.
+    const full = [
+      expense({
+        paidBy: A,
+        groupId: GROUP,
+        createdAt: 1,
+        participants: [
+          { userId: A, amount: 1000 },
+          { userId: B, amount: -1000 },
+        ],
+      }),
+      pays(A, B, 500, 2, { groupId: OTHER_GROUP }),
+      settlement(B, A, 1500, 3),
+      pays(B, A, 500, 4, { groupId: OTHER_GROUP }),
+      expense({
+        paidBy: A,
+        groupId: GROUP,
+        createdAt: 5,
+        participants: [
+          { userId: A, amount: 100 },
+          { userId: B, amount: 0 },
+          { userId: D, amount: 0 },
+        ],
+      }),
+    ];
+    const rows = legacyRows(full);
+    const visible = full.filter((e) => OTHER_GROUP !== e.groupId);
+    const result = analyseSets(
+      input(visible, {
+        ...rows,
+        groupBalances: rows.groupBalances.filter((row) => OTHER_GROUP !== row.groupId),
+      }),
+    );
+    const set = result.analyses.find((a) => a.setId === result.setOf.get(pairKey('USD', A, B)));
+    assert.equal(set?.reproducesLegacy, true);
+    assert.equal(set?.verdict, 'skipped');
+    assert.match(set?.reasons.join(' ') ?? '', /pair-settlement-ever/);
+  });
+
+  void it('applies the person-level rules in every currency and to deleted expenses', () => {
+    const base = [groupDebt(), zeroShareTrigger()];
+    const deletedEurSettlement = {
+      ...settlement(C, A, 100, 3),
+      currency: 'EUR',
+      deletedAt: 4,
+      updatedAt: 4,
+    };
+    assert.match(
+      analyse([...base, deletedEurSettlement])
+        .setOf(A, C)
+        ?.reasons.join(' ') ?? '',
+      /pair-settlement-ever/,
+    );
+    // C only added a personal expense between two other people, which someone edited later.
+    const addedByC = { ...pays(B, D, 100, 3, { currency: 'EUR' }), addedBy: C, updatedAt: 10_000 };
+    assert.match(
+      analyse([...base, addedByC])
+        .setOf(A, C)
+        ?.reasons.join(' ') ?? '',
+      /edited-personal-expense-touching-pair-user/,
+    );
+  });
+
+  void it('never reopens a group debt with a former member', () => {
+    const expenses = [groupDebt(), zeroShareTrigger()];
+    const set = analyse(expenses, {
+      memberships: new Set([`${GROUP}:${A}`, `${GROUP}:${B}`]),
+    }).setOf(A, C);
+    assert.equal(set?.verdict, 'skipped');
+    assert.match(set?.reasons.join(' ') ?? '', /former-member/);
   });
 
   void it('treats an expense written again after creation as edited', () => {

@@ -18,6 +18,8 @@ export type ReplayExpense = {
   createdAt: number;
   updatedAt: number;
   deletedAt: number | null;
+  addedBy: number;
+  updatedBy: number | null;
   /** `updatedBy` is set. */
   edited: boolean;
   allocationVersion: number | null;
@@ -51,6 +53,8 @@ export type StoredAllocation = {
 
 export type ReplayInput = {
   expenses: ReplayExpense[];
+  /** `${groupId}:${userId}` for current group members. */
+  memberships: Set<string>;
   balances: StoredBalance[];
   groupBalances: StoredGroupBalance[];
   /** PR #2's `SettlementAllocation` rows. */

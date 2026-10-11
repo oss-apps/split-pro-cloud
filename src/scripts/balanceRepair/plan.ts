@@ -2,15 +2,64 @@ import { countMirrorBreaks, getBalanceDrift, getGroupMismatches, getRawSums } fr
 import { type EditWindow, getPairIssues } from './eligibility';
 import {
   type ReplayInput,
-  type ReplayState,
   type SetAnalysis,
   analyseSet,
   buildSets,
   expensePairKeys,
+  pairKey,
+  parsePairKey,
   replay,
   toStoredState,
 } from './replay';
 import { findSettlementAnomalies } from './settlements';
+
+/** One stored row as it is in the database, in its own direction. */
+export type DirectedRow = {
+  table: 'Balance' | 'GroupBalance';
+  groupId: number | null;
+  currency: string;
+  userId: number;
+  friendId: number;
+  amount: number;
+};
+
+export const directedRowId = (row: Omit<DirectedRow, 'amount'>) =>
+  `${row.table}|${row.groupId ?? ''}|${row.currency}|${row.userId}|${row.friendId}`;
+
+/** Stored rows of both directions, grouped by the pair they belong to. */
+const getRowsByKey = (input: ReplayInput) => {
+  const rowsByKey = new Map<string, DirectedRow[]>();
+  const add = (row: DirectedRow) => {
+    const key = pairKey(row.currency, row.userId, row.friendId);
+    const rows = rowsByKey.get(key);
+    if (rows) {
+      rows.push(row);
+    } else {
+      rowsByKey.set(key, [row]);
+    }
+  };
+  input.balances.forEach((b) =>
+    add({
+      table: 'Balance',
+      groupId: null,
+      currency: b.currency,
+      userId: b.userId,
+      friendId: b.friendId,
+      amount: b.amount,
+    }),
+  );
+  input.groupBalances.forEach((b) =>
+    add({
+      table: 'GroupBalance',
+      groupId: b.groupId,
+      currency: b.currency,
+      userId: b.userId,
+      friendId: b.friendId,
+      amount: b.amount,
+    }),
+  );
+  return rowsByKey;
+};
 
 /** Classifies every set. Pure, so it runs the same on the full snapshot and on one set. */
 export const analyseSets = (input: ReplayInput, editWindows?: EditWindow[]) => {
@@ -19,10 +68,31 @@ export const analyseSets = (input: ReplayInput, editWindows?: EditWindow[]) => {
   const legacy = replay(input, 'legacy');
   const corrected = replay(input, 'corrected');
   const { sets, setOf } = buildSets(input);
+  const rowsByKey = getRowsByKey(input);
 
-  const analyses: SetAnalysis[] = [...sets.entries()].map(([setId, keys]) =>
-    analyseSet({ setId, keys, stored, legacy, corrected, issues }),
-  );
+  const analyses: SetAnalysis[] = [...sets.entries()].map(([setId, keys]) => {
+    const analysis = analyseSet({ setId, keys, stored, legacy, corrected, issues });
+    if ('repair' !== analysis.verdict) {
+      return analysis;
+    }
+    // Never reopen a group debt with someone who is no longer in the group.
+    const formerMembers = analysis.changes.filter((change) => {
+      const { lo, hi } = parsePairKey(change.key);
+      return (
+        !input.memberships.has(`${change.groupId}:${lo}`) ||
+        !input.memberships.has(`${change.groupId}:${hi}`)
+      );
+    }).length;
+    if (!formerMembers) {
+      return analysis;
+    }
+    return {
+      ...analysis,
+      verdict: 'skipped' as const,
+      reasons: [...analysis.reasons, `former-member:${formerMembers}`],
+      changes: [],
+    };
+  });
 
   /** Ids of every expense that moves a pair of the set, for the checks at apply time. */
   const expenseIdsBySet = new Map<string, string[]>();
@@ -40,7 +110,13 @@ export const analyseSets = (input: ReplayInput, editWindows?: EditWindow[]) => {
     }
   });
 
-  return { analyses, sets, setOf, stored, expenseIdsBySet };
+  /** Every stored Balance and GroupBalance row of the pairs, both directions, sorted. */
+  const directedRows = (keys: string[]) =>
+    keys
+      .flatMap((key) => rowsByKey.get(key) ?? [])
+      .sort((a, b) => (directedRowId(a) < directedRowId(b) ? -1 : 1));
+
+  return { analyses, sets, setOf, stored, expenseIdsBySet, directedRows };
 };
 
 export type RepairPlan = ReturnType<typeof buildPlan>;
@@ -55,17 +131,3 @@ export const buildPlan = (input: ReplayInput, expenseAmounts: Map<string, number
     ...analyseSets(input),
   };
 };
-
-export type SetRow = { key: string; amount: number; exists: boolean; groups: [number, number][] };
-
-/** Snapshot of the rows a set's repair depends on, to detect live writes before applying. */
-export const getSetRows = (keys: string[], stored: ReplayState): SetRow[] =>
-  keys.map((key) => {
-    const pair = stored.get(key);
-    return {
-      key,
-      amount: pair?.amount ?? 0,
-      exists: !!pair?.exists,
-      groups: [...(pair?.groups.entries() ?? [])].sort((a, b) => a[0] - b[0]),
-    };
-  });

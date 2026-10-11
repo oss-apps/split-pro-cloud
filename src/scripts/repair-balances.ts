@@ -16,7 +16,7 @@ import { PrismaClient } from '@prisma/client';
 
 import { type ApplyOutcome, applySetRepair, undoRun } from './balanceRepair/apply';
 import { loadSnapshot } from './balanceRepair/load';
-import { buildPlan, getSetRows } from './balanceRepair/plan';
+import { buildPlan } from './balanceRepair/plan';
 import { parsePairKey } from './balanceRepair/replay';
 
 type Options = {
@@ -275,7 +275,7 @@ const main = async () => {
           await applySetRepair(db, runId, snapshot.loadedAt, {
             setId: analysis.setId,
             keys,
-            rows: getSetRows(keys, plan.stored),
+            rows: plan.directedRows(keys),
             changes: analysis.changes,
             expenseIds: plan.expenseIdsBySet.get(analysis.setId) ?? [],
           }),
