@@ -161,3 +161,38 @@ export const renewImportLocks = async (token: string, count: number) => {
 export const releaseImportLocks = async (token: string) => {
   await db.$executeRaw`DELETE FROM "SplitwiseImportLock" WHERE "token" = ${token}`;
 };
+
+/**
+ * Every account per email, matched the way the import matches people: ignoring capitals and
+ * surrounding spaces (`User_email_normalized_idx`). `emails` must already be normalized.
+ */
+export const findAccountsByEmail = async (client: Client, emails: string[]) => {
+  const accounts = new Map<string, number[]>();
+  const list = [...new Set(emails)];
+  if (!list.length) {
+    return accounts;
+  }
+  const rows = await client.$queryRaw<{ email: string; id: number }[]>`
+    SELECT lower(btrim("email", E' \\t\\r\\n')) AS email, id FROM "User"
+    WHERE lower(btrim("email", E' \\t\\r\\n')) = ANY(${list}::text[])
+    ORDER BY id`;
+  rows.forEach(({ email, id }) => accounts.set(email, [...(accounts.get(email) ?? []), id]));
+  return accounts;
+};
+
+/** Emails that more than one account uses, among `emails`. */
+export class SharedEmailError extends Error {
+  constructor(readonly emails: string[]) {
+    super('More than one SplitPro account uses the same email address.');
+  }
+}
+
+/** Throws `SharedEmailError` if any of `emails` is used by more than one account. */
+export const assertOneAccountPerEmail = async (client: Client, emails: string[]) => {
+  const shared = [...(await findAccountsByEmail(client, emails))]
+    .filter(([, ids]) => 1 < ids.length)
+    .map(([email]) => email);
+  if (shared.length) {
+    throw new SharedEmailError(shared);
+  }
+};

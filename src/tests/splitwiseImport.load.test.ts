@@ -304,7 +304,18 @@ void test(
         }),
         preflightAllPairs: await time(() => guard.checkBalances(db, keys)),
         preflightAdaAndBo: await time(() => guard.checkBalances(db, adaBoKeys)),
-        batchLockCompareReadBack: await time(() =>
+        // What each batch runs before writing: the history check, then lock and compare the rows.
+        batchCheckAndReadBack: await time(() =>
+          db.$transaction(
+            async (tx) => {
+              await guard.assertCleanSlate(tx, keys, snapshot);
+              return guard.readBalances(tx, keys);
+            },
+            { isolationLevel: 'Serializable' },
+          ),
+        ),
+        // The same without the history check, to show what it adds.
+        batchRowsOnly: await time(() =>
           db.$transaction(
             async (tx) => {
               await guard.assertBalancesUnchanged(tx, keys, snapshot);

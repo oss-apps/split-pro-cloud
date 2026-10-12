@@ -273,14 +273,15 @@ type SavedImportedExpense = {
   splitType: SplitType;
   splitwisePart: number | null;
   deletedAt: Date | null;
+  splitwiseEdited: boolean;
   expenseParticipants: { userId: number; amount: number }[];
 };
 
 /**
  * Whether saved parts of a Splitwise expense move exactly the same money as the parts being
  * imported: the same group (or none), amount, currency, payer, settle up or not, and every
- * non-zero share. People with a zero share don't change a balance, and the importer is added to
- * parts with zero, so they are left out.
+ * non-zero share, and never changed in SplitPro since. People with a zero share don't change a
+ * balance, and the importer is added to parts with zero, so they are left out.
  */
 export const isSameImportedExpense = (
   saved: SavedImportedExpense[],
@@ -300,6 +301,7 @@ export const isSameImportedExpense = (
     if (
       !row ||
       null !== row.deletedAt ||
+      row.splitwiseEdited ||
       row.groupId !== groupId ||
       row.amount !== part.amount ||
       row.currency !== part.currency ||
@@ -466,6 +468,7 @@ export const insertImportedExpenses = async (
         paidBy: true,
         splitType: true,
         deletedAt: true,
+        splitwiseEdited: true,
         expenseParticipants: { select: { userId: true, amount: true } },
       },
     });
@@ -484,6 +487,11 @@ export const insertImportedExpenses = async (
         splitwisePart: input.splitwisePart,
         shares: participants,
       }));
+      if (rows.some((row) => row.splitwiseEdited)) {
+        throw new ImportedExpenseMismatchError(
+          `"${entries[0]!.input.name}" was changed in SplitPro after it was imported, so it can't be imported again.`,
+        );
+      }
       if (!isSameImportedExpense(rows, groupId, parts)) {
         throw new ImportedExpenseMismatchError(
           `"${entries[0]!.input.name}" was imported at the same time with different amounts or people.`,

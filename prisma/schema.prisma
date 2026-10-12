@@ -185,6 +185,9 @@ model Expense {
     splitwiseExpenseId  String?
     splitwiseScope      String?
     splitwisePart       Int?
+    /// Set by database triggers on any change to an imported expense or its participants after the
+    /// import saved it. From then on it counts as SplitPro history, not as imported from Splitwise.
+    splitwiseEdited     Boolean              @default(false)
     group               Group?               @relation(fields: [groupId], references: [id], onDelete: Cascade)
     paidByUser          User                 @relation(name: "PaidByUser", fields: [paidBy], references: [id], onDelete: Cascade)
     addedByUser         User                 @relation(name: "AddedByUser", fields: [addedBy], references: [id], onDelete: Cascade)

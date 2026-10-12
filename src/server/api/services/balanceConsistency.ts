@@ -4,9 +4,11 @@ import { type db } from '~/server/db';
 
 /*
  * Clean slate: history from Splitwise is only added between people whose SplitPro history together
- * is nothing but expenses imported from Splitwise history. Between any pair whose balance an import
- * changes, `checkBalances` refuses:
+ * is nothing but expenses imported from Splitwise history and never changed since. Between any pair
+ * whose balance an import changes, `checkBalances` refuses:
  * - any other expense where one paid and the other takes part, deleted or not, settle ups included;
+ *   an imported expense changed in SplitPro in any way counts as another expense
+ *   (`splitwiseEdited`, set by database triggers on the expense and its participants);
  * - any settlement allocation between them;
  * - any `Balance` or `GroupBalance` row between them, in any currency or group, that their
  *   non-deleted expenses don't add up to exactly (settlement allocations subtracted in groups).
@@ -19,20 +21,22 @@ import { type db } from '~/server/db';
  * expense, a balance-only import its rows or its mark). The residual: if people erased every trace
  * themselves (hard deletes, e.g. a whole group), the pair looks new, and so does what they erased.
  *
- * Checked once, then compared per batch:
- * 1. Before saving anything, `checkBalances` runs the checks above in one read-only REPEATABLE
+ * Checked before saving, then again in every transaction that writes:
+ * 1. Before saving anything, `checkBalances` runs all the checks above in one read-only REPEATABLE
  *    READ snapshot (no serializable read locks on `Expense`), and records every `Balance` row of
  *    each pair (any currency) and every `GroupBalance` row of each pair in the import's group: its
  *    amount and its version (`xmin`), or absent.
- * 2. Each batch locks the same rows (`FOR UPDATE`, in the order the app writes them) and requires
- *    them exactly as recorded before writing. After writing, it reads them back for the next batch.
+ * 2. The setup transaction, and each batch before it writes, run `assertCleanSlate` for the pairs
+ *    they write: the expense and allocation checks again (two `EXISTS` per direction, through the
+ *    `Expense.paidBy` index and primary keys), and the recorded rows, locked `FOR UPDATE` in the
+ *    order the app writes them, exactly as recorded. After writing, a batch reads its rows back for
+ *    the next one.
  *
- * Why step 2 is enough: every write in the app that adds, edits or deletes an expense between two
- * people writes both of their `Balance` rows in that currency in the same transaction, even for a
- * zero share, which gives them a new version. So a non-imported expense, or any other write to the
- * pair, after step 1 stops the import. The one assumption: no write adds an expense between two
- * people without writing their rows, which would be a bug in the app anyway. Removing rows
- * (removing a friend, deleting a settled group) only removes history, and is seen as a change.
+ * Why step 2 is enough: its transactions are SERIALIZABLE, so any expense or allocation between a
+ * pair committed before it is seen, and one committed at the same time either is seen or makes one
+ * of the two transactions fail to serialize and retry. Comparing rows alone wouldn't do: a bill
+ * added, settled and the friend removed leaves the rows absent again. The rows catch what has no
+ * expense of its own, e.g. balances changed by hand.
  */
 
 /** A pair's balance in one currency, and its balance in one group when `groupId` is set. */
@@ -47,6 +51,13 @@ export type BalanceKey = {
 
 /** Stored rows by row key: `amount@version`. Rows not listed don't exist. */
 export type BalanceSnapshot = Map<string, string>;
+
+/** Pairs among those an import writes to got SplitPro history since they were checked. */
+export class NotCleanSlateError extends Error {
+  constructor(readonly pairs: { lo: number; hi: number }[]) {
+    super('Expenses or payments between these people were added in SplitPro during the import.');
+  }
+}
 
 /** A balance this import writes to changed since it was checked. */
 export class BalancesChangedError extends Error {
@@ -156,7 +167,10 @@ const readRows = async (
   return snapshot;
 };
 
-/** Pairs with SplitPro history other than imported expenses: other expenses, or allocations. */
+/**
+ * Pairs with SplitPro history other than imported expenses: other expenses (including imported ones
+ * changed since), or allocations.
+ */
 const findHistory = async (client: Prisma.TransactionClient, pairs: Pair[]) => {
   if (!pairs.length) {
     return [];
@@ -166,14 +180,14 @@ const findHistory = async (client: Prisma.TransactionClient, pairs: Pair[]) => {
     friends: pairs.flatMap(({ lo, hi }) => [hi, lo]),
   };
   // Each direction on its own: who paid (`Expense.paidBy` index), then the other person in it
-  // (`ExpenseParticipant` primary key). Deleted expenses count.
+  // (`ExpenseParticipant` primary key). Deleted expenses count, and imported ones once changed.
   const rows = await client.$queryRaw<{ payer: number; other: number }[]>`
     SELECT k.payer, k.other
     FROM unnest(${users}::int[], ${friends}::int[]) AS k(payer, other)
     WHERE EXISTS (
         SELECT 1 FROM "Expense" e
         JOIN "ExpenseParticipant" p ON p."expenseId" = e.id AND p."userId" = k.other
-        WHERE e."paidBy" = k.payer AND e."splitwiseExpenseId" IS NULL)
+        WHERE e."paidBy" = k.payer AND (e."splitwiseExpenseId" IS NULL OR e."splitwiseEdited"))
       OR EXISTS (
         SELECT 1 FROM "SettlementAllocation" a
         WHERE a."userId" = k.payer AND a."friendId" = k.other)`;
@@ -301,9 +315,28 @@ export const checkBalances = (client: typeof db, keys: BalanceKey[]) =>
   );
 
 /**
- * Step 2, in a balance transaction before it writes: locks the rows of `keys` (when `lock` is
- * set) and throws `BalancesChangedError` unless they are exactly as `expected`: the same rows, with
- * the same amounts and versions.
+ * Step 2, in a balance transaction before it writes: throws `NotCleanSlateError` if pairs of `keys`
+ * whose balance moves got history since they were checked, then `assertBalancesUnchanged`.
+ */
+export const assertCleanSlate = async (
+  tx: Prisma.TransactionClient,
+  keys: BalanceKey[],
+  expected: BalanceSnapshot,
+  options: { lock?: boolean } = {},
+) => {
+  const withHistory = await findHistory(
+    tx,
+    pairsOf(keys, (k) => false !== k.moves),
+  );
+  if (withHistory.length) {
+    throw new NotCleanSlateError(withHistory);
+  }
+  await assertBalancesUnchanged(tx, keys, expected, options);
+};
+
+/**
+ * Locks the rows of `keys` (when `lock` is set) and throws `BalancesChangedError` unless they are
+ * exactly as `expected`: the same rows, with the same amounts and versions.
  */
 export const assertBalancesUnchanged = async (
   tx: Prisma.TransactionClient,

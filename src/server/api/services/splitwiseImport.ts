@@ -33,7 +33,8 @@ import {
   type BalanceSnapshot,
   BalancesChangedError,
   NOT_A_CLEAN_SLATE,
-  assertBalancesUnchanged,
+  NotCleanSlateError,
+  assertCleanSlate,
   checkBalances,
   getBalanceKeys,
   readBalances,
@@ -50,6 +51,9 @@ import {
 } from './splitService';
 import {
   LostImportLockError,
+  SharedEmailError,
+  assertOneAccountPerEmail,
+  findAccountsByEmail,
   acquireImportLocks,
   BalanceOnlyPeopleError,
   claimHistoryPeople,
@@ -111,6 +115,7 @@ const storedExpenseSelect = {
   groupId: true,
   addedBy: true,
   deletedAt: true,
+  splitwiseEdited: true,
   amount: true,
   currency: true,
   paidBy: true,
@@ -337,25 +342,32 @@ const importItem = async (
     }
   });
 
-  const existingUsers = emails.size
-    ? await db.user.findMany({
-        where: {
-          OR: [...new Set(emails.values())].map((email) => ({
-            email: { equals: email, mode: 'insensitive' as const },
-          })),
-        },
-        select: { id: true, email: true },
-        orderBy: { id: 'asc' },
-      })
-    : [];
+  // Accounts are matched ignoring capitals and surrounding spaces. If more than one account
+  // matches someone, or you, there's no telling which one has their SplitPro history, so nothing
+  // is imported. Checked again in every transaction that writes.
+  const myEmails = [
+    (await db.user.findUnique({ where: { id: userId }, select: { email: true } }))?.email,
+    request.currentUser.email,
+  ]
+    .filter((email): email is string => !!email?.trim())
+    .map(normalizeEmail);
+  const allEmails = [...new Set([...emails.values(), ...myEmails])];
+  const describeSharedEmails = (shared: string[]) => [
+    ...shared.slice(0, MAX_REASONS - 1).map((email) => {
+      const swId = byEmail.get(email);
+      return myEmails.includes(email) || undefined === swId
+        ? 'More than one SplitPro account uses your email address, written with different capitals or spaces.'
+        : `More than one SplitPro account uses the email address of ${name(swId)}, written with different capitals or spaces.`;
+    }),
+    "It isn't clear which account has the SplitPro history, so nothing was imported.",
+  ];
+  const accounts = await findAccountsByEmail(db, allEmails);
+  const shared = allEmails.filter((email) => 1 < (accounts.get(email)?.length ?? 0));
+  if (shared.length) {
+    refuse(...describeSharedEmails(shared));
+  }
   const userIdByEmail = new Map<string, number>();
-  existingUsers.forEach((user) => {
-    const email = normalizeEmail(user.email ?? '');
-    // Prefer the account whose email matches exactly, then the oldest.
-    if (!userIdByEmail.has(email) || user.email === email) {
-      userIdByEmail.set(email, user.id);
-    }
-  });
+  accounts.forEach(([id], email) => userIdByEmail.set(email, id!));
 
   const userIds = new Map<number, number | undefined>([[me, userId]]);
   emails.forEach((email, id) => userIds.set(id, userIdByEmail.get(email)));
@@ -450,6 +462,13 @@ const importItem = async (
   storedById.forEach((rows, id) => {
     const expense = fileById.get(id);
     const parts = converted.get(id);
+    // Changed in SplitPro since: it's SplitPro history now, whatever the file says.
+    if (rows.some((row) => row.splitwiseEdited)) {
+      changed.push(
+        `${expense ? describeExpense(expense) : `"${rows[0]!.name}"`} was ${rows.some((row) => row.deletedAt) ? 'deleted' : 'changed'} in SplitPro after it was imported, so this can't be imported again.`,
+      );
+      return;
+    }
     if (!expense || !parts) {
       return;
     }
@@ -734,6 +753,16 @@ const importItem = async (
   await renewLocks();
   const { ids, groupId } = await runBalanceTransaction(async (tx) => {
     const ids = await createMissingUsers(tx, emails, new Map(userIds), people);
+    // Accounts made since the checks, for naming people below.
+    ids.forEach((spId, swId) => {
+      if (!splitwiseIdOf.has(spId)) splitwiseIdOf.set(spId, swId);
+    });
+    // Still one account per email, and the same ones as checked.
+    await assertOneAccountPerEmail(tx, allEmails).catch((error: unknown) => {
+      throw error instanceof SharedEmailError
+        ? new Refusal(describeSharedEmails(error.emails))
+        : error;
+    });
     const balanceOnly = await getBalanceOnlyPeople(
       tx,
       writtenPeople(newParts, (swId) => ids.get(swId)),
@@ -741,13 +770,18 @@ const importItem = async (
     if (balanceOnly.length) {
       throw new Refusal(describeBalanceOnly(balanceOnly));
     }
-    // Unchanged since they were checked, so the group isn't created for nothing.
-    await assertBalancesUnchanged(
+    // Still a clean slate, and the rows unchanged since they were checked, so the group isn't
+    // created for nothing. This also covers anyone who got an account since the checks: they had
+    // no rows then, so any row of theirs now counts as changed. A new group has no rows yet.
+    await assertCleanSlate(
       tx,
       balanceKeysOf((swId) => ids.get(swId), existingGroup?.id ?? null),
       checkedRows,
       { lock: false },
     ).catch((error: unknown) => {
+      if (error instanceof NotCleanSlateError) {
+        throw new Refusal(describeNotClean({ withHistory: error.pairs, unexplained: [] }));
+      }
       throw error instanceof BalancesChangedError ? new Refusal([error.message]) : error;
     });
     const groupId = isGroup
@@ -764,26 +798,6 @@ const importItem = async (
     }
     return { ids, groupId };
   });
-
-  // People who had no account when the balances were checked may have one now that wasn't made
-  // here, and a group may be new: check the balances again with everyone's account.
-  ids.forEach((spId, swId) => {
-    if (!splitwiseIdOf.has(spId)) splitwiseIdOf.set(spId, swId);
-  });
-  if (
-    newParts.length &&
-    ([...userIds.values()].some((id) => undefined === id) ||
-      (existingGroup?.id ?? null) !== groupId)
-  ) {
-    const checked = await checkBalances(
-      db,
-      balanceKeysOf((swId) => ids.get(swId), groupId),
-    );
-    if (!isClean(checked)) {
-      return { status: 'refused', reasons: describeNotClean(checked) };
-    }
-    checkedRows = checked.snapshot;
-  }
 
   const scopeFor = (part: ConvertedPart) =>
     null !== groupId
@@ -808,6 +822,7 @@ const importItem = async (
           scopeFor,
         ),
         checkedRows,
+        allEmails,
       );
       saved += result.added;
       alreadySaved += result.skipped;
@@ -826,11 +841,22 @@ const importItem = async (
     if (error instanceof BalancesChangedError && 0 === saved + alreadySaved) {
       return { status: 'refused', reasons: [error.message] };
     }
+    if (error instanceof SharedEmailError && 0 === saved + alreadySaved) {
+      return { status: 'refused', reasons: describeSharedEmails(error.emails) };
+    }
+    if (error instanceof NotCleanSlateError && 0 === saved + alreadySaved) {
+      return {
+        status: 'refused',
+        reasons: describeNotClean({ withHistory: error.pairs, unexplained: [] }),
+      };
+    }
     if (
       !(
         error instanceof ImportedExpenseMismatchError ||
         error instanceof BalanceOnlyPeopleError ||
-        error instanceof BalancesChangedError
+        error instanceof BalancesChangedError ||
+        error instanceof NotCleanSlateError ||
+        error instanceof SharedEmailError
       )
     ) {
       console.error('Splitwise import stopped part way', error);
@@ -847,9 +873,13 @@ const importItem = async (
           ? error.message
           : error instanceof BalanceOnlyPeopleError
             ? describeBalanceOnly(error.userIds).join(' ')
-            : error instanceof TRPCError && 'CONFLICT' === error.code
-              ? BALANCE_CONFLICT_MESSAGE
-              : 'Something went wrong while saving.',
+            : error instanceof NotCleanSlateError
+              ? describeNotClean({ withHistory: error.pairs, unexplained: [] }).join(' ')
+              : error instanceof SharedEmailError
+                ? describeSharedEmails(error.emails).join(' ')
+                : error instanceof TRPCError && 'CONFLICT' === error.code
+                  ? BALANCE_CONFLICT_MESSAGE
+                  : 'Something went wrong while saving.',
     };
   }
 
@@ -897,9 +927,12 @@ const saveBatch = async (
   groupId: number | null,
   inputs: ImportedExpenseInput[],
   expected: BalanceSnapshot,
+  emails: string[],
 ): Promise<SaveResult> => {
   try {
     return await runBalanceTransaction(async (tx) => {
+      // Nobody in the import got a second account meanwhile.
+      await assertOneAccountPerEmail(tx, emails);
       // Checked and marked with the balances themselves, so a balance-only import committed at
       // any point before, by this or an older version of the app, is always seen.
       await claimHistoryPeople(
@@ -911,9 +944,10 @@ const saveBatch = async (
             .map((participant) => participant.userId),
         ]),
       );
-      // Locked and unchanged since they were checked, or since the last batch wrote them.
+      // Still a clean slate, and the rows locked and unchanged since they were checked, or since
+      // the last batch wrote them.
       const keys = getBalanceKeys(groupId, inputs);
-      await assertBalancesUnchanged(tx, keys, expected);
+      await assertCleanSlate(tx, keys, expected);
       const { added, skippedIds } = await insertImportedExpenses(tx, groupId, inputs);
       return {
         added: new Set(added.map((expense) => expense.splitwiseExpenseId)).size,
@@ -931,12 +965,14 @@ const saveBatch = async (
         groupId,
         inputs.filter((input) => firstHalf.has(input.splitwiseExpenseId)),
         expected,
+        emails,
       );
       try {
         const second = await saveBatch(
           groupId,
           inputs.filter((input) => !firstHalf.has(input.splitwiseExpenseId)),
           new Map([...expected, ...first.balances]),
+          emails,
         );
         return {
           added: first.added + second.added,

@@ -1246,6 +1246,11 @@ void test(
     assert.ok(0 < conflicts, 'the batch conflicted');
     const group = await t.db.group.findUniqueOrThrow({ where: { splitwiseGroupId: String(gid) } });
     assert.equal(await t.db.expense.count({ where: { groupId: group.id } }), 5);
+    // Saved by several transactions, still untouched.
+    assert.equal(
+      await t.db.expense.count({ where: { groupId: group.id, splitwiseEdited: true } }),
+      0,
+    );
     const boUser = await t.userByEmail('Bo');
     // Bo owes 5.00 + 5.01 + 5.02 + 5.03 + 5.04.
     assert.deepEqual(await t.groupBalances(group.id), [
@@ -2515,6 +2520,7 @@ void test(
         splitType: 'EXACT' as const,
         splitwisePart: 0,
         deletedAt: null,
+        splitwiseEdited: false,
         expenseParticipants: [
           { userId: 1, amount: 500 },
           { userId: 2, amount: -500 },
@@ -2564,6 +2570,11 @@ void test(
       isSameImportedExpense([{ ...saved[0]!, deletedAt: new Date() }], 7, [part]),
       false,
       'deleted in SplitPro',
+    );
+    assert.equal(
+      isSameImportedExpense([{ ...saved[0]!, splitwiseEdited: true }], 7, [part]),
+      false,
+      'changed in SplitPro since it was imported',
     );
   },
 );
@@ -3041,6 +3052,9 @@ const withoutPersonRule = async <T>(t: Setup, fn: () => Promise<T>) => {
 };
 
 const NOT_CLEAN = /You and Bo already have expenses, payments or balances in SplitPro\./;
+/** A batch that finds new SplitPro history between Ada and Bo stops with this. */
+const NOT_CLEAN_REASON =
+  "You and Bo already have expenses, payments or balances in SplitPro. History can only be imported for people you haven't recorded expenses or payments with in SplitPro yet. Import your Splitwise history before you start adding expenses together here.";
 const CLEAN_SLATE_COPY =
   /History can only be imported for people you haven't recorded expenses or payments with in SplitPro yet\./;
 
@@ -3468,7 +3482,7 @@ void test(
       imported: IMPORT_BATCH_SIZE,
       remaining: 50,
       alreadyImported: 0,
-      reason: 'Balances changed during the import. Please run it again.',
+      reason: NOT_CLEAN_REASON,
     });
 
     // The taxi is SplitPro history between them, so running it again is refused too.
@@ -4201,8 +4215,909 @@ void test(
             imported: IMPORT_BATCH_SIZE,
             remaining: 50,
             alreadyImported: 0,
-            reason: 'Balances changed during the import. Please run it again.',
+            reason: NOT_CLEAN_REASON,
           },
+          label,
+        );
+      } finally {
+        await run.cleanUp();
+      }
+    }
+  },
+);
+
+/** Ada pays 20 for herself and Bo, then Bo pays Ada back: real SplitPro history, settled. */
+const enterAndSettle = async (
+  t: Setup,
+  ada: { id: number },
+  bo: { id: number },
+  groupId?: number,
+) => {
+  const svc = await import('~/server/api/services/splitService');
+  const shares = [
+    { userId: ada.id, amount: 10 },
+    { userId: bo.id, amount: -10 },
+  ];
+  if (undefined === groupId) {
+    await svc.addUserExpense(ada.id, 'Bill', 'general', 20, 'EXACT', 'USD', shares, ada.id, DATE);
+  } else {
+    await svc.createGroupExpense(
+      groupId,
+      ada.id,
+      'Bill',
+      'general',
+      20,
+      'EXACT',
+      'USD',
+      shares,
+      ada.id,
+      DATE,
+    );
+  }
+  await svc.addUserExpense(
+    bo.id,
+    'Paid back',
+    'general',
+    10,
+    'SETTLEMENT',
+    'USD',
+    [
+      { userId: bo.id, amount: 10 },
+      { userId: ada.id, amount: -10 },
+    ],
+    bo.id,
+    DATE,
+  );
+};
+
+void test(
+  "r6: a bill entered, settled and the friend removed after the checks leaves no rows, and is still refused, before the setup or a batch (Sol's absent-row race)",
+  { skip: !databaseUrl },
+  async () => {
+    for (const grouped of [false, true]) {
+      for (const at of [1, 2]) {
+        const run = await fresh();
+        try {
+          const me = await run.createUser('Ada');
+          const bo = await run.createUser('Bo');
+          await run.befriend(me, bo);
+          const { file, key } = twoPeopleFile(run);
+          const hook = hookTransactions(run, async (n, go) => {
+            if (at === n) {
+              hook.restore();
+              if (grouped) {
+                const group = await run
+                  .callerFor(me)
+                  .group.create({ name: 'Paid', currency: 'USD' });
+                await run.callerFor(bo).group.joinGroup({ groupId: group.publicId });
+                await enterAndSettle(run, me, bo, group.id);
+                await run.callerFor(me).group.delete({ groupId: group.id });
+              } else {
+                await enterAndSettle(run, me, bo);
+              }
+              await run.callerFor(me).user.deleteFriend({ friendId: bo.id });
+              assert.equal(
+                await run.db.balance.count({ where: { userId: { in: [me.id, bo.id] } } }),
+                0,
+                'the rows are gone',
+              );
+            }
+            return go();
+          });
+          let result;
+          try {
+            result = (await run.importFile(me, file)).results[key];
+          } finally {
+            hook.restore();
+          }
+          refused(result, NOT_CLEAN);
+          const label = `${grouped ? 'group' : 'friends'}, transaction ${at}`;
+          assert.equal(
+            await run.db.expense.count({ where: { splitwiseExpenseId: String(run.base + 9001) } }),
+            0,
+            label,
+          );
+          assert.equal(
+            await run.db.balance.count({ where: { userId: { in: [me.id, bo.id] } } }),
+            0,
+            label,
+          );
+        } finally {
+          await run.cleanUp();
+        }
+      }
+    }
+  },
+);
+
+void test(
+  'r6: an expense committed by someone else while a batch is saving makes it retry, and the retry refuses',
+  { skip: !databaseUrl },
+  async () => {
+    const { addUserExpense } = await import('~/server/api/services/splitService');
+    for (const grouped of [false, true]) {
+      const run = await fresh();
+      try {
+        const me = await run.createUser('Ada');
+        const bo = await run.createUser('Bo');
+        await run.befriend(me, bo);
+        const gid = run.base + 2600;
+        const file = grouped ? groupOfTwoFile(run, gid, run.base + 26001) : twoPeopleFile(run).file;
+        const key = grouped ? `group:${gid}` : `friends:${run.sw('Bo', 2).id}`;
+        // In the first batch, after its checks passed and before it writes, Bo's bill commits.
+        let committed = false;
+        const hook = hookTransactions(run, async (n, go, operation) => {
+          if (2 !== n) return go();
+          hook.restore();
+          return hook.original(
+            (tx: Record<string, unknown>) =>
+              operation(
+                new Proxy(tx, {
+                  get(target, prop, receiver) {
+                    const value = Reflect.get(target, prop, receiver) as unknown;
+                    if ('expense' !== prop) return value;
+                    return new Proxy(value as object, {
+                      get(model, name) {
+                        const fn = Reflect.get(model, name) as (...args: unknown[]) => unknown;
+                        if ('createManyAndReturn' !== name) return fn;
+                        return async (...args: unknown[]) => {
+                          if (!committed) {
+                            committed = true;
+                            await addUserExpense(
+                              bo.id,
+                              'Taxi',
+                              'taxi',
+                              6,
+                              'EXACT',
+                              'USD',
+                              [
+                                { userId: bo.id, amount: 3 },
+                                { userId: me.id, amount: -3 },
+                              ],
+                              bo.id,
+                              DATE,
+                            );
+                          }
+                          return fn.apply(model, args);
+                        };
+                      },
+                    });
+                  },
+                }),
+              ),
+            { isolationLevel: 'Serializable', maxWait: 10_000, timeout: 20_000 },
+          );
+        });
+        let result;
+        try {
+          result = (await run.importFile(me, file)).results[key];
+        } finally {
+          hook.restore();
+        }
+        const label = grouped ? 'group' : 'friends';
+        refused(result, NOT_CLEAN);
+        assert.ok(committed, label);
+        // Only the taxi is saved: the import's write failed to serialize, and the retry saw it.
+        assert.deepEqual(
+          (await run.balances([me.id, bo.id])).sort(),
+          [`USD ${bo.id}->${me.id} 300`, `USD ${me.id}->${bo.id} -300`].sort(),
+          label,
+        );
+        assert.equal(
+          await run.db.expense.count({
+            where: { splitwiseExpenseId: { not: null }, addedBy: me.id },
+          }),
+          0,
+          label,
+        );
+      } finally {
+        await run.cleanUp();
+      }
+    }
+  },
+);
+
+/** Imports one Ada/Bo expense into a group, and returns it with the people. */
+const importedExpenseOf = async (t: Setup) => {
+  const me = await t.createUser('Ada');
+  const bo = await t.createUser('Bo');
+  const cy = await t.createUser('Cy');
+  await t.befriend(me, bo, cy);
+  const gid = t.base + 2700;
+  const [ada, swBo, swCy] = [t.sw('Ada', 1), t.sw('Bo', 2), t.sw('Cy', 3)];
+  const file = buildExport({
+    me: ada,
+    people: [swBo, swCy],
+    groups: [{ id: gid, name: 'Trip', memberIds: [ada.id, swBo.id, swCy.id] }],
+    expenses: [
+      expense({
+        id: t.base + 27001,
+        groupId: gid,
+        users: [
+          [ada.id, 2000, 1000],
+          [swBo.id, 0, 1000],
+        ],
+      }),
+    ],
+  });
+  imported((await t.importFile(me, file)).results[`group:${gid}`]);
+  const row = await t.db.expense.findFirstOrThrow({
+    where: { splitwiseExpenseId: String(t.base + 27001) },
+  });
+  assert.equal(row.splitwiseEdited, false, 'the import leaves it untouched');
+  return { me, bo, cy, ada, swBo, swCy, gid, file, row };
+};
+
+/** Another Splitwise group of Ada and `other`, Ada paid 20, half for them. */
+const otherScopeFile = (t: Setup, other: Person, gid: number, id: number) => {
+  const ada = t.sw('Ada', 1);
+  return buildExport({
+    me: ada,
+    people: [other],
+    groups: [{ id: gid, name: `Other ${gid}`, memberIds: [ada.id, other.id] }],
+    expenses: [
+      expense({
+        id,
+        groupId: gid,
+        users: [
+          [ada.id, 2000, 1000],
+          [other.id, 0, 1000],
+        ],
+      }),
+    ],
+  });
+};
+
+void test(
+  "r6: an imported expense changed in SplitPro in any way counts as SplitPro history (Sol's edited-imported probes)",
+  { skip: !databaseUrl },
+  async () => {
+    const svc = await import('~/server/api/services/splitService');
+    type Imported = Awaited<ReturnType<typeof importedExpenseOf>>;
+    const cases: [string, (t: Setup, i: Imported) => Promise<unknown>, 'Bo' | 'Cy'][] = [
+      [
+        'Bo replaced by Cy',
+        (_t, i) =>
+          svc.editExpense(
+            i.row.id,
+            i.me.id,
+            'Edited',
+            'general',
+            20,
+            'EXACT',
+            'USD',
+            [
+              { userId: i.me.id, amount: 10 },
+              { userId: i.cy.id, amount: -10 },
+            ],
+            i.me.id,
+            DATE,
+          ),
+        'Cy',
+      ],
+      [
+        'turned into a settle up',
+        (_t, i) =>
+          svc.editExpense(
+            i.row.id,
+            i.bo.id,
+            'Paid',
+            'general',
+            10,
+            'SETTLEMENT',
+            'USD',
+            [
+              { userId: i.bo.id, amount: 10 },
+              { userId: i.me.id, amount: -10 },
+            ],
+            i.bo.id,
+            DATE,
+          ),
+        'Bo',
+      ],
+      [
+        'currency changed',
+        (_t, i) =>
+          svc.editExpense(
+            i.row.id,
+            i.me.id,
+            'In euros',
+            'general',
+            20,
+            'EXACT',
+            'EUR',
+            [
+              { userId: i.me.id, amount: 10 },
+              { userId: i.bo.id, amount: -10 },
+            ],
+            i.me.id,
+            DATE,
+          ),
+        'Bo',
+      ],
+      [
+        'name changed only',
+        (t, i) => t.db.expense.update({ where: { id: i.row.id }, data: { name: 'Renamed' } }),
+        'Bo',
+      ],
+      ['deleted', (_t, i) => svc.deleteExpense(i.row.id, i.me.id), 'Bo'],
+      [
+        'deleted and restored',
+        async (t, i) => {
+          await svc.deleteExpense(i.row.id, i.me.id);
+          // No restore in the app yet; any future one is an update like this.
+          await t.db.expense.update({
+            where: { id: i.row.id },
+            data: { deletedAt: null, deletedBy: null },
+          });
+          await t.db.balance.updateMany({
+            where: { userId: i.me.id, friendId: i.bo.id, currency: 'USD' },
+            data: { amount: { increment: 1000 } },
+          });
+          await t.db.balance.updateMany({
+            where: { userId: i.bo.id, friendId: i.me.id, currency: 'USD' },
+            data: { amount: { increment: -1000 } },
+          });
+        },
+        'Bo',
+      ],
+      [
+        'a participant added directly',
+        (t, i) =>
+          t.db.expenseParticipant.create({
+            data: { expenseId: i.row.id, userId: i.cy.id, amount: 0 },
+          }),
+        'Bo',
+      ],
+      [
+        'a participant removed directly',
+        (t, i) =>
+          t.db.expenseParticipant.deleteMany({ where: { expenseId: i.row.id, userId: i.me.id } }),
+        'Bo',
+      ],
+      [
+        'a participant amount changed directly',
+        (t, i) =>
+          t.db.expenseParticipant.updateMany({
+            where: { expenseId: i.row.id, userId: i.bo.id },
+            data: { amount: -1000 },
+          }),
+        'Bo',
+      ],
+    ];
+    for (const [label, change, other] of cases) {
+      const run = await fresh();
+      try {
+        const i = await importedExpenseOf(run);
+        await change(run, i);
+        assert.equal(
+          (await run.db.expense.findUniqueOrThrow({ where: { id: i.row.id } })).splitwiseEdited,
+          true,
+          label,
+        );
+        const otherSw = 'Bo' === other ? i.swBo : i.swCy;
+        const otherId = 'Bo' === other ? i.bo.id : i.cy.id;
+        const before = await run.snapshot();
+        // Another Splitwise scope with the same pair: refused, it's SplitPro history now.
+        const g2 = run.base + 2701;
+        const result = (
+          await run.importFile(i.me, otherScopeFile(run, otherSw, g2, run.base + 27002))
+        ).results[`group:${g2}`];
+        refused(result, new RegExp(`You and ${other} already have expenses, payments or balances`));
+        // The same scope again: refused with a clear reason, not skipped.
+        const again = (await run.importFile(i.me, i.file)).results[`group:${i.gid}`];
+        refused(again, /(changed|deleted) in SplitPro after it was imported/);
+        assert.deepEqual(await run.snapshot(), before, label);
+        void otherId;
+      } finally {
+        await run.cleanUp();
+      }
+    }
+  },
+);
+
+void test(
+  'r6: imported expenses stay untouched through a stopped and resumed import, so the scope imports again as a no-op',
+  { skip: !databaseUrl },
+  withSetup(async (t) => {
+    const { IMPORT_BATCH_SIZE } = await import('~/server/api/services/splitwiseImport');
+    const me = await t.createUser('Ada');
+    const bo = await t.createUser('Bo');
+    await t.befriend(me, bo);
+    const [ada, swBo] = [t.sw('Ada', 1), t.sw('Bo', 2)];
+    const file = buildExport({
+      me: ada,
+      people: [swBo],
+      groups: [],
+      expenses: Array.from({ length: IMPORT_BATCH_SIZE + 10 }, (_, index) =>
+        expense({
+          id: t.base + 28_000 + index,
+          users: [
+            [ada.id, 200, 100],
+            [swBo.id, 0, 100],
+          ],
+        }),
+      ),
+    });
+    const key = `friends:${swBo.id}`;
+    // The second batch fails once; the first stays saved.
+    const hook = hookTransactions(t, async (n, go) => {
+      if (3 === n) {
+        hook.restore();
+        throw new Error('dropped connection');
+      }
+      return go();
+    });
+    try {
+      assert.equal((await t.importFile(me, file)).results[key]!.status, 'partial');
+    } finally {
+      hook.restore();
+    }
+    imported((await t.importFile(me, file)).results[key]);
+    const again = imported((await t.importFile(me, file)).results[key]);
+    assert.equal(again.imported, 0);
+    assert.equal(
+      await t.db.expense.count({
+        where: { splitwiseExpenseId: { startsWith: String(t.base + 28) }, splitwiseEdited: true },
+      }),
+      0,
+    );
+  }),
+);
+
+void test(
+  "r6: two accounts whose emails differ only in capitals are refused, for a friend and for you (Sol's case alias)",
+  { skip: !databaseUrl },
+  async () => {
+    const { addUserExpense } = await import('~/server/api/services/splitService');
+    // A friend: invited as BO@... with a debt, then as bo@..., through the real router.
+    {
+      const run = await fresh();
+      try {
+        const me = await run.createUser('Ada');
+        const swBo = run.sw('Bo', 2);
+        const upper = await run
+          .callerFor(me)
+          .user.inviteFriend({ email: swBo.email!.toUpperCase() });
+        await addUserExpense(
+          me.id,
+          'Dinner',
+          'general',
+          20,
+          'EXACT',
+          'USD',
+          [
+            { userId: me.id, amount: 10 },
+            { userId: upper.id, amount: -10 },
+          ],
+          me.id,
+          DATE,
+        );
+        const lower = await run.callerFor(me).user.inviteFriend({ email: swBo.email! });
+        assert.notEqual(upper.id, lower.id);
+        const { file, key } = twoPeopleFile(run);
+        const before = await run.snapshot();
+        const result = (await run.importFile(me, file)).results[key];
+        refused(result, /More than one SplitPro account uses the email address of Bo/);
+        refused(result, /It isn't clear which account has the SplitPro history/);
+        assert.deepEqual(await run.snapshot(), before);
+      } finally {
+        await run.cleanUp();
+      }
+    }
+    // You: another account uses your email with other capitals.
+    {
+      const run = await fresh();
+      try {
+        const me = await run.createUser('Ada');
+        const bo = await run.createUser('Bo');
+        await run.befriend(me, bo);
+        await run.db.user.create({
+          data: { email: ` ${me.email!.toUpperCase()} `, name: 'Ada again' },
+        });
+        const { file, key } = twoPeopleFile(run);
+        refused(
+          (await run.importFile(me, file)).results[key],
+          /More than one SplitPro account uses your email address/,
+        );
+      } finally {
+        await run.cleanUp();
+      }
+    }
+  },
+);
+
+void test(
+  'r6: a second account with the same email made after the checks stops the setup or a batch',
+  { skip: !databaseUrl },
+  async () => {
+    const { IMPORT_BATCH_SIZE } = await import('~/server/api/services/splitwiseImport');
+    for (const at of [1, 3]) {
+      const run = await fresh();
+      try {
+        const me = await run.createUser('Ada');
+        const bo = await run.createUser('Bo');
+        await run.befriend(me, bo);
+        const [ada, swBo] = [run.sw('Ada', 1), run.sw('Bo', 2)];
+        const file = buildExport({
+          me: ada,
+          people: [swBo],
+          groups: [],
+          expenses: Array.from({ length: IMPORT_BATCH_SIZE + 10 }, (_, index) =>
+            expense({
+              id: run.base + 29_000 + index,
+              users: [
+                [ada.id, 200, 100],
+                [swBo.id, 0, 100],
+              ],
+            }),
+          ),
+        });
+        const hook = hookTransactions(run, async (n, go) => {
+          if (at === n) {
+            hook.restore();
+            await run.db.user.create({
+              data: { email: bo.email!.toUpperCase(), name: 'Bo again' },
+            });
+          }
+          return go();
+        });
+        let result;
+        try {
+          result = (await run.importFile(me, file)).results[`friends:${swBo.id}`];
+        } finally {
+          hook.restore();
+        }
+        if (1 === at) {
+          refused(result, /More than one SplitPro account uses the email address of Bo/);
+        } else {
+          assert.equal(result?.status, 'partial', JSON.stringify(result));
+          assert.equal((result as { imported: number }).imported, IMPORT_BATCH_SIZE);
+          assert.match(
+            (result as { reason: string }).reason,
+            /More than one SplitPro account uses the email address of Bo/,
+          );
+        }
+      } finally {
+        await run.cleanUp();
+      }
+    }
+  },
+);
+
+void test(
+  'r6: an account matched ignoring capitals and spaces is the one every rule checks',
+  { skip: !databaseUrl },
+  async () => {
+    const { addUserExpense } = await import('~/server/api/services/splitService');
+    const cases: [
+      string,
+      (run: Setup, me: { id: number }, bo: { id: number }) => Promise<unknown>,
+      RegExp,
+    ][] = [
+      [
+        'clean slate',
+        (_run, me, bo) =>
+          addUserExpense(
+            me.id,
+            'Dinner',
+            'general',
+            20,
+            'EXACT',
+            'USD',
+            [
+              { userId: me.id, amount: 10 },
+              { userId: bo.id, amount: -10 },
+            ],
+            me.id,
+            DATE,
+          ),
+        /You and Bo already have expenses, payments or balances/,
+      ],
+      [
+        'person rule',
+        (run, _me, bo) =>
+          run.db.splitwiseImportPerson.create({ data: { userId: bo.id, mode: 'BALANCE' } }),
+        /Bo has balances from an earlier Splitwise import/,
+      ],
+      [
+        'connection rule',
+        (run, me, bo) =>
+          run.db.friendship.deleteMany({
+            where: {
+              OR: [
+                { userId: me.id, friendId: bo.id },
+                { userId: bo.id, friendId: me.id },
+              ],
+            },
+          }),
+        /Bo already uses SplitPro but isn't connected to you/,
+      ],
+    ];
+    for (const [label, prepare, reason] of cases) {
+      const run = await fresh();
+      try {
+        const me = await run.createUser('Ada');
+        // Bo's account has the email in other capitals, with spaces around it.
+        const swBo = run.sw('Bo', 2);
+        const bo = await run.db.user.create({
+          data: { email: `  ${swBo.email!.toUpperCase()} `, name: 'Bo' },
+        });
+        await run.befriend(me, bo);
+        await prepare(run, me, bo);
+        const { file, key } = twoPeopleFile(run);
+        const before = await run.snapshot();
+        refused((await run.importFile(me, file)).results[key], reason);
+        assert.deepEqual(await run.snapshot(), before, label);
+      } finally {
+        await run.cleanUp();
+      }
+    }
+  },
+);
+
+void test(
+  'r6: the setup refuses before creating anything when history appeared after the checks, or a second account with the same email',
+  { skip: !databaseUrl },
+  async () => {
+    const variants: [
+      string,
+      (
+        run: Setup,
+        me: { id: number; name: string | null; email: string | null },
+        bo: { id: number; email: string | null },
+      ) => Promise<unknown>,
+      RegExp,
+    ][] = [
+      [
+        // Invisible to the row comparison: the rows are absent again afterwards.
+        'history',
+        async (run, me, bo) => {
+          await enterAndSettle(run, me, bo);
+          await run.callerFor(me).user.deleteFriend({ friendId: bo.id });
+        },
+        /You and Bo already have expenses, payments or balances in SplitPro/,
+      ],
+      [
+        'same email',
+        (run, _me, bo) =>
+          run.db.user.create({ data: { email: bo.email!.toUpperCase(), name: 'Bo again' } }),
+        /More than one SplitPro account uses the email address of Bo/,
+      ],
+    ];
+    for (const [label, inject, reason] of variants) {
+      const run = await fresh();
+      try {
+        const me = await run.createUser('Ada');
+        const bo = await run.createUser('Bo');
+        await run.befriend(me, bo);
+        // Cy has no account yet: the setup would make one, and the group.
+        const [ada, swBo, swCy] = [run.sw('Ada', 1), run.sw('Bo', 2), run.sw('Cy', 3)];
+        const gid = run.base + 3000;
+        const file = buildExport({
+          me: ada,
+          people: [swBo, swCy],
+          groups: [{ id: gid, name: 'Trip', memberIds: [ada.id, swBo.id, swCy.id] }],
+          expenses: [
+            expense({
+              id: run.base + 30_001,
+              groupId: gid,
+              users: [
+                [ada.id, 3000, 1000],
+                [swBo.id, 0, 1000],
+                [swCy.id, 0, 1000],
+              ],
+            }),
+          ],
+        });
+        const hook = hookTransactions(run, async (n, go) => {
+          if (1 === n) {
+            hook.restore();
+            await inject(run, me, bo);
+          }
+          return go();
+        });
+        let result;
+        try {
+          result = (await run.importFile(me, file)).results[`group:${gid}`];
+        } finally {
+          hook.restore();
+        }
+        refused(result, reason);
+        assert.equal(
+          await run.db.group.count({ where: { splitwiseGroupId: String(gid) } }),
+          0,
+          `${label}: no group`,
+        );
+        assert.equal(
+          await run.db.user.count({
+            where: { email: { equals: swCy.email!, mode: 'insensitive' } },
+          }),
+          0,
+          `${label}: no account for Cy`,
+        );
+      } finally {
+        await run.cleanUp();
+      }
+    }
+  },
+);
+
+void test(
+  'r6: rows rewritten to the same amounts mid-import (a group that nets to zero, then deleted) stop the next batch; only row versions show it',
+  { skip: !databaseUrl },
+  withSetup(async (t) => {
+    const svc = await import('~/server/api/services/splitService');
+    const { IMPORT_BATCH_SIZE } = await import('~/server/api/services/splitwiseImport');
+    const me = await t.createUser('Ada');
+    const bo = await t.createUser('Bo');
+    await t.befriend(me, bo);
+    const [ada, swBo] = [t.sw('Ada', 1), t.sw('Bo', 2)];
+    const count = IMPORT_BATCH_SIZE + 50;
+    const file = buildExport({
+      me: ada,
+      people: [swBo],
+      groups: [],
+      expenses: Array.from({ length: count }, (_, index) =>
+        expense({
+          id: t.base + 27_000 + index,
+          users: [
+            [ada.id, 200, 100],
+            [swBo.id, 0, 100],
+          ],
+        }),
+      ),
+    });
+    const key = `friends:${swBo.id}`;
+
+    // After the first batch: each pays 20 for both in a group, which nets to zero, and the group
+    // is deleted with its expenses. No history is left and the amounts are as they were, but the
+    // Balance rows were written.
+    const hook = hookTransactions(t, async (n, run) => {
+      if (3 === n) {
+        hook.restore();
+        const group = await t.callerFor(me).group.create({ name: 'Even', currency: 'USD' });
+        await t.callerFor(bo).group.joinGroup({ groupId: group.publicId });
+        const add = (payer: number, other: number) =>
+          svc.createGroupExpense(
+            group.id,
+            payer,
+            'Even',
+            'general',
+            20,
+            'EXACT',
+            'USD',
+            [
+              { userId: payer, amount: 10 },
+              { userId: other, amount: -10 },
+            ],
+            payer,
+            DATE,
+          );
+        const before = await t.balances([me.id, bo.id]);
+        await add(me.id, bo.id);
+        await add(bo.id, me.id);
+        await t.callerFor(me).group.delete({ groupId: group.id });
+        assert.deepEqual(await t.balances([me.id, bo.id]), before, 'same amounts');
+        assert.equal(
+          await t.db.expense.count({ where: { name: 'Even', paidBy: { in: [me.id, bo.id] } } }),
+          0,
+          'no history left',
+        );
+      }
+      return run();
+    });
+    let first;
+    try {
+      first = (await t.importFile(me, file)).results[key];
+    } finally {
+      hook.restore();
+    }
+    assert.deepEqual(first, {
+      status: 'partial',
+      imported: IMPORT_BATCH_SIZE,
+      remaining: 50,
+      alreadyImported: 0,
+      reason: 'Balances changed during the import. Please run it again.',
+    });
+
+    // Nothing of it is left, so a new import starts from a clean slate and finishes consistently.
+    const second = imported((await t.importFile(me, file)).results[key]);
+    assert.equal(second.imported, 50);
+    assert.deepEqual(await unexplainedAmong(t, [me.id, bo.id]), []);
+  }),
+);
+
+void test(
+  'r6: someone who signs up between the checks and the setup is checked by the setup itself, before anything is created',
+  { skip: !databaseUrl },
+  async () => {
+    const variants: [
+      string,
+      (
+        run: Setup,
+        me: { id: number; name: string | null; email: string | null },
+      ) => Promise<unknown>,
+      RegExp,
+    ][] = [
+      [
+        // History between them, the rows gone again: the history check sees it.
+        'history',
+        async (run, me) => {
+          const bo = await run.createUser('Bo');
+          await run.befriend(me, bo);
+          await enterAndSettle(run, me, bo);
+          await run.callerFor(me).user.deleteFriend({ friendId: bo.id });
+        },
+        /You and Bo already have expenses, payments or balances in SplitPro/,
+      ],
+      [
+        // A row with nothing behind it: the preflight snapshot has no rows for Bo, so it appeared.
+        'unexplained row',
+        async (run, me) => {
+          const bo = await run.createUser('Bo');
+          await run.db.balance.createMany({
+            data: [
+              { userId: me.id, friendId: bo.id, currency: 'USD', amount: 0 },
+              { userId: bo.id, friendId: me.id, currency: 'USD', amount: 0 },
+            ],
+          });
+        },
+        /Balances changed during the import/,
+      ],
+    ];
+    for (const [label, inject, reason] of variants) {
+      const run = await fresh();
+      try {
+        const me = await run.createUser('Ada');
+        // Neither Bo nor Cy has an account when the import checks.
+        const [ada, swBo, swCy] = [run.sw('Ada', 1), run.sw('Bo', 2), run.sw('Cy', 3)];
+        const gid = run.base + 3100;
+        const file = buildExport({
+          me: ada,
+          people: [swBo, swCy],
+          groups: [{ id: gid, name: 'Trip', memberIds: [ada.id, swBo.id, swCy.id] }],
+          expenses: [
+            expense({
+              id: run.base + 31_001,
+              groupId: gid,
+              users: [
+                [ada.id, 3000, 1000],
+                [swBo.id, 0, 1000],
+                [swCy.id, 0, 1000],
+              ],
+            }),
+          ],
+        });
+        const hook = hookTransactions(run, async (n, go) => {
+          if (1 === n) {
+            hook.restore();
+            await inject(run, me);
+          }
+          return go();
+        });
+        let result;
+        try {
+          result = (await run.importFile(me, file)).results[`group:${gid}`];
+        } finally {
+          hook.restore();
+        }
+        refused(result, reason);
+        assert.equal(
+          await run.db.group.count({ where: { splitwiseGroupId: String(gid) } }),
+          0,
+          `${label}: no group`,
+        );
+        assert.equal(
+          await run.db.user.count({
+            where: { email: { equals: swCy.email!, mode: 'insensitive' } },
+          }),
+          0,
+          `${label}: no account for Cy`,
+        );
+        assert.equal(
+          await run.db.expense.count({ where: { splitwiseExpenseId: String(run.base + 31_001) } }),
+          0,
           label,
         );
       } finally {
