@@ -1,4 +1,14 @@
-import { Bell, Divide, FileUp, Globe2, Import, Users } from 'lucide-react';
+import {
+  Bell,
+  Coins,
+  Divide,
+  FileUp,
+  Globe2,
+  Import,
+  Repeat,
+  SlidersHorizontal,
+  Users,
+} from 'lucide-react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { GITHUB_URL, QUICK_SPLIT_PATH, SITE_URL } from '~/components/Site/constants';
@@ -33,6 +43,11 @@ const FAQS: FaqItem[] = [
     question: 'Can I move my groups over from Splitwise?',
     answer:
       'Yes. SplitPro imports your friends and groups, with their current balances, from a Splitwise JSON backup. Past individual expenses are not imported. Our blog has a step-by-step guide.',
+  },
+  {
+    question: 'Can SplitPro add repeating costs like rent automatically?',
+    answer:
+      'Yes. Set an expense to repeat every day, week, month or year, or on the last day of every month. Each repeat is added like a normal expense, with the same notification as when you add one yourself. You can pause or stop it at any time.',
   },
   {
     question: 'Which currencies are supported?',
@@ -134,6 +149,22 @@ const FEATURES = [
     icon: Users,
     title: 'Groups and friends',
     description: 'A group for every trip or home, or split a one-off cost with a friend.',
+  },
+  {
+    icon: Repeat,
+    title: 'Recurring expenses',
+    description: 'Rent and subscriptions add themselves every week, month or year.',
+  },
+  {
+    icon: SlidersHorizontal,
+    title: 'Default split per group',
+    description:
+      'Save a percentage or shares split once, and new expenses in the group start from it.',
+  },
+  {
+    icon: Coins,
+    title: 'Settle up in a group',
+    description: 'Record a payment inside one group, or clear everything with a friend at once.',
   },
   {
     icon: Globe2,
