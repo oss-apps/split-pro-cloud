@@ -1133,3 +1133,90 @@ void test(
       });
   }),
 );
+
+void test(
+  'a batch that keeps conflicting with other writes is saved in smaller parts, each expense once',
+  { skip: !databaseUrl },
+  withSetup(async (t) => {
+    const { Prisma } = await import('@prisma/client');
+    const me = await t.createUser('Ada');
+    const ada = t.sw('Ada', 1);
+    const bo = t.sw('Bo', 2);
+    const gid = t.base + 100;
+    const expenses = Array.from({ length: 5 }, (_, index) =>
+      expense({
+        id: t.base + 7000 + index,
+        groupId: gid,
+        users: [
+          [ada.id, 1000 + index, 500],
+          [bo.id, 0, 500 + index],
+        ],
+      }),
+    );
+    const file = buildExport({
+      me: ada,
+      people: [bo],
+      groups: [{ id: gid, name: 'Flat', memberIds: [ada.id, bo.id] }],
+      expenses,
+    });
+
+    // Any transaction saving more than one expense fails like a serialization conflict would.
+    let conflicts = 0;
+    const conflictOnBatches = <T extends object>(tx: T): T =>
+      new Proxy(tx, {
+        get(target, prop, receiver) {
+          const value = Reflect.get(target, prop, receiver) as unknown;
+          if ('expense' !== prop) {
+            return value;
+          }
+          const delegate = value as { createManyAndReturn: (args: { data: unknown[] }) => unknown };
+          return new Proxy(delegate, {
+            get(model, name) {
+              if ('createManyAndReturn' !== name) {
+                return Reflect.get(model, name) as unknown;
+              }
+              return (args: { data: unknown[] }) => {
+                if (1 < args.data.length) {
+                  conflicts++;
+                  throw new Prisma.PrismaClientKnownRequestError('write conflict', {
+                    code: 'P2034',
+                    clientVersion: 'test',
+                  });
+                }
+                return model.createManyAndReturn(args);
+              };
+            },
+          });
+        },
+      });
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- called with `t.db` below
+    const original = t.db.$transaction;
+    t.db.$transaction = ((operation: unknown, options: unknown) =>
+      'function' === typeof operation
+        ? original.call(
+            t.db,
+            (tx: object) => (operation as (tx: object) => Promise<unknown>)(conflictOnBatches(tx)),
+            options as never,
+          )
+        : original.call(t.db, operation as never, options as never)) as typeof original;
+
+    try {
+      const { results } = await t.importFile(me, file, (key) => key.startsWith('group:'));
+      const r = imported(results[`group:${gid}`]);
+      assert.equal(r.imported, 5);
+      assert.equal(r.alreadyImported, 0);
+    } finally {
+      t.db.$transaction = original;
+    }
+
+    assert.ok(0 < conflicts, 'the batch conflicted');
+    const group = await t.db.group.findUniqueOrThrow({ where: { splitwiseGroupId: String(gid) } });
+    assert.equal(await t.db.expense.count({ where: { groupId: group.id } }), 5);
+    const boUser = await t.userByEmail('Bo');
+    // Bo owes 5.00 + 5.01 + 5.02 + 5.03 + 5.04.
+    assert.deepEqual(await t.groupBalances(group.id), [
+      `USD ${me.id}->${boUser.id} 2510`,
+      `USD ${boUser.id}->${me.id} -2510`,
+    ]);
+  }),
+);

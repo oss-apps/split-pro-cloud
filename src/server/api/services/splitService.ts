@@ -272,6 +272,10 @@ export const assertValidImportedExpense = (groupId: number | null, input: Expens
  *
  * A personal settlement keeps Splitwise's meaning: it only changes the balance outside groups.
  * Unlike a settle up added in SplitPro, it doesn't clear group balances (no allocations).
+ *
+ * Expenses someone else imported in the meantime are skipped by the unique index rather than by
+ * reading `Expense` first, which would make other balance transactions conflict. Returns the
+ * expenses it added.
  */
 export const insertImportedExpenses = async (
   tx: Prisma.TransactionClient,
@@ -301,6 +305,7 @@ export const insertImportedExpenses = async (
       splitwisePart: input.splitwisePart,
     })),
     select: { id: true, splitwiseExpenseId: true, splitwisePart: true },
+    skipDuplicates: true,
   });
   const expenseIds = new Map(
     expenses.map((expense) => [
@@ -308,9 +313,19 @@ export const insertImportedExpenses = async (
       expense.id,
     ]),
   );
+  const added = prepared.filter(({ input }) =>
+    expenseIds.has(`${input.splitwiseExpenseId}:${input.splitwisePart}`),
+  );
+  const addedIds = new Set(added.map(({ input }) => input.splitwiseExpenseId));
+  // Parts of one Splitwise expense are always saved together, so they are skipped together too.
+  if (
+    added.length !== prepared.filter(({ input }) => addedIds.has(input.splitwiseExpenseId)).length
+  ) {
+    throw new Error('A Splitwise expense was imported at the same time with different parts');
+  }
 
   await tx.expenseParticipant.createMany({
-    data: prepared.flatMap(({ input, participants }) =>
+    data: added.flatMap(({ input, participants }) =>
       participants.map((participant) => ({
         expenseId: expenseIds.get(`${input.splitwiseExpenseId}:${input.splitwisePart}`)!,
         userId: participant.userId,
@@ -320,7 +335,7 @@ export const insertImportedExpenses = async (
   });
 
   const rowsByCurrency = new Map<string, Map<string, BalanceRow>>();
-  prepared.forEach(({ input, participants }) => {
+  added.forEach(({ input, participants }) => {
     const rows = rowsByCurrency.get(input.currency) ?? new Map<string, BalanceRow>();
     rowsByCurrency.set(input.currency, rows);
     toBalanceRows(input.paidBy, participants, 1).forEach((row) => {

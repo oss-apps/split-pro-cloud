@@ -183,7 +183,7 @@ export const SplitwiseHistoryImport: React.FC<{ plan: ImportPlan }> = ({ plan })
               ),
               'expense',
             )}{' '}
-            imported from {plural(importedResults.length, 'group or friend')}.
+            imported.
             {importedResults.some((r) => 'imported' === r.status && r.alreadyImported)
               ? ` ${plural(
                   importedResults.reduce(
@@ -191,7 +191,7 @@ export const SplitwiseHistoryImport: React.FC<{ plan: ImportPlan }> = ({ plan })
                     0,
                   ),
                   'expense',
-                )} were already in SplitPro and were left as they are.`
+                )} already in SplitPro left as they are.`
               : ''}
           </p>
           {problems.length ? (

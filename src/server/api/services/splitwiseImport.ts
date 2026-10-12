@@ -1,4 +1,5 @@
 import { Prisma, SplitType } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
 import { nanoid } from 'nanoid';
 
 import {
@@ -110,12 +111,14 @@ const describeDifferences = (
 
       // Say it from the current user's side when they are in the pair.
       const [creditor, debtor] = b === currentUserId ? [b, a] : [a, b!];
+      const owes = (from: number, to: number, amount: number) =>
+        `${name(from)} ${'you' === name(from) ? 'owe' : 'owes'} ${name(to)} ${formatAmount(currency, amount)}`;
       const describe = (amount: number) =>
         0 === amount
           ? `${name(debtor)} and ${name(creditor)} are settled`
           : 0 < amount
-            ? `${name(debtor)} owes ${name(creditor)} ${formatAmount(currency, amount)}`
-            : `${name(creditor)} owes ${name(debtor)} ${formatAmount(currency, amount)}`;
+            ? owes(debtor, creditor, amount)
+            : owes(creditor, debtor, amount);
       return `Splitwise says ${describe(getOwed(expected, currency, debtor, creditor))}, the expenses say ${describe(getOwed(actual, currency, debtor, creditor))}.`;
     })
     .slice(0, 3);
@@ -517,30 +520,24 @@ const importItem = async (
 const saveBatch = async (
   groupId: number | null,
   inputs: ImportedExpenseInput[],
-  attempt = 1,
 ): Promise<number> => {
   try {
     return await runBalanceTransaction(async (tx) => {
-      // Someone else may have imported some of these in the meantime.
-      const existing = await tx.expense.findMany({
-        where: {
-          splitwiseExpenseId: { in: [...new Set(inputs.map((i) => i.splitwiseExpenseId))] },
-        },
-        select: { splitwiseExpenseId: true },
-      });
-      const existingIds = new Set(existing.map((expense) => expense.splitwiseExpenseId));
-      const toSave = inputs.filter((input) => !existingIds.has(input.splitwiseExpenseId));
-      await insertImportedExpenses(tx, groupId, toSave);
-      return new Set(toSave.map((input) => input.splitwiseExpenseId)).size;
+      // Someone else may have imported some of these in the meantime; they are skipped.
+      const added = await insertImportedExpenses(tx, groupId, inputs);
+      return new Set(added.map((expense) => expense.splitwiseExpenseId)).size;
     });
   } catch (error) {
-    // The same expenses were saved at the same time; the next attempt skips them.
-    if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      'P2002' === error.code &&
-      attempt < 3
-    ) {
-      return saveBatch(groupId, inputs, attempt + 1);
+    // Busy balances kept conflicting with other writes. Smaller transactions conflict less, so
+    // save each half on its own, keeping the parts of one Splitwise expense together.
+    const ids = [...new Set(inputs.map((input) => input.splitwiseExpenseId))];
+    if (error instanceof TRPCError && 'CONFLICT' === error.code && 1 < ids.length) {
+      const firstHalf = new Set(ids.slice(0, Math.ceil(ids.length / 2)));
+      const [first, second] = [
+        inputs.filter((input) => firstHalf.has(input.splitwiseExpenseId)),
+        inputs.filter((input) => !firstHalf.has(input.splitwiseExpenseId)),
+      ];
+      return (await saveBatch(groupId, first)) + (await saveBatch(groupId, second));
     }
     throw error;
   }
