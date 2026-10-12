@@ -27,6 +27,7 @@ import { toFixedNumber, toUIString } from '~/utils/numbers';
 import { SplitwiseGroupSchema, SplitwiseUserSchema } from '~/types';
 import { env } from '~/env';
 import { runBalanceTransaction } from '../services/balanceTransaction';
+import { isHistoryImportEnabled } from '../services/splitwiseImport';
 import { getBalanceBreakdownWithFriend } from '../services/balanceBreakdown';
 import { sendRecurringStatusPushNotification } from '../services/notificationService';
 import { pauseRulesWith, recurrenceInputSchema } from '../services/recurringService';
@@ -555,6 +556,8 @@ export const userRouter = createTRPCRouter({
     return { friends, groups };
   }),
 
+  splitwiseHistoryImportEnabled: protectedProcedure.query(() => isHistoryImportEnabled()),
+
   importUsersFromSplitWise: protectedProcedure
     .input(
       z.object({
@@ -563,8 +566,12 @@ export const userRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ input, ctx }) => {
-      await importUserBalanceFromSplitWise(ctx.session.user.id, input.usersWithBalance);
+      const skippedFriends = await importUserBalanceFromSplitWise(
+        ctx.session.user.id,
+        input.usersWithBalance,
+      );
       await importGroupFromSplitwise(ctx.session.user.id, input.groups);
+      return { skippedFriends };
     }),
 
   getWebPushPublicKey: protectedProcedure.query(async ({ ctx }) => {

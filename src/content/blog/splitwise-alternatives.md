@@ -2,6 +2,7 @@
 title: Splitwise alternatives without a daily expense limit
 description: Splitwise's free plan now caps how many expenses you can add each day. Here is what to look for in a replacement, and the options worth trying.
 date: 2026-10-10
+updated: 2026-10-12
 author: KM Koushik
 tags: Splitwise, Guides
 ---
@@ -37,10 +38,8 @@ Before comparing apps, it helps to know what actually matters when you split mon
 - Groups, one-to-one balances, and every common split type: equal, percentage, shares, exact amounts and adjustments.
 - More than 100 currencies, with balances kept per currency.
 - Receipt photos, push notifications, and it installs on your phone from the browser.
-- Imports your friends and groups from Splitwise, with their balances.
+- Imports your friends and groups from Splitwise, with their past expenses and balances.
 - You can use the hosted version at splitpro.app, or [run it yourself](https://github.com/oss-apps/split-pro).
-
-What it doesn't do yet: the Splitwise import brings over balances, not every past expense. If you need your full history, keep a Splitwise export as a record.
 
 ### Spliit
 

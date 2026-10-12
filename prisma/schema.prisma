@@ -178,6 +178,16 @@ model Expense {
     /// The rule this expense was repeated by, and the local date it stands for.
     recurringId         Int?
     occurrenceDate      DateTime?            @db.Date
+    /// The Splitwise expense this was imported from. An expense with several payers is imported
+    /// as one expense per payer, numbered by `splitwisePart` from 0. Ids are only unique within a
+    /// scope, the group (`group:<id>`) or the people outside groups (`users:<ids>`), so an id in
+    /// someone else's file can't affect another scope.
+    splitwiseExpenseId  String?
+    splitwiseScope      String?
+    splitwisePart       Int?
+    /// Set by database triggers on any change to an imported expense or its participants after the
+    /// import saved it. From then on it counts as SplitPro history, not as imported from Splitwise.
+    splitwiseEdited     Boolean              @default(false)
     group               Group?               @relation(fields: [groupId], references: [id], onDelete: Cascade)
     paidByUser          User                 @relation(name: "PaidByUser", fields: [paidBy], references: [id], onDelete: Cascade)
     addedByUser         User                 @relation(name: "AddedByUser", fields: [addedBy], references: [id], onDelete: Cascade)
@@ -189,6 +199,7 @@ model Expense {
     recurring           RecurringExpense?    @relation(fields: [recurringId], references: [id], onDelete: SetNull)
 
     @@unique([recurringId, occurrenceDate])
+    @@unique([splitwiseExpenseId, splitwiseScope, splitwisePart])
     @@index([groupId])
     @@index([paidBy])
 }
@@ -307,6 +318,29 @@ model ExpenseNote {
 model PushNotification {
     userId       Int    @id
     subscription String
+}
+
+enum SplitwiseImportMode {
+    BALANCE
+    HISTORY
+}
+
+/// How a person's Splitwise balances came over: as one amount per friend (the balance-only
+/// import), or as the expenses that make them up. A person has one or the other, never both, so
+/// no total is counted twice. Each importer sets it in the transaction that writes the balances.
+/// No foreign key: ids aren't reused, and deleting an account shouldn't lock these rows.
+model SplitwiseImportPerson {
+    userId    Int                 @id
+    mode      SplitwiseImportMode
+    createdAt DateTime            @default(now())
+}
+
+/// A short lease while a Splitwise group, or a pair outside groups, is being imported, so two
+/// imports of the same history never run at the same time.
+model SplitwiseImportLock {
+    key       String   @id
+    token     String
+    expiresAt DateTime
 }
 
 model RateLimit {
