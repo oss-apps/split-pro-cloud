@@ -47,7 +47,7 @@ const FAQS: FaqItem[] = [
   {
     question: 'Can SplitPro add repeating costs like rent automatically?',
     answer:
-      'Yes. Set an expense to repeat every day, week, month or year, or on the last day of every month. Each repeat is added like a normal expense, with the same notification as when you add one yourself. You can pause or stop it at any time.',
+      'Yes. Set an expense to repeat every day, week, month or year, or on the last day of every month. Each repeat is added like a normal expense, with the same notification as when you add one yourself. Anyone in the expense can pause or stop it. In a group, they also need to still be a member.',
   },
   {
     question: 'Which currencies are supported?',
@@ -159,12 +159,12 @@ const FEATURES = [
     icon: SlidersHorizontal,
     title: 'Default split per group',
     description:
-      'Save a percentage or shares split once, and new expenses in the group start from it.',
+      'Choose an equal, percentage or shares split, and new expenses in the group start from it.',
   },
   {
     icon: Coins,
     title: 'Settle up in a group',
-    description: 'Record a payment inside one group, or clear everything with a friend at once.',
+    description: 'Record a payment in one group, or settle up with a friend in one currency.',
   },
   {
     icon: Globe2,
