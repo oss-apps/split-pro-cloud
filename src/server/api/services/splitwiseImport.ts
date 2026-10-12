@@ -26,6 +26,7 @@ import {
 } from '~/lib/splitwiseImport';
 import { db } from '~/server/db';
 import { MAX_AMOUNT_CENTS, toFixedNumber } from '~/utils/numbers';
+import { getKnownUserIds } from './accessControl';
 import { BALANCE_CONFLICT_MESSAGE, runBalanceTransaction } from './balanceTransaction';
 import {
   type ImportedExpenseInput,
@@ -460,6 +461,30 @@ const importItem = async (
 
   const newExpenses = active.filter((expense) => !storedById.has(String(expense.id)));
   const newParts = newExpenses.flatMap((expense) => converted.get(String(expense.id))!);
+
+  // New expenses between two other people change their balance with each other. Like adding a
+  // group expense in the app, that needs everyone who already has an account to be known to you.
+  const others = new Set<number>();
+  newParts.forEach((part) =>
+    part.shares
+      .filter((share) => 0 !== share.amount && share.userId !== part.paidBy)
+      .filter((share) => me !== share.userId && me !== part.paidBy)
+      .forEach((share) => [share.userId, part.paidBy].forEach((id) => others.add(id))),
+  );
+  const existingOthers = [...others].flatMap((swId) => {
+    const spId = toUserId(swId);
+    return undefined === spId ? [] : [spId];
+  });
+  if (existingOthers.length) {
+    const known = await getKnownUserIds(userId, existingOthers);
+    const unknown = existingOthers.filter((spId) => !known.has(spId));
+    if (unknown.length) {
+      const names = unknown.map((spId) => name(splitwiseIdOf.get(spId)!)).sort();
+      refuse(
+        `${names.join(', ')} already ${1 === names.length ? 'uses' : 'use'} SplitPro, and these expenses would change what they owe others, but they aren't your friends or in a group with you. Add them as friends, then import again.`,
+      );
+    }
+  }
   newParts.forEach((part) => addExpense(resulting, part));
 
   // What Splitwise reports for the same group or friends.

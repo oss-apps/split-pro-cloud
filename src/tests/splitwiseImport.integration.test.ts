@@ -1082,6 +1082,12 @@ void test(
     );
     const boUser = await t.createUser('Bo');
     const cyUser = await t.createUser('Cy');
+    await t.db.friendship.createMany({
+      data: [
+        { userId: boUser.id, friendId: cyUser.id },
+        { userId: cyUser.id, friendId: boUser.id },
+      ],
+    });
     const fileFor = (me: Person, others: Person[], list: typeof expenses) =>
       buildExport({ me, people: others, groups, expenses: list });
 
@@ -1555,6 +1561,7 @@ void test(
     const [groupExpenseId, friendExpenseId] = [t.base + 9201, t.base + 9202];
 
     // Fred makes up a group with Ada and Bo, and an expense outside groups with Ada, reusing ids.
+    // (A debt between Ada and Bo alone would be refused; see the next test.)
     const forged = buildExport({
       me: fred,
       people: [ada, bo],
@@ -1564,8 +1571,8 @@ void test(
           id: groupExpenseId,
           groupId: t.base + 400,
           users: [
-            [ada.id, 10000, 0],
-            [bo.id, 0, 10000],
+            [fred.id, 10000, 0],
+            [ada.id, 0, 10000],
           ],
         }),
         expense({
@@ -1630,6 +1637,63 @@ void test(
       (await t.importFile(adaUser, moved)).results[`friends:${bo.id}`],
       /already imported in another group with other people/,
     );
+  }),
+);
+
+void test(
+  "debts between two other people need them to be known to you, like in the app (Sol's repro)",
+  { skip: !databaseUrl },
+  withSetup(async (t) => {
+    const fred = t.sw('Fred', 1);
+    const ada = t.sw('Ada', 2);
+    const bo = t.sw('Bo', 3);
+    const newcomer = t.sw('Cy', 4);
+    const fredUser = await t.createUser('Fred');
+    const adaUser = await t.createUser('Ada');
+    const boUser = await t.createUser('Bo');
+    const gid = t.base + 450;
+    const fileWith = (debtor: Person, people: Person[], id: number) =>
+      buildExport({
+        me: fred,
+        people,
+        groups: [{ id, name: 'Made up', memberIds: [fred.id, ...people.map((p) => p.id)] }],
+        expenses: [
+          expense({
+            id: id * 10,
+            groupId: id,
+            users: [
+              [ada.id, 10000, 0],
+              [debtor.id, 0, 10000],
+            ],
+          }),
+        ],
+      });
+    const before = await t.snapshot();
+
+    // Ada and Bo already use SplitPro and don't know Fred: Fred can't put a debt between them.
+    refused(
+      (await t.importFile(fredUser, fileWith(bo, [ada, bo], gid))).results[`group:${gid}`],
+      /Ada, Bo already use SplitPro/,
+    );
+    // Nor between Ada and someone new.
+    refused(
+      (await t.importFile(fredUser, fileWith(newcomer, [ada, newcomer], gid + 1))).results[
+        `group:${gid + 1}`
+      ],
+      /Ada already uses SplitPro/,
+    );
+    assert.deepEqual(await t.snapshot(), before, 'nothing written');
+    assert.deepEqual(await t.balances([adaUser.id, boUser.id]), []);
+
+    // Once they are Fred's friends, it imports, as adding the expense in the app would.
+    await t.db.friendship.createMany({
+      data: [adaUser, boUser].flatMap((u) => [
+        { userId: fredUser.id, friendId: u.id },
+        { userId: u.id, friendId: fredUser.id },
+      ]),
+    });
+    imported((await t.importFile(fredUser, fileWith(bo, [ada, bo], gid))).results[`group:${gid}`]);
+    assert.equal((await t.balances([adaUser.id, boUser.id])).length, 2);
   }),
 );
 
