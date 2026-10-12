@@ -2,6 +2,7 @@
 title: How to move from Splitwise to SplitPro
 description: A step-by-step guide to bringing your friends, groups and balances from Splitwise into SplitPro, and what to do with your expense history.
 date: 2026-10-10
+updated: 2026-10-12
 author: KM Koushik
 tags: Splitwise, Guides
 ---
@@ -55,6 +56,6 @@ Anyone who signs in with that email sees their balances straight away. People wh
 
 **Can I import the same group twice?** Avoid it. Import once, check the balances, and add new expenses in SplitPro from then on.
 
-**What about recurring costs like rent?** Add them as regular expenses each month.
+**What about recurring costs like rent?** Add the expense once and set it to repeat. SplitPro adds it again every week, month or year, just like an expense you add yourself.
 
 **I only need to settle one last trip.** You don't have to import anything. Enter the trip's expenses into a free [quick split](/split), share the link, and start fresh in SplitPro.
