@@ -15,6 +15,8 @@ import { DownloadCloud } from 'lucide-react';
 import { LoadingSpinner } from '~/components/ui/spinner';
 import { useRouter } from 'next/router';
 import { PaperClipIcon } from '@heroicons/react/24/solid';
+import { SplitwiseHistoryImport } from '~/components/Account/SplitwiseHistoryImport';
+import { type ImportPlan, buildImportPlan, exportFileSchema } from '~/lib/splitwiseImport';
 
 const ImportSpliwisePage: NextPageWithUser = () => {
   const [usersWithBalance, setUsersWithBalance] = useState<Array<SplitwiseUser>>([]);
@@ -22,6 +24,8 @@ const ImportSpliwisePage: NextPageWithUser = () => {
   const [selectedUsers, setSelectedUsers] = useState<Record<string, boolean>>({});
   const [selectedGroups, setSelectedGroups] = useState<Record<string, boolean>>({});
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  // Files with expense history (version 2 of the exporter). Older files only have balances.
+  const [plan, setPlan] = useState<ImportPlan | null>(null);
 
   const router = useRouter();
 
@@ -33,9 +37,22 @@ const ImportSpliwisePage: NextPageWithUser = () => {
     if (!file) return;
 
     setUploadedFile(file);
+    setPlan(null);
 
     try {
       const json = JSON.parse(await file.text()) as Record<string, unknown>;
+
+      if (undefined !== json.version) {
+        const parsed = exportFileSchema.safeParse(json);
+        if (!parsed.success) {
+          toast.error("This file isn't from a version of the exporter SplitPro can read.");
+          setUploadedFile(null);
+          return;
+        }
+        setPlan(buildImportPlan(parsed.data));
+        return;
+      }
+
       const friendsWithOutStandingBalance: Array<SplitwiseUser> = [];
       for (const friend of json.friends as Array<Record<string, unknown>>) {
         const balance = friend.balance as Array<{ currency_code: string; amount: string }>;
@@ -86,8 +103,13 @@ const ImportSpliwisePage: NextPageWithUser = () => {
         groups: groups.filter((group) => selectedGroups[group.id]),
       },
       {
-        onSuccess: () => {
+        onSuccess: ({ skippedFriends }) => {
           toast.success('Import successful');
+          if (skippedFriends.length) {
+            toast.info(
+              `Balances with ${skippedFriends.join(', ')} weren't added again: their expenses were already imported with history.`,
+            );
+          }
           router.push('/balances').catch((err) => console.error(err));
         },
       },
@@ -111,16 +133,18 @@ const ImportSpliwisePage: NextPageWithUser = () => {
               </Link>
             </div>
             <div className="font-medium">Import from splitwise</div>
-            <div className="flex gap-4">
-              <Button
-                onClick={onImport}
-                variant="ghost"
-                className="px-0 py-0 text-primary"
-                size="sm"
-                disabled={importMutation.isLoading || !uploadedFile}
-              >
-                Import
-              </Button>
+            <div className="flex min-w-[46px] gap-4">
+              {plan ? null : (
+                <Button
+                  onClick={onImport}
+                  variant="ghost"
+                  className="px-0 py-0 text-primary"
+                  size="sm"
+                  disabled={importMutation.isLoading || !uploadedFile}
+                >
+                  Import
+                </Button>
+              )}
             </div>
           </div>
           <div className="mt-4 flex items-center gap-4">
@@ -142,22 +166,34 @@ const ImportSpliwisePage: NextPageWithUser = () => {
                 className="hidden"
               />
             </label>
-            <Button
-              onClick={onImport}
-              disabled={!uploadedFile || importMutation.isLoading}
-              className="w-[100px]"
-              size="sm"
-            >
-              {importMutation.isLoading ? <LoadingSpinner /> : 'Import'}
-            </Button>
-          </div>
-          <div className="mt-4 text-sm text-gray-400">
-            Note: It currently only supports importing friends and groups. It will not import
-            transactions. We are working on it.
+            {plan ? null : (
+              <Button
+                onClick={onImport}
+                disabled={!uploadedFile || importMutation.isLoading}
+                className="w-[100px]"
+                size="sm"
+              >
+                {importMutation.isLoading ? <LoadingSpinner /> : 'Import'}
+              </Button>
+            )}
           </div>
 
-          {uploadedFile ? (
+          {plan ? (
+            <SplitwiseHistoryImport key={uploadedFile?.name} plan={plan} />
+          ) : uploadedFile ? (
             <>
+              <div className="mt-4 text-sm text-gray-400">
+                This file only has balances, so past expenses won&apos;t be imported. To bring them
+                over too, download a new file from the{' '}
+                <Link
+                  href="https://export-splitwise.vercel.app/"
+                  target="_blank"
+                  className="text-primary underline"
+                >
+                  exporter
+                </Link>
+                .
+              </div>
               <div className="mt-8 font-semibold">Friends ({usersWithBalance.length})</div>
               {usersWithBalance.length ? (
                 <div className="mt-4 flex flex-col gap-3">

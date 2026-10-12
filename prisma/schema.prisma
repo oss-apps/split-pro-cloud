@@ -178,6 +178,10 @@ model Expense {
     /// The rule this expense was repeated by, and the local date it stands for.
     recurringId         Int?
     occurrenceDate      DateTime?            @db.Date
+    /// The Splitwise expense this was imported from. An expense with several payers is imported
+    /// as one expense per payer, numbered by `splitwisePart` from 0.
+    splitwiseExpenseId  String?
+    splitwisePart       Int?
     group               Group?               @relation(fields: [groupId], references: [id], onDelete: Cascade)
     paidByUser          User                 @relation(name: "PaidByUser", fields: [paidBy], references: [id], onDelete: Cascade)
     addedByUser         User                 @relation(name: "AddedByUser", fields: [addedBy], references: [id], onDelete: Cascade)
@@ -189,6 +193,7 @@ model Expense {
     recurring           RecurringExpense?    @relation(fields: [recurringId], references: [id], onDelete: SetNull)
 
     @@unique([recurringId, occurrenceDate])
+    @@unique([splitwiseExpenseId, splitwisePart])
     @@index([groupId])
     @@index([paidBy])
 }

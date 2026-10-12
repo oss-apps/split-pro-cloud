@@ -42,7 +42,7 @@ const FAQS: FaqItem[] = [
   {
     question: 'Can I move my groups over from Splitwise?',
     answer:
-      'Yes. SplitPro imports your friends and groups, with their current balances, from a Splitwise JSON backup. Past individual expenses are not imported. Our blog has a step-by-step guide.',
+      'Yes. SplitPro imports your groups and friends with their past expenses, from the file our free Splitwise exporter downloads. Balances are checked against Splitwise before anything is saved. Our blog has a step-by-step guide.',
   },
   {
     question: 'Can SplitPro add repeating costs like rent automatically?',
@@ -179,7 +179,7 @@ const FEATURES = [
   {
     icon: Import,
     title: 'Import from Splitwise',
-    description: 'Bring your friends and groups over with their balances.',
+    description: 'Bring your friends and groups over with their past expenses and balances.',
   },
   {
     icon: FileUp,

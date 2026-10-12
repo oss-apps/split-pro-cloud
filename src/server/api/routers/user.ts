@@ -563,8 +563,12 @@ export const userRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ input, ctx }) => {
-      await importUserBalanceFromSplitWise(ctx.session.user.id, input.usersWithBalance);
+      const skippedFriends = await importUserBalanceFromSplitWise(
+        ctx.session.user.id,
+        input.usersWithBalance,
+      );
       await importGroupFromSplitwise(ctx.session.user.id, input.groups);
+      return { skippedFriends };
     }),
 
   getWebPushPublicKey: protectedProcedure.query(async ({ ctx }) => {

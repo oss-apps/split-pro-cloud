@@ -64,34 +64,33 @@ const getBalancedParticipants = (groupId: number | null, input: ExpenseInput) =>
   }
 };
 
-/**
- * Applies (direction 1) or reverts (direction -1) an expense on the precomputed balances.
- * Each pair is written as a mirrored row on both sides so `Balance` and `GroupBalance` stay
- * antisymmetric.
- */
-const updateBalances = async (
-  tx: Prisma.TransactionClient,
-  {
-    groupId,
-    paidBy,
-    currency,
-    participants,
-  }: {
-    groupId: number | null;
-    paidBy: number;
-    currency: string;
-    participants: StoredParticipant[];
-  },
+type BalanceRow = { userId: number; friendId: number; amount: number };
+
+/** The mirrored balance changes of one expense, applied (direction 1) or reverted (-1). */
+const toBalanceRows = (
+  paidBy: number,
+  participants: StoredParticipant[],
   direction: 1 | -1,
-) => {
-  const rows = participants
+): BalanceRow[] =>
+  participants
     .filter((participant) => participant.userId !== paidBy)
     .flatMap((participant) => [
       { userId: paidBy, friendId: participant.userId, amount: -participant.amount * direction },
       { userId: participant.userId, friendId: paidBy, amount: participant.amount * direction },
-    ])
-    // A stable write order keeps concurrent transactions from deadlocking on each other.
-    .sort((a, b) => a.userId - b.userId || a.friendId - b.friendId);
+    ]);
+
+/**
+ * Adds balance changes to `Balance`, and to `GroupBalance` for a group. Each pair is written as a
+ * mirrored row on both sides so the tables stay antisymmetric.
+ */
+const writeBalanceRows = async (
+  tx: Prisma.TransactionClient,
+  groupId: number | null,
+  currency: string,
+  balanceRows: BalanceRow[],
+) => {
+  // A stable write order keeps concurrent transactions from deadlocking on each other.
+  const rows = [...balanceRows].sort((a, b) => a.userId - b.userId || a.friendId - b.friendId);
 
   await Promise.all(
     rows.map((row) =>
@@ -132,6 +131,23 @@ const updateBalances = async (
     ),
   );
 };
+
+/** Applies (direction 1) or reverts (direction -1) an expense on the precomputed balances. */
+const updateBalances = async (
+  tx: Prisma.TransactionClient,
+  {
+    groupId,
+    paidBy,
+    currency,
+    participants,
+  }: {
+    groupId: number | null;
+    paidBy: number;
+    currency: string;
+    participants: StoredParticipant[];
+  },
+  direction: 1 | -1,
+) => writeBalanceRows(tx, groupId, currency, toBalanceRows(paidBy, participants, direction));
 
 const hasSameFinancialEffect = (
   expense: {
@@ -237,6 +253,87 @@ export const insertExpense = async (
   }
 
   return expense;
+};
+
+export type ImportedExpenseInput = ExpenseInput & {
+  splitwiseExpenseId: string;
+  splitwisePart: number;
+};
+
+/** Checks an expense to import exactly like a manual add would, without saving anything. */
+export const assertValidImportedExpense = (groupId: number | null, input: ExpenseInput) => {
+  getBalancedParticipants(groupId, input);
+};
+
+/**
+ * Adds expenses imported from Splitwise, inside a balance transaction. Each is validated like a
+ * manual add and changes the balances the same way; the changes are summed per pair so a batch
+ * writes each balance row once. No notifications are sent.
+ *
+ * A personal settlement keeps Splitwise's meaning: it only changes the balance outside groups.
+ * Unlike a settle up added in SplitPro, it doesn't clear group balances (no allocations).
+ */
+export const insertImportedExpenses = async (
+  tx: Prisma.TransactionClient,
+  groupId: number | null,
+  inputs: ImportedExpenseInput[],
+) => {
+  if (!inputs.length) {
+    return [];
+  }
+
+  const prepared = inputs.map((input) => ({
+    input,
+    participants: getBalancedParticipants(groupId, input),
+  }));
+  const expenses = await tx.expense.createManyAndReturn({
+    data: prepared.map(({ input }) => ({
+      groupId,
+      paidBy: input.paidBy,
+      name: input.name,
+      category: input.category,
+      amount: toInteger(input.amount),
+      splitType: input.splitType,
+      currency: input.currency,
+      addedBy: input.currentUserId,
+      expenseDate: input.expenseDate,
+      splitwiseExpenseId: input.splitwiseExpenseId,
+      splitwisePart: input.splitwisePart,
+    })),
+    select: { id: true, splitwiseExpenseId: true, splitwisePart: true },
+  });
+  const expenseIds = new Map(
+    expenses.map((expense) => [
+      `${expense.splitwiseExpenseId}:${expense.splitwisePart}`,
+      expense.id,
+    ]),
+  );
+
+  await tx.expenseParticipant.createMany({
+    data: prepared.flatMap(({ input, participants }) =>
+      participants.map((participant) => ({
+        expenseId: expenseIds.get(`${input.splitwiseExpenseId}:${input.splitwisePart}`)!,
+        userId: participant.userId,
+        amount: participant.amount,
+      })),
+    ),
+  });
+
+  const rowsByCurrency = new Map<string, Map<string, BalanceRow>>();
+  prepared.forEach(({ input, participants }) => {
+    const rows = rowsByCurrency.get(input.currency) ?? new Map<string, BalanceRow>();
+    rowsByCurrency.set(input.currency, rows);
+    toBalanceRows(input.paidBy, participants, 1).forEach((row) => {
+      const key = `${row.userId}:${row.friendId}`;
+      rows.set(key, { ...row, amount: (rows.get(key)?.amount ?? 0) + row.amount });
+    });
+  });
+
+  for (const [currency, rows] of rowsByCurrency) {
+    await writeBalanceRows(tx, groupId, currency, [...rows.values()]);
+  }
+
+  return expenses;
 };
 
 const createExpense = async (
@@ -587,11 +684,29 @@ export async function getCompleteGroupDetails(userId: number) {
   return groups;
 }
 
+/** Whether expenses imported from Splitwise with their history involve both people. */
+const hasImportedHistory = async (userId: number, friendId: number) =>
+  !!(await db.expense.findFirst({
+    where: {
+      splitwiseExpenseId: { not: null },
+      AND: [
+        { expenseParticipants: { some: { userId } } },
+        { expenseParticipants: { some: { userId: friendId } } },
+      ],
+    },
+    select: { id: true },
+  }));
+
+/**
+ * Imports a balance-only file: each friend's Splitwise balance is added as one amount. Returns
+ * the friends skipped because history imported with expenses already makes up their balance.
+ */
 export async function importUserBalanceFromSplitWise(
   currentUserId: number,
   splitWiseUsers: SplitwiseUser[],
 ) {
   const operations = [];
+  const skipped: string[] = [];
 
   const users = await createUsersFromSplitwise(splitWiseUsers);
 
@@ -609,6 +724,12 @@ export async function importUserBalanceFromSplitWise(
   for (const user of splitWiseUsers) {
     const dbUser = userMap[user.email];
     if (!dbUser) {
+      continue;
+    }
+
+    // Adding the balance on top would count it twice.
+    if (await hasImportedHistory(currentUserId, dbUser.id)) {
+      skipped.push(dbUser.name ?? dbUser.email ?? user.email);
       continue;
     }
 
@@ -682,6 +803,7 @@ export async function importUserBalanceFromSplitWise(
   }
 
   await db.$transaction(operations);
+  return skipped;
 }
 
 async function createUsersFromSplitwise(users: Array<SplitwiseUser>) {
