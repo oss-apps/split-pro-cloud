@@ -25,6 +25,8 @@ Many Splitwise groups **simplify debts**: Splitwise shows fewer payments, for ex
 
 Each friend and group member is added by their email address. When they sign in to SplitPro with the same email, they see the same balances and history you do. Someone without an email address in Splitwise can't be matched, so a group or friend with them in it isn't imported.
 
+**Import before you add expenses together in SplitPro.** History can only be imported for people you haven't recorded expenses or payments with in SplitPro yet. Import your Splitwise history before you start adding expenses together here. Several Splitwise groups with the same people are fine, and so is importing again to finish an import that stopped part way.
+
 ## Step 1: Pick a good moment
 
 The cleanest time to switch is between trips, right after a round of settling up. Smaller balances mean fewer questions later. It also helps to tell your group before you move, so nobody keeps adding expenses in the old app.
@@ -51,7 +53,7 @@ Splitwise Pro also offers a **JSON backup** of your account. Its format isn't do
 
 Each person's total in a group now matches Splitwise, and so does your balance with each friend outside groups. In groups that simplify debts, who owes whom can differ, as explained above, so your balance with one friend may too. Check two or three groups against Splitwise before you tell everyone you're done.
 
-If you imported with an older version of the exporter, your balances came over without history. SplitPro won't add a group's history on top of those balances, because that would count them twice; the summary tells you which ones.
+If you imported with an older version of the exporter, your balances came over without history. SplitPro won't add history on top of those balances, because that would count them twice. The same goes for anyone you've already recorded expenses or payments with in SplitPro. The summary tells you which ones.
 
 ## Step 4: Bring your group along
 

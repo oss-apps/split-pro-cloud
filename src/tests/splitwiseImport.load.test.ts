@@ -7,7 +7,10 @@ import { buildExport, expense, person } from './splitwiseFixtures';
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const enabled = !!databaseUrl && '1' === process.env.SPLITWISE_IMPORT_LOAD;
 const GROUP_EXPENSES = Number(process.env.SPLITWISE_IMPORT_LOAD_EXPENSES ?? 12_000);
-/** Expenses Ada and Bo already have in SplitPro, which the balance guard adds up. */
+/**
+ * Expenses Ada and Bo already have, imported from another Splitwise scope (clean slate allows only
+ * those), and as many manual ones Ada has with Kim, which the history check looks through.
+ */
 const EXISTING_EXPENSES = Number(process.env.SPLITWISE_IMPORT_LOAD_EXISTING ?? 10_000);
 
 void test(
@@ -49,13 +52,14 @@ void test(
         { userId: bo.id, friendId: me.id },
       ],
     });
-    // Their existing expenses outside groups, in all three currencies, with matching balances.
+    // Their imported expenses outside groups, in all three currencies, with matching balances.
     await db.$executeRaw`
       INSERT INTO "Expense" (id, "paidBy", "addedBy", name, category, amount, "splitType",
-        "expenseDate", "createdAt", "updatedAt", currency)
+        "expenseDate", "createdAt", "updatedAt", currency, "splitwiseExpenseId",
+        "splitwiseScope", "splitwisePart")
       SELECT ${suffix} || '-' || g, CASE WHEN 0 = g % 3 THEN ${bo.id} ELSE ${me.id} END, ${me.id},
         'Existing', 'general', 2 * (100 + g % 1000), 'EXACT', now(), now(), now(),
-        (ARRAY['USD', 'EUR', 'JPY'])[1 + g % 3]
+        (ARRAY['USD', 'EUR', 'JPY'])[1 + g % 3], 'seed-' || g, 'users:seed', 0
       FROM generate_series(1, ${EXISTING_EXPENSES}) g`;
     await db.$executeRaw`
       INSERT INTO "ExpenseParticipant" ("expenseId", "userId", amount)
@@ -72,6 +76,23 @@ void test(
         SELECT CASE WHEN "paidBy" = ${me.id} THEN ${bo.id} ELSE ${me.id} END, "paidBy",
                currency, -amount / 2 FROM "Expense" WHERE id LIKE ${suffix} || '-%'
       ) rows GROUP BY u, f, currency`;
+    // Ada's manual expenses with Kim, with matching balances.
+    const kim = await db.user.create({ data: { email: `kim-${suffix}@example.com`, name: 'Kim' } });
+    await db.$executeRaw`
+      INSERT INTO "Expense" (id, "paidBy", "addedBy", name, category, amount, "splitType",
+        "expenseDate", "createdAt", "updatedAt", currency)
+      SELECT 'm' || ${suffix} || '-' || g, ${me.id}, ${me.id}, 'Manual', 'general', 200, 'EXACT',
+        now(), now(), now(), 'USD'
+      FROM generate_series(1, ${EXISTING_EXPENSES}) g`;
+    await db.$executeRaw`
+      INSERT INTO "ExpenseParticipant" ("expenseId", "userId", amount)
+      SELECT id, ${me.id}, 100 FROM "Expense" WHERE id LIKE 'm' || ${suffix} || '-%'
+      UNION ALL
+      SELECT id, ${kim.id}, -100 FROM "Expense" WHERE id LIKE 'm' || ${suffix} || '-%'`;
+    await db.$executeRaw`
+      INSERT INTO "Balance" ("userId", "friendId", currency, amount, "updatedAt")
+      VALUES (${me.id}, ${kim.id}, 'USD', ${100 * EXISTING_EXPENSES}, now()),
+             (${kim.id}, ${me.id}, 'USD', ${-100 * EXISTING_EXPENSES}, now())`;
     const gid = base + 100;
     const currencies = ['USD', 'EUR', 'JPY'];
 
@@ -246,7 +267,7 @@ void test(
       // touches.
       const userIds = (
         await db.user.findMany({
-          where: { email: { contains: suffix }, id: { notIn: [gus!.id, hal!.id] } },
+          where: { email: { contains: suffix }, id: { notIn: [gus!.id, hal!.id, kim.id] } },
           select: { id: true },
         })
       ).map((u) => u.id);
@@ -278,7 +299,7 @@ void test(
       );
       const guardMs = {
         pairs: keys.length / 2,
-        adaAndBoExpenses: await db.expense.count({
+        expensesPaidByAdaOrBo: await db.expense.count({
           where: { OR: [{ paidBy: me.id }, { paidBy: bo.id }], deletedAt: null },
         }),
         preflightAllPairs: await time(() => guard.checkBalances(db, keys)),

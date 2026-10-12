@@ -32,6 +32,7 @@ import {
   type BalanceKey,
   type BalanceSnapshot,
   BalancesChangedError,
+  NOT_A_CLEAN_SLATE,
   assertBalancesUnchanged,
   checkBalances,
   getBalanceKeys,
@@ -682,27 +683,34 @@ const importItem = async (
         })),
       })),
     ).filter(({ userId, friendId }) => 0 < userId && 0 < friendId);
-  const describeUnexplained = (keys: BalanceKey[]) => {
+  /** The refusal for pairs that aren't a clean slate (see `balanceConsistency`). */
+  const describeNotClean = ({
+    withHistory,
+    unexplained,
+  }: {
+    withHistory: { lo: number; hi: number }[];
+    unexplained: BalanceKey[];
+  }) => {
     const pairs = [
       ...new Set(
-        keys.map(({ userId, friendId, groupId }) => `${userId}:${friendId}:${null !== groupId}`),
+        [
+          ...withHistory,
+          ...unexplained.map(({ userId, friendId }) => ({ lo: userId, hi: friendId })),
+        ].map(({ lo, hi }) => `${lo}:${hi}`),
       ),
     ].map((pair) => {
-      const [a, b, inGroup] = pair.split(':');
-      const [x, y] = [Number(a), Number(b)].map((spId) => {
-        const swId = splitwiseIdOf.get(spId);
+      const [x, y] = pair.split(':').map((spId) => {
+        const swId = splitwiseIdOf.get(Number(spId));
         return undefined === swId ? 'someone' : name(swId);
       }) as [string, string];
-      const where = 'true' === inGroup ? ' in this group' : '';
       return 'you' === x || 'you' === y
-        ? `Your SplitPro balance with ${'you' === x ? y : x}${where} doesn't match your expenses together.`
-        : `The SplitPro balance between ${x} and ${y}${where} doesn't match their expenses together.`;
+        ? `You and ${'you' === x ? y : x} already have expenses, payments or balances in SplitPro.`
+        : `${x} and ${y} already have expenses, payments or balances in SplitPro.`;
     });
-    return [
-      ...pairs.slice(0, MAX_REASONS - 1),
-      "So history can't be added safely, and nothing was imported. This can happen after an earlier Splitwise import of balances only, or when a friend was removed and added again. The balances stay as they are.",
-    ];
+    return [...pairs.slice(0, MAX_REASONS - 1), NOT_A_CLEAN_SLATE];
   };
+  const isClean = (checked: { withHistory: unknown[]; unexplained: unknown[] }) =>
+    !checked.withHistory.length && !checked.unexplained.length;
 
   let checkedRows: BalanceSnapshot = new Map();
   if (newParts.length) {
@@ -713,8 +721,8 @@ const importItem = async (
       refuse(...describeBalanceOnly(balanceOnly));
     }
     const checked = await checkBalances(db, balanceKeysOf(toUserId, existingGroup?.id ?? null));
-    if (checked.unexplained.length) {
-      refuse(...describeUnexplained(checked.unexplained));
+    if (!isClean(checked)) {
+      refuse(...describeNotClean(checked));
     }
     // The rows as checked: each batch requires them unchanged.
     checkedRows = checked.snapshot;
@@ -771,8 +779,8 @@ const importItem = async (
       db,
       balanceKeysOf((swId) => ids.get(swId), groupId),
     );
-    if (checked.unexplained.length) {
-      return { status: 'refused', reasons: describeUnexplained(checked.unexplained) };
+    if (!isClean(checked)) {
+      return { status: 'refused', reasons: describeNotClean(checked) };
     }
     checkedRows = checked.snapshot;
   }

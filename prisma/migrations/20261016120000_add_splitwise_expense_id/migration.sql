@@ -37,9 +37,10 @@ CREATE UNIQUE INDEX "Expense_splitwiseExpenseId_splitwiseScope_splitwisePart_key
 -- Records everyone with a balance from the balance-only import, so no history is imported for
 -- them on top of it, even once the rows are gone (removing a settled friend deletes them). This
 -- can't prove someone never had a balance-only import: rows deleted before it ran leave no trace.
--- What makes turning history on safe is the balance check of each import (balanceConsistency.ts),
--- which refuses a pair whose stored balance doesn't match its expenses. These marks, and the
--- import's check of importedFromSplitwise rows, are an extra layer.
+-- What makes turning history on safe is the clean-slate check of each import
+-- (balanceConsistency.ts): it refuses any pair with SplitPro history other than imported expenses,
+-- or with balances those don't explain. These marks, and the import's check of
+-- importedFromSplitwise rows, are an extra layer.
 INSERT INTO "SplitwiseImportPerson" ("userId", "mode")
 SELECT "userId", 'BALANCE'::"SplitwiseImportMode" FROM "Balance" WHERE "importedFromSplitwise"
 UNION

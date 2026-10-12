@@ -1507,8 +1507,8 @@ void test(
     const { gid, file } = sharedGroupFile(t, t.sw('Ada', 1), t.sw('Bo', 2), 1000);
     const request = requestFor(t, file, `group:${gid}`);
 
-    // As if an import that didn't hold the lease saved another version first. It's in another
-    // currency, so these balance rows are unchanged and the comparison of the expense catches it.
+    // As if an import that didn't hold the lease saved another version first. Only Ada is in it,
+    // so it writes no balance rows and the comparison of the expense is what catches it.
     const hook = hookTransactions(t, async (n, run) => {
       if (2 === n) {
         const group = await t.db.group.findUniqueOrThrow({
@@ -1522,11 +1522,8 @@ void test(
               category: 'general',
               amount: 30,
               splitType: 'EXACT',
-              currency: 'EUR',
-              participants: [
-                { userId: adaUser.id, amount: 15 },
-                { userId: boUser.id, amount: -15 },
-              ],
+              currency: 'USD',
+              participants: [{ userId: adaUser.id, amount: 0 }],
               currentUserId: boUser.id,
               expenseDate: new Date(),
               splitwiseExpenseId: String(t.base + 9100),
@@ -1550,11 +1547,8 @@ void test(
       (result as { reason: string }).reason,
       /imported at the same time with different amounts or people/,
     );
-    // Only the other version moved money.
-    assert.deepEqual(await t.balances([adaUser.id, boUser.id]), [
-      `EUR ${adaUser.id}->${boUser.id} 1500`,
-      `EUR ${boUser.id}->${adaUser.id} -1500`,
-    ]);
+    // Nothing moved money.
+    assert.deepEqual(await t.balances([adaUser.id, boUser.id]), []);
   }),
 );
 
@@ -2302,8 +2296,8 @@ void test(
       },
     });
 
-    // After every check passed, someone saves the same expense in a group, in another currency
-    // so these balance rows are unchanged: the check of other scopes catches it.
+    // After every check passed, someone saves the same expense in a group, with only Ada in it so
+    // it writes no balance rows: the check of other scopes is what catches it.
     const hook = hookTransactions(t, async (n, run) => {
       if (2 === n) {
         await hook.original(async (tx: unknown) =>
@@ -2314,11 +2308,8 @@ void test(
               category: 'general',
               amount: 20,
               splitType: 'EXACT',
-              currency: 'EUR',
-              participants: [
-                { userId: adaUser.id, amount: 10 },
-                { userId: boUser.id, amount: -10 },
-              ],
+              currency: 'USD',
+              participants: [{ userId: adaUser.id, amount: 0 }],
               currentUserId: boUser.id,
               expenseDate: new Date(),
               splitwiseExpenseId: String(t.base + 9001),
@@ -2345,10 +2336,7 @@ void test(
       await t.db.expense.count({ where: { splitwiseExpenseId: String(t.base + 9001) } }),
       1,
     );
-    assert.deepEqual(await t.balances([adaUser.id, boUser.id]), [
-      `EUR ${adaUser.id}->${boUser.id} 1000`,
-      `EUR ${boUser.id}->${adaUser.id} -1000`,
-    ]);
+    assert.deepEqual(await t.balances([adaUser.id, boUser.id]), []);
   }),
 );
 
@@ -3023,48 +3011,38 @@ void test(
   }),
 );
 
-type QueryRaw = (query: unknown, ...values: unknown[]) => Promise<unknown>;
-
 /** The person rule's read, the only query that mentions balance-only marks and flags. */
 const isPersonRuleQuery = (query: unknown) => {
   const sql = Array.isArray(query) ? query.join('') : '';
   return sql.includes('"SplitwiseImportPerson"') && sql.includes('"importedFromSplitwise"');
 };
 
-/** Runs `fn` with the person rule seeing nothing, so the pair guard is tested on its own. */
+/**
+ * Runs `fn` with the person rule seeing nothing, so the pair guard is tested on its own. The
+ * wrapper isn't bound: a transaction's client finds `$queryRaw` on the base client and calls it
+ * with itself as `this`, so its queries stay in the transaction. The original is put back exactly.
+ */
 const withoutPersonRule = async <T>(t: Setup, fn: () => Promise<T>) => {
-  const client = t.db as unknown as { $queryRaw: QueryRaw; $transaction: Transaction };
-  const queryRaw = client.$queryRaw.bind(t.db);
-  const transaction = client.$transaction.bind(t.db);
-  const skipping =
-    (query: QueryRaw): QueryRaw =>
-    (strings, ...values) =>
-      isPersonRuleQuery(strings) ? Promise.resolve([]) : query(strings, ...values);
-  client.$queryRaw = skipping(queryRaw);
-  client.$transaction = (operation, options) =>
-    'function' !== typeof operation
-      ? transaction(operation, options)
-      : transaction(
-          (tx: { $queryRaw: QueryRaw }) =>
-            (operation as (tx: unknown) => Promise<unknown>)(
-              new Proxy(tx, {
-                get: (target, prop, receiver) =>
-                  '$queryRaw' === prop
-                    ? skipping(target.$queryRaw.bind(target))
-                    : (Reflect.get(target, prop, receiver) as unknown),
-              }),
-            ),
-          options,
-        );
+  const client = t.db as unknown as Record<string, unknown>;
+  const own = Object.getOwnPropertyDescriptor(client, '$queryRaw');
+  const queryRaw = client.$queryRaw as (this: unknown, ...args: unknown[]) => Promise<unknown>;
+  client.$queryRaw = function (this: unknown, query: unknown, ...values: unknown[]) {
+    return isPersonRuleQuery(query) ? Promise.resolve([]) : queryRaw.call(this, query, ...values);
+  };
   try {
     return await fn();
   } finally {
-    client.$queryRaw = queryRaw;
-    client.$transaction = transaction;
+    if (own) {
+      Object.defineProperty(client, '$queryRaw', own);
+    } else {
+      delete client.$queryRaw;
+    }
   }
 };
 
-const UNEXPLAINED = /SplitPro balance with Bo doesn't match your expenses together/;
+const NOT_CLEAN = /You and Bo already have expenses, payments or balances in SplitPro\./;
+const CLEAN_SLATE_COPY =
+  /History can only be imported for people you haven't recorded expenses or payments with in SplitPro yet\./;
 
 /** Every pair, currency and group of these people that the guard would find inconsistent. */
 const unexplainedAmong = async (t: Setup, userIds: number[], currencies = ['USD', 'EUR']) => {
@@ -3197,8 +3175,8 @@ void test(
     const before = await t.snapshot();
     const { file, key } = twoPeopleFile(t);
     const result = (await t.importFile(me, file)).results[key];
-    refused(result, UNEXPLAINED);
-    refused(result, /nothing was imported/);
+    refused(result, NOT_CLEAN);
+    refused(result, CLEAN_SLATE_COPY);
     assert.deepEqual(await t.snapshot(), before);
   }),
 );
@@ -3221,279 +3199,8 @@ void test(
     );
     // Without it, the guard does: the 10 isn't explained by any expense.
     const result = await withoutPersonRule(t, () => t.importFile(me, file));
-    refused(result.results[key], UNEXPLAINED);
+    refused(result.results[key], NOT_CLEAN);
     assert.deepEqual(await t.snapshot(), before);
-  }),
-);
-
-void test(
-  'pair guard: older drift and missing rows are refused, and once fixed the history imports',
-  { skip: !databaseUrl },
-  withSetup(async (t) => {
-    const { addUserExpense } = await import('~/server/api/services/splitService');
-    const me = await t.createUser('Ada');
-    const bo = await t.createUser('Bo');
-    await t.befriend(me, bo);
-    await addUserExpense(
-      me.id,
-      'Taxi',
-      'taxi',
-      30,
-      'EQUAL',
-      'USD',
-      [
-        { userId: me.id, amount: 15 },
-        { userId: bo.id, amount: -15 },
-      ],
-      me.id,
-      new Date('2025-01-01T00:00:00Z'),
-    );
-    const { file, key } = twoPeopleFile(t);
-    const pairRows = {
-      OR: [
-        { userId: me.id, friendId: bo.id },
-        { userId: bo.id, friendId: me.id },
-      ],
-    };
-    const shift = (cents: number) =>
-      t.db.$transaction([
-        t.db.balance.update({
-          where: { userId_currency_friendId: { userId: me.id, currency: 'USD', friendId: bo.id } },
-          data: { amount: { increment: cents } },
-        }),
-        t.db.balance.update({
-          where: { userId_currency_friendId: { userId: bo.id, currency: 'USD', friendId: me.id } },
-          data: { amount: { increment: -cents } },
-        }),
-      ]);
-
-    // Both rows moved by 5, still mirrored.
-    await shift(500);
-    let before = await t.snapshot();
-    refused((await t.importFile(me, file)).results[key], UNEXPLAINED);
-    assert.deepEqual(await t.snapshot(), before);
-    await shift(-500);
-
-    // Only one of the two rows moved, either one.
-    for (const [userId, friendId] of [
-      [me.id, bo.id],
-      [bo.id, me.id],
-    ] as const) {
-      const where = { userId_currency_friendId: { userId, currency: 'USD', friendId } };
-      await t.db.balance.update({ where, data: { amount: { increment: 1 } } });
-      before = await t.snapshot();
-      refused((await t.importFile(me, file)).results[key], UNEXPLAINED);
-      assert.deepEqual(await t.snapshot(), before);
-      await t.db.balance.update({ where, data: { amount: { increment: -1 } } });
-    }
-
-    // Rows gone while the expense is still there: a missing row counts as 0.
-    const rows = await t.db.balance.findMany({ where: pairRows });
-    await t.db.balance.deleteMany({ where: pairRows });
-    before = await t.snapshot();
-    refused((await t.importFile(me, file)).results[key], UNEXPLAINED);
-    assert.deepEqual(await t.snapshot(), before);
-    await t.db.balance.createMany({ data: rows });
-
-    imported((await t.importFile(me, file)).results[key]);
-    assert.deepEqual(await unexplainedAmong(t, [me.id, bo.id]), []);
-    // 15 for the taxi and 10 imported.
-    assert.deepEqual(
-      (await t.balances([me.id, bo.id])).sort(),
-      [`USD ${me.id}->${bo.id} 2500`, `USD ${bo.id}->${me.id} -2500`].sort(),
-    );
-  }),
-);
-
-/** An existing SplitPro group, as the balance-only import made them, and a file of its history. */
-const existingGroupFile = async (t: Setup) => {
-  const [ada, bo, cy] = [t.sw('Ada', 1), t.sw('Bo', 2), t.sw('Cy', 3)];
-  const users = await Promise.all(['Ada', 'Bo', 'Cy'].map((n) => t.createUser(n)));
-  const [me, boUser, cyUser] = users as [
-    (typeof users)[number],
-    (typeof users)[number],
-    (typeof users)[number],
-  ];
-  await t.befriend(me, boUser, cyUser);
-  const gid = t.base + 1700;
-  await importLikeMain(
-    t,
-    me.id,
-    [],
-    [{ splitwiseGroupId: gid, name: 'Flat', memberIds: [me.id, boUser.id, cyUser.id] }],
-  );
-  const group = await t.db.group.findUniqueOrThrow({ where: { splitwiseGroupId: String(gid) } });
-  const file = buildExport({
-    me: ada,
-    people: [bo, cy],
-    groups: [{ id: gid, name: 'Flat', memberIds: [ada.id, bo.id, cy.id] }],
-    expenses: [
-      expense({
-        id: t.base + 17001,
-        groupId: gid,
-        users: [
-          [ada.id, 3000, 1000],
-          [bo.id, 0, 1000],
-          [cy.id, 0, 1000],
-        ],
-      }),
-      expense({
-        id: t.base + 17002,
-        groupId: gid,
-        currency: 'EUR',
-        users: [
-          [bo.id, 900, 300],
-          [ada.id, 0, 300],
-          [cy.id, 0, 300],
-        ],
-      }),
-    ],
-  });
-  return { me, boUser, cyUser, group, file, key: `group:${gid}` };
-};
-
-void test(
-  "pair guard: a group pair whose GroupBalance doesn't match its expenses is refused",
-  { skip: !databaseUrl },
-  withSetup(async (t) => {
-    const { createGroupExpense } = await import('~/server/api/services/splitService');
-    const { me, boUser, cyUser, group, file, key } = await existingGroupFile(t);
-    await createGroupExpense(
-      group.id,
-      me.id,
-      'Dinner',
-      'diningOut',
-      20,
-      'EQUAL',
-      'USD',
-      [
-        { userId: me.id, amount: 10 },
-        { userId: boUser.id, amount: -10 },
-      ],
-      me.id,
-      new Date('2025-01-01T00:00:00Z'),
-    );
-    // The group rows were cleared without a record, as before settlement allocations existed.
-    // The overall balance still matches.
-    const groupRows = {
-      groupId: group.id,
-      OR: [
-        { userId: me.id, firendId: boUser.id },
-        { userId: boUser.id, firendId: me.id },
-      ],
-    };
-    await t.db.groupBalance.updateMany({ where: groupRows, data: { amount: 0 } });
-
-    const before = await t.snapshot();
-    refused(
-      (await t.importFile(me, file)).results[key],
-      /Your SplitPro balance with Bo in this group doesn't match/,
-    );
-    assert.deepEqual(await t.snapshot(), before);
-    assert.deepEqual(await unexplainedAmong(t, [me.id, boUser.id, cyUser.id]), [
-      {
-        userId: Math.min(me.id, boUser.id),
-        friendId: Math.max(me.id, boUser.id),
-        currency: 'USD',
-        groupId: group.id,
-      },
-    ]);
-  }),
-);
-
-void test(
-  'pair guard: a clean group with manual expenses, a settle up that cleared group rows, edits and deletes still imports, and ends consistent',
-  { skip: !databaseUrl },
-  withSetup(async (t) => {
-    const svc = await import('~/server/api/services/splitService');
-    const { me, boUser, cyUser, group, file, key } = await existingGroupFile(t);
-    const date = new Date('2025-01-01T00:00:00Z');
-    // Manual expenses in the group and outside it, in both currencies.
-    await svc.createGroupExpense(
-      group.id,
-      me.id,
-      'Dinner',
-      'diningOut',
-      30,
-      'EQUAL',
-      'USD',
-      [
-        { userId: me.id, amount: 20 },
-        { userId: boUser.id, amount: -10 },
-        { userId: cyUser.id, amount: -10 },
-      ],
-      me.id,
-      date,
-    );
-    const edited = await svc.createGroupExpense(
-      group.id,
-      cyUser.id,
-      'Wine',
-      'liquor',
-      12,
-      'EQUAL',
-      'EUR',
-      [
-        { userId: cyUser.id, amount: 6 },
-        { userId: me.id, amount: -6 },
-      ],
-      cyUser.id,
-      date,
-    );
-    await svc.editExpense(
-      edited.id,
-      cyUser.id,
-      'Wine',
-      'liquor',
-      18,
-      'EXACT',
-      'EUR',
-      [
-        { userId: cyUser.id, amount: 9 },
-        { userId: me.id, amount: -9 },
-      ],
-      cyUser.id,
-      date,
-    );
-    const removed = await svc.addUserExpense(
-      boUser.id,
-      'Lunch',
-      'food',
-      8,
-      'EQUAL',
-      'USD',
-      [
-        { userId: boUser.id, amount: 4 },
-        { userId: me.id, amount: -4 },
-      ],
-      boUser.id,
-      date,
-    );
-    await svc.deleteExpense(removed.id, boUser.id);
-    // Bo settles the 10 they owe Ada outside the group: that clears the group row, recorded as
-    // a settlement allocation.
-    await svc.addUserExpense(
-      boUser.id,
-      'Settle up',
-      'general',
-      10,
-      'SETTLEMENT',
-      'USD',
-      [
-        { userId: boUser.id, amount: 10 },
-        { userId: me.id, amount: -10 },
-      ],
-      boUser.id,
-      date,
-    );
-    assert.equal(await t.db.settlementAllocation.count({ where: { groupId: group.id } }), 2);
-    const everyone = [me.id, boUser.id, cyUser.id];
-    assert.deepEqual(await unexplainedAmong(t, everyone), []);
-    await assertMatchesReplay(t, everyone);
-
-    imported((await t.importFile(me, file)).results[key]);
-    assert.deepEqual(await unexplainedAmong(t, everyone), []);
-    await assertMatchesReplay(t, everyone);
   }),
 );
 
@@ -3703,7 +3410,7 @@ void test(
 );
 
 void test(
-  'a real expense between the pair added in the middle of an import stops it with the saved count, and running it again finishes consistently',
+  'a manual expense between the pair added in the middle of an import stops it with the saved count, and running it again is refused',
   { skip: !databaseUrl },
   withSetup(async (t) => {
     const { addUserExpense } = await import('~/server/api/services/splitService');
@@ -3764,16 +3471,20 @@ void test(
       reason: 'Balances changed during the import. Please run it again.',
     });
 
-    const second = imported((await t.importFile(me, file)).results[key]);
-    assert.equal(second.imported, 50);
-    assert.equal(second.alreadyImported, IMPORT_BATCH_SIZE);
+    // The taxi is SplitPro history between them, so running it again is refused too.
+    const before = await t.snapshot();
+    const second = (await t.importFile(me, file)).results[key];
+    refused(second, NOT_CLEAN);
+    refused(second, CLEAN_SLATE_COPY);
+    assert.deepEqual(await t.snapshot(), before);
+    // What was saved stays, and every balance is still what the expenses add up to: 250 times 1,
+    // less the 3.50 taxi.
     assert.deepEqual(await unexplainedAmong(t, [me.id, bo.id]), []);
-    // 300 times 1 imported, less the 3.50 taxi.
     assert.deepEqual(
       (await t.balances([me.id, bo.id])).sort(),
       [
-        `USD ${me.id}->${bo.id} ${count * 100 - 350}`,
-        `USD ${bo.id}->${me.id} ${350 - count * 100}`,
+        `USD ${me.id}->${bo.id} ${IMPORT_BATCH_SIZE * 100 - 350}`,
+        `USD ${bo.id}->${me.id} ${350 - IMPORT_BATCH_SIZE * 100}`,
       ].sort(),
     );
     await assertMatchesReplay(t, [me.id, bo.id]);
@@ -3825,7 +3536,7 @@ void test(
     } finally {
       hook.restore();
     }
-    refused(result, UNEXPLAINED);
+    refused(result, NOT_CLEAN);
     assert.equal(
       await t.db.expense.count({ where: { splitwiseExpenseId: String(t.base + 9001) } }),
       0,
@@ -3833,42 +3544,537 @@ void test(
   }),
 );
 
+const DATE = new Date('2025-01-01T00:00:00Z');
+
+/** Ada (you) and Bo in a Splitwise group, with one expense: Ada paid 20, half for Bo. */
+const groupOfTwoFile = (t: Setup, gid: number, id: number) => {
+  const [ada, bo] = [t.sw('Ada', 1), t.sw('Bo', 2)];
+  return buildExport({
+    me: ada,
+    people: [bo],
+    groups: [{ id: gid, name: `Group ${gid}`, memberIds: [ada.id, bo.id] }],
+    expenses: [
+      expense({
+        id,
+        groupId: gid,
+        users: [
+          [ada.id, 2000, 1000],
+          [bo.id, 0, 1000],
+        ],
+      }),
+    ],
+  });
+};
+
 void test(
-  'rows removed after the check, even at zero (removing a settled friend), stop the import',
+  'clean slate: two Splitwise groups and expenses outside groups with the same people all import, and again adds nothing',
+  { skip: !databaseUrl },
+  withSetup(async (t) => {
+    const me = await t.createUser('Ada');
+    const bo = await t.createUser('Bo');
+    await t.befriend(me, bo);
+    const [ada, swBo] = [t.sw('Ada', 1), t.sw('Bo', 2)];
+    const [g1, g2] = [t.base + 2101, t.base + 2102];
+    const file = buildExport({
+      me: ada,
+      people: [swBo],
+      groups: [
+        { id: g1, name: 'Trip', memberIds: [ada.id, swBo.id] },
+        { id: g2, name: 'Flat', memberIds: [ada.id, swBo.id] },
+      ],
+      expenses: [
+        expense({
+          id: t.base + 21001,
+          groupId: g1,
+          users: [
+            [ada.id, 2000, 1000],
+            [swBo.id, 0, 1000],
+          ],
+        }),
+        expense({
+          id: t.base + 21002,
+          groupId: g2,
+          currency: 'EUR',
+          users: [
+            [swBo.id, 900, 300],
+            [ada.id, 0, 600],
+          ],
+        }),
+        expense({
+          id: t.base + 21003,
+          users: [
+            [ada.id, 500, 250],
+            [swBo.id, 0, 250],
+          ],
+        }),
+      ],
+    });
+    const { results } = await t.importFile(me, file);
+    assert.deepEqual(
+      Object.keys(results).sort(),
+      [`friends:${swBo.id}`, `group:${g1}`, `group:${g2}`].sort(),
+    );
+    Object.values(results).forEach(imported);
+    assert.deepEqual(await unexplainedAmong(t, [me.id, bo.id]), []);
+    await assertMatchesReplay(t, [me.id, bo.id]);
+
+    Object.values((await t.importFile(me, file)).results).forEach((r) =>
+      assert.equal(imported(r).imported, 0),
+    );
+  }),
+);
+
+void test(
+  'clean slate: any manual SplitPro history between the pair refuses the import, and nothing is written',
+  { skip: !databaseUrl },
+  async () => {
+    const svc = await import('~/server/api/services/splitService');
+    const cases: [
+      string,
+      (me: { id: number }, bo: { id: number }, run: Setup) => Promise<unknown>,
+    ][] = [
+      [
+        'only a deleted expense',
+        async (me, bo) => {
+          const e = await svc.addUserExpense(
+            me.id,
+            'Taxi',
+            'taxi',
+            10,
+            'EQUAL',
+            'USD',
+            [
+              { userId: me.id, amount: 5 },
+              { userId: bo.id, amount: -5 },
+            ],
+            me.id,
+            DATE,
+          );
+          await svc.deleteExpense(e.id, me.id);
+        },
+      ],
+      [
+        'only a settle up',
+        (me, bo) =>
+          svc.addUserExpense(
+            bo.id,
+            'Settle up',
+            'general',
+            5,
+            'SETTLEMENT',
+            'USD',
+            [
+              { userId: bo.id, amount: 5 },
+              { userId: me.id, amount: -5 },
+            ],
+            bo.id,
+            DATE,
+          ),
+      ],
+      [
+        'an expense with a zero share',
+        (me, bo) =>
+          svc.addUserExpense(
+            me.id,
+            'Gift',
+            'gifts',
+            10,
+            'EXACT',
+            'USD',
+            [
+              { userId: me.id, amount: 0 },
+              { userId: bo.id, amount: 0 },
+            ],
+            me.id,
+            DATE,
+          ),
+      ],
+      [
+        'an expense in another currency',
+        (me, bo) =>
+          svc.addUserExpense(
+            bo.id,
+            'Train',
+            'train',
+            8,
+            'EQUAL',
+            'EUR',
+            [
+              { userId: bo.id, amount: 4 },
+              { userId: me.id, amount: -4 },
+            ],
+            bo.id,
+            DATE,
+          ),
+      ],
+      [
+        'a group expense settled outside the group (settlement allocations)',
+        async (me, bo, run) => {
+          const group = await run.db.group.create({
+            data: {
+              name: 'Manual',
+              publicId: `manual-${run.base}`,
+              userId: me.id,
+              groupUsers: { create: [{ userId: me.id }, { userId: bo.id }] },
+            },
+          });
+          await svc.createGroupExpense(
+            group.id,
+            me.id,
+            'Dinner',
+            'diningOut',
+            20,
+            'EXACT',
+            'USD',
+            [
+              { userId: me.id, amount: 10 },
+              { userId: bo.id, amount: -10 },
+            ],
+            me.id,
+            DATE,
+          );
+          await svc.addUserExpense(
+            bo.id,
+            'Settle up',
+            'general',
+            10,
+            'SETTLEMENT',
+            'USD',
+            [
+              { userId: bo.id, amount: 10 },
+              { userId: me.id, amount: -10 },
+            ],
+            bo.id,
+            DATE,
+          );
+          assert.equal(
+            await run.db.settlementAllocation.count({ where: { groupId: group.id } }),
+            2,
+          );
+        },
+      ],
+    ];
+    for (const [label, record] of cases) {
+      const run = await fresh();
+      try {
+        const me = await run.createUser('Ada');
+        const bo = await run.createUser('Bo');
+        await run.befriend(me, bo);
+        await record(me, bo, run);
+        const before = await run.snapshot();
+        const { file, key } = twoPeopleFile(run);
+        const result = (await run.importFile(me, file)).results[key];
+        refused(result, NOT_CLEAN);
+        refused(result, CLEAN_SLATE_COPY);
+        assert.deepEqual(await run.snapshot(), before, label);
+      } finally {
+        await run.cleanUp();
+      }
+    }
+  },
+);
+
+void test(
+  "clean slate: an expense someone else paid for both isn't history between them",
   { skip: !databaseUrl },
   withSetup(async (t) => {
     const { addUserExpense } = await import('~/server/api/services/splitService');
     const me = await t.createUser('Ada');
     const bo = await t.createUser('Bo');
-    await t.befriend(me, bo);
-    // Settled in the app: both rows exist at 0.
+    const cy = await t.createUser('Cy');
+    await t.befriend(me, bo, cy);
     await addUserExpense(
-      me.id,
-      'Taxi',
-      'taxi',
-      10,
+      cy.id,
+      'Dinner',
+      'diningOut',
+      30,
       'EQUAL',
       'USD',
       [
-        { userId: me.id, amount: 5 },
-        { userId: bo.id, amount: -5 },
+        { userId: cy.id, amount: 20 },
+        { userId: me.id, amount: -10 },
+        { userId: bo.id, amount: -10 },
       ],
-      me.id,
-      new Date('2025-01-01T00:00:00Z'),
+      cy.id,
+      DATE,
     );
-    await addUserExpense(
+    const { file, key } = twoPeopleFile(t);
+    imported((await t.importFile(me, file)).results[key]);
+    assert.deepEqual(await unexplainedAmong(t, [me.id, bo.id, cy.id]), []);
+  }),
+);
+
+void test(
+  "Sol's r5: a balance-only import, settled, friend removed, then a settled group with the opposite debt deleted, is refused",
+  { skip: !databaseUrl },
+  withSetup(async (t) => {
+    const svc = await import('~/server/api/services/splitService');
+    const me = await t.createUser('Ada');
+    const bo = await t.createUser('Bo');
+    await t.befriend(me, bo);
+    // Bo owed Ada 10 from Splitwise, imported as one amount the way main does, and paid it.
+    await importLikeMain(t, me.id, [{ friendId: bo.id, currency: 'USD', cents: 1000 }]);
+    await svc.addUserExpense(
       bo.id,
       'Settle up',
       'general',
-      5,
+      10,
       'SETTLEMENT',
       'USD',
       [
-        { userId: bo.id, amount: 5 },
-        { userId: me.id, amount: -5 },
+        { userId: bo.id, amount: 10 },
+        { userId: me.id, amount: -10 },
       ],
       bo.id,
-      new Date('2025-01-01T00:00:00Z'),
+      DATE,
+    );
+    await t.callerFor(me).user.deleteFriend({ friendId: bo.id });
+    // Reconnected: an unrelated group with the opposite debt, settled outside it, then deleted.
+    await t.befriend(me, bo);
+    const group = await t.db.group.create({
+      data: {
+        name: 'Settled',
+        publicId: `settled-${t.base}`,
+        userId: me.id,
+        groupUsers: { create: [{ userId: me.id }, { userId: bo.id }] },
+      },
+    });
+    await svc.createGroupExpense(
+      group.id,
+      bo.id,
+      'Opposite',
+      'general',
+      20,
+      'EXACT',
+      'USD',
+      [
+        { userId: bo.id, amount: 10 },
+        { userId: me.id, amount: -10 },
+      ],
+      bo.id,
+      DATE,
+    );
+    await svc.addUserExpense(
+      me.id,
+      'Settle up',
+      'general',
+      10,
+      'SETTLEMENT',
+      'USD',
+      [
+        { userId: me.id, amount: 10 },
+        { userId: bo.id, amount: -10 },
+      ],
+      me.id,
+      DATE,
+    );
+    await t.callerFor(me).group.delete({ groupId: group.id });
+    // The balance says 0 and so do the remaining expenses: only the settle ups show the history.
+    assert.deepEqual(await t.balances([me.id, bo.id]), []);
+    assert.equal(
+      await t.db.balance.count({
+        where: { userId: { in: [me.id, bo.id] }, importedFromSplitwise: true },
+      }),
+      0,
+    );
+
+    const before = await t.snapshot();
+    const { file, key } = twoPeopleFile(t);
+    const result = (await t.importFile(me, file)).results[key];
+    refused(result, NOT_CLEAN);
+    refused(result, CLEAN_SLATE_COPY);
+    assert.deepEqual(await t.snapshot(), before);
+  }),
+);
+
+void test(
+  "Sol's r5: a settle up edited to the same net after a member left (allocations gone, #29) is refused",
+  { skip: !databaseUrl },
+  withSetup(async (t) => {
+    const svc = await import('~/server/api/services/splitService');
+    const me = await t.createUser('Ada');
+    const bo = await t.createUser('Bo');
+    await t.befriend(me, bo);
+    const gid = t.base + 2301;
+    const group = await t.db.group.create({
+      data: {
+        name: `Group ${gid}`,
+        splitwiseGroupId: String(gid),
+        publicId: `left-${t.base}`,
+        userId: me.id,
+        groupUsers: { create: [{ userId: me.id }, { userId: bo.id }] },
+      },
+    });
+    await svc.createGroupExpense(
+      group.id,
+      me.id,
+      'Group expense',
+      'general',
+      20,
+      'EXACT',
+      'USD',
+      [
+        { userId: me.id, amount: 10 },
+        { userId: bo.id, amount: -10 },
+      ],
+      me.id,
+      DATE,
+    );
+    const settlement = await svc.addUserExpense(
+      bo.id,
+      'Settle up',
+      'general',
+      10,
+      'SETTLEMENT',
+      'USD',
+      [
+        { userId: bo.id, amount: 10 },
+        { userId: me.id, amount: -10 },
+      ],
+      bo.id,
+      DATE,
+    );
+    await t.callerFor(bo).group.leaveGroup({ groupId: group.id });
+    await svc.editExpense(
+      settlement.id,
+      bo.id,
+      'Same net',
+      'general',
+      10,
+      'EXACT',
+      'USD',
+      [
+        { userId: bo.id, amount: 10 },
+        { userId: me.id, amount: -10 },
+      ],
+      bo.id,
+      DATE,
+    );
+    assert.equal(
+      await t.db.settlementAllocation.count({ where: { settlementExpenseId: settlement.id } }),
+      0,
+    );
+
+    const before = await t.snapshot();
+    const result = (await t.importFile(me, groupOfTwoFile(t, gid, t.base + 23001))).results[
+      `group:${gid}`
+    ];
+    refused(result, NOT_CLEAN);
+    assert.deepEqual(await t.snapshot(), before);
+  }),
+);
+
+void test(
+  'clean slate: on a pair with only imported history, rows the expenses no longer explain are refused, in any group; fixed, it imports',
+  { skip: !databaseUrl },
+  withSetup(async (t) => {
+    const me = await t.createUser('Ada');
+    const bo = await t.createUser('Bo');
+    await t.befriend(me, bo);
+    const [g1, g2] = [t.base + 2201, t.base + 2202];
+    imported(
+      (await t.importFile(me, groupOfTwoFile(t, g1, t.base + 22001))).results[`group:${g1}`],
+    );
+    const g1Id = (await t.db.group.findUniqueOrThrow({ where: { splitwiseGroupId: String(g1) } }))
+      .id;
+    const second = groupOfTwoFile(t, g2, t.base + 22002);
+    const refusedNow = async (label: string) => {
+      const before = await t.snapshot();
+      refused((await t.importFile(me, second)).results[`group:${g2}`], NOT_CLEAN);
+      assert.deepEqual(await t.snapshot(), before, label);
+    };
+    const row = (userId: number, friendId: number) => ({
+      userId_currency_friendId: { userId, currency: 'USD', friendId },
+    });
+    const pairRows = {
+      OR: [
+        { userId: me.id, friendId: bo.id },
+        { userId: bo.id, friendId: me.id },
+      ],
+    };
+
+    // Both rows moved by 5, still mirrored.
+    await t.db.balance.update({ where: row(me.id, bo.id), data: { amount: { increment: 500 } } });
+    await t.db.balance.update({ where: row(bo.id, me.id), data: { amount: { increment: -500 } } });
+    await refusedNow('mirrored');
+    await t.db.balance.update({ where: row(me.id, bo.id), data: { amount: { increment: -500 } } });
+    await t.db.balance.update({ where: row(bo.id, me.id), data: { amount: { increment: 500 } } });
+    // Only one of the two rows, either one.
+    for (const [a, b] of [
+      [me.id, bo.id],
+      [bo.id, me.id],
+    ] as const) {
+      await t.db.balance.update({ where: row(a, b), data: { amount: { increment: 1 } } });
+      await refusedNow(`row ${a}->${b}`);
+      await t.db.balance.update({ where: row(a, b), data: { amount: { increment: -1 } } });
+    }
+    // Rows gone while the imported expenses are still there.
+    const rows = await t.db.balance.findMany({ where: pairRows });
+    await t.db.balance.deleteMany({ where: pairRows });
+    await refusedNow('rows missing');
+    await t.db.balance.createMany({ data: rows });
+    // The first group's rows cleared without a record.
+    const groupRows = await t.db.groupBalance.findMany({ where: { groupId: g1Id } });
+    await t.db.groupBalance.updateMany({ where: { groupId: g1Id }, data: { amount: 0 } });
+    await refusedNow('group rows cleared');
+    for (const r of groupRows) {
+      await t.db.groupBalance.update({
+        where: {
+          groupId_currency_firendId_userId: {
+            groupId: r.groupId,
+            currency: r.currency,
+            firendId: r.firendId,
+            userId: r.userId,
+          },
+        },
+        data: { amount: r.amount },
+      });
+    }
+
+    imported((await t.importFile(me, second)).results[`group:${g2}`]);
+    assert.deepEqual(await unexplainedAmong(t, [me.id, bo.id]), []);
+    await assertMatchesReplay(t, [me.id, bo.id]);
+  }),
+);
+
+void test(
+  'rows removed after the check (as removing a friend does) stop the import, before the setup or in a batch',
+  { skip: !databaseUrl },
+  withSetup(async (t) => {
+    const me = await t.createUser('Ada');
+    const bo = await t.createUser('Bo');
+    await t.befriend(me, bo);
+    const [g1, g2] = [t.base + 2401, t.base + 2402];
+    // Imported history that nets to 0: both rows exist, at 0.
+    imported(
+      (
+        await t.importFile(
+          me,
+          buildExport({
+            me: t.sw('Ada', 1),
+            people: [t.sw('Bo', 2)],
+            groups: [{ id: g1, name: 'Even', memberIds: [t.sw('Ada', 1).id, t.sw('Bo', 2).id] }],
+            expenses: [
+              expense({
+                id: t.base + 24001,
+                groupId: g1,
+                users: [
+                  [t.sw('Ada', 1).id, 2000, 1000],
+                  [t.sw('Bo', 2).id, 0, 1000],
+                ],
+              }),
+              expense({
+                id: t.base + 24002,
+                groupId: g1,
+                users: [
+                  [t.sw('Bo', 2).id, 2000, 1000],
+                  [t.sw('Ada', 1).id, 0, 1000],
+                ],
+              }),
+            ],
+          }),
+        )
+      ).results[`group:${g1}`],
     );
     const pairRows = {
       OR: [
@@ -3880,7 +4086,7 @@ void test(
       (await t.db.balance.findMany({ where: pairRows })).map((b) => b.amount),
       [0, 0],
     );
-    const { file, key } = twoPeopleFile(t);
+    const second = groupOfTwoFile(t, g2, t.base + 24003);
 
     for (const at of [1, 2]) {
       const hook = hookTransactions(t, async (n, run) => {
@@ -3893,12 +4099,11 @@ void test(
       });
       let result;
       try {
-        result = (await t.importFile(me, file)).results[key];
+        result = (await t.importFile(me, second)).results[`group:${g2}`];
       } finally {
         hook.restore();
       }
       refused(result, /Balances changed during the import/);
-      // Put them back for the next round.
       await t.db.balance.createMany({
         data: [
           { userId: me.id, friendId: bo.id, currency: 'USD', amount: 0 },
@@ -3906,7 +4111,103 @@ void test(
         ],
       });
     }
-    imported((await t.importFile(me, file)).results[key]);
+    imported((await t.importFile(me, second)).results[`group:${g2}`]);
     assert.deepEqual(await unexplainedAmong(t, [me.id, bo.id]), []);
   }),
+);
+
+void test(
+  'a manual expense with a zero share, or in another currency, added in the middle of an import stops it too',
+  { skip: !databaseUrl },
+  async () => {
+    const { addUserExpense } = await import('~/server/api/services/splitService');
+    const { IMPORT_BATCH_SIZE } = await import('~/server/api/services/splitwiseImport');
+    const variants: [string, (me: number, bo: number) => Promise<unknown>][] = [
+      [
+        'zero share',
+        (me, bo) =>
+          addUserExpense(
+            bo,
+            'Gift',
+            'gifts',
+            7,
+            'EXACT',
+            'USD',
+            [
+              { userId: bo, amount: 0 },
+              { userId: me, amount: 0 },
+            ],
+            bo,
+            DATE,
+          ),
+      ],
+      [
+        'another currency',
+        (me, bo) =>
+          addUserExpense(
+            bo,
+            'Train',
+            'train',
+            7,
+            'EQUAL',
+            'EUR',
+            [
+              { userId: bo, amount: 3.5 },
+              { userId: me, amount: -3.5 },
+            ],
+            bo,
+            DATE,
+          ),
+      ],
+    ];
+    for (const [label, add] of variants) {
+      const run = await fresh();
+      try {
+        const me = await run.createUser('Ada');
+        const bo = await run.createUser('Bo');
+        await run.befriend(me, bo);
+        const [ada, swBo] = [run.sw('Ada', 1), run.sw('Bo', 2)];
+        const file = buildExport({
+          me: ada,
+          people: [swBo],
+          groups: [],
+          expenses: Array.from({ length: IMPORT_BATCH_SIZE + 50 }, (_, index) =>
+            expense({
+              id: run.base + 25_000 + index,
+              users: [
+                [ada.id, 200, 100],
+                [swBo.id, 0, 100],
+              ],
+            }),
+          ),
+        });
+        const hook = hookTransactions(run, async (n, go) => {
+          if (3 === n) {
+            hook.restore();
+            await add(me.id, bo.id);
+          }
+          return go();
+        });
+        let result;
+        try {
+          result = (await run.importFile(me, file)).results[`friends:${swBo.id}`];
+        } finally {
+          hook.restore();
+        }
+        assert.deepEqual(
+          result,
+          {
+            status: 'partial',
+            imported: IMPORT_BATCH_SIZE,
+            remaining: 50,
+            alreadyImported: 0,
+            reason: 'Balances changed during the import. Please run it again.',
+          },
+          label,
+        );
+      } finally {
+        await run.cleanUp();
+      }
+    }
+  },
 );
