@@ -49,19 +49,38 @@ export const claimSplitwisePairs = async (
     .map((claim) => [claim.userId, claim.friendId] as [number, number]);
 };
 
-/** Pairs claimed as a balance-only import, without claiming anything. */
+/**
+ * Pairs whose Splitwise balance came over as one amount, without claiming anything: claimed as a
+ * balance-only import, or with a balance the balance-only import wrote before claims existed
+ * (`importedFromSplitwise`; it writes both directions, so either one counts).
+ */
 export const getBalanceOnlyPairs = async (pairs: [number, number][]) => {
-  const keys = pairs.filter(([a, b]) => a !== b).map(([a, b]) => (a < b ? [a, b] : [b, a]));
+  const keys = [
+    ...new Map(
+      pairs
+        .filter(([a, b]) => a !== b)
+        .map(([a, b]) => (a < b ? [a, b] : [b, a]) as [number, number])
+        .map((pair) => [pair.join(':'), pair]),
+    ).values(),
+  ];
   if (!keys.length) {
     return [];
   }
-  return db.splitwiseImportPair.findMany({
-    where: {
-      mode: 'BALANCE',
-      OR: keys.map(([userId, friendId]) => ({ userId, friendId })),
-    },
-    select: { userId: true, friendId: true },
-  });
+  const userIds = keys.map(([a]) => a);
+  const friendIds = keys.map(([, b]) => b);
+  return db.$queryRaw<{ userId: number; friendId: number }[]>`
+    WITH pairs(u, f) AS (SELECT * FROM unnest(${userIds}::int[], ${friendIds}::int[]))
+    SELECT u AS "userId", f AS "friendId" FROM pairs
+    WHERE EXISTS (
+        SELECT 1 FROM "SplitwiseImportPair" c
+        WHERE c."userId" = u AND c."friendId" = f AND c."mode" = 'BALANCE'
+      )
+      OR EXISTS (
+        SELECT 1 FROM "Balance" b
+        WHERE b."importedFromSplitwise"
+          AND ((b."userId" = u AND b."friendId" = f) OR (b."userId" = f AND b."friendId" = u))
+      )
+    ORDER BY u, f`;
 };
 
 /** How long a lease lasts without being renewed, e.g. after a crash. */

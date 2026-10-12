@@ -262,10 +262,11 @@ export type ImportedExpenseInput = ExpenseInput & {
   splitwisePart: number;
 };
 
-/** An expense being imported already exists in the same scope with different money. */
+/** An expense being imported already exists with different money, people or group. */
 export class ImportedExpenseMismatchError extends Error {}
 
 type SavedImportedExpense = {
+  groupId: number | null;
   amount: number;
   currency: string;
   paidBy: number;
@@ -277,12 +278,13 @@ type SavedImportedExpense = {
 
 /**
  * Whether saved parts of a Splitwise expense move exactly the same money as the parts being
- * imported: amount, currency, payer, settle up or not, and every non-zero share. People with a
- * zero share don't change a balance, and the importer is added to parts with zero, so they are
- * left out.
+ * imported: the same group (or none), amount, currency, payer, settle up or not, and every
+ * non-zero share. People with a zero share don't change a balance, and the importer is added to
+ * parts with zero, so they are left out.
  */
 export const isSameImportedExpense = (
   saved: SavedImportedExpense[],
+  groupId: number | null,
   parts: {
     amount: number;
     currency: string;
@@ -298,6 +300,7 @@ export const isSameImportedExpense = (
     if (
       !row ||
       null !== row.deletedAt ||
+      row.groupId !== groupId ||
       row.amount !== part.amount ||
       row.currency !== part.currency ||
       row.paidBy !== part.paidBy ||
@@ -314,6 +317,13 @@ export const isSameImportedExpense = (
     return nonZero(row.expenseParticipants) === nonZero(part.shares);
   });
 
+/**
+ * The people whose balances an imported expense changes: the payer and everyone with a non-zero
+ * share. The same Splitwise expense id with any of the same people is the same expense.
+ */
+export const getFinancialParties = (paidBy: number, shares: { userId: number; amount: number }[]) =>
+  new Set([paidBy, ...shares.filter((share) => 0 !== share.amount).map((share) => share.userId)]);
+
 /** Checks an expense to import exactly like a manual add would, without saving anything. */
 export const assertValidImportedExpense = (groupId: number | null, input: ExpenseInput) => {
   getBalancedParticipants(groupId, input);
@@ -327,11 +337,11 @@ export const assertValidImportedExpense = (groupId: number | null, input: Expens
  * A personal settlement keeps Splitwise's meaning: it only changes the balance outside groups.
  * Unlike a settle up added in SplitPro, it doesn't clear group balances (no allocations).
  *
+ * The same Splitwise expense saved meanwhile in another scope (another group, or outside groups)
+ * with any of the same people is never saved again: this throws `ImportedExpenseMismatchError`.
  * Expenses already saved in the same scope (someone imported them in the meantime) are skipped by
- * the unique index rather than by reading `Expense` first, which would make other balance
- * transactions conflict. Only when something was skipped is it read, to check it moves the same
- * money; if not, this throws `ImportedExpenseMismatchError` and nothing in the batch is saved.
- * Returns the expenses it added and the Splitwise ids it skipped.
+ * the unique index, then read to check they move the same money; if not, this throws too. Either
+ * way nothing in the batch is saved. Returns the expenses it added and the Splitwise ids it skipped.
  */
 export const insertImportedExpenses = async (
   tx: Prisma.TransactionClient,
@@ -346,6 +356,35 @@ export const insertImportedExpenses = async (
     input,
     participants: getBalancedParticipants(groupId, input),
   }));
+
+  // Read through the Splitwise id index only, so this conflicts with nothing but other imports of
+  // the same ids.
+  const elsewhere = await tx.expense.findMany({
+    where: { splitwiseExpenseId: { in: [...new Set(inputs.map((i) => i.splitwiseExpenseId))] } },
+    select: {
+      splitwiseExpenseId: true,
+      splitwiseScope: true,
+      paidBy: true,
+      expenseParticipants: { select: { userId: true, amount: true } },
+    },
+  });
+  elsewhere.forEach((row) => {
+    const entries = prepared.filter(
+      ({ input }) =>
+        input.splitwiseExpenseId === row.splitwiseExpenseId &&
+        input.splitwiseScope !== row.splitwiseScope,
+    );
+    const rowParties = getFinancialParties(row.paidBy, row.expenseParticipants);
+    const overlaps = entries.some(({ input, participants }) =>
+      [...getFinancialParties(input.paidBy, participants)].some((id) => rowParties.has(id)),
+    );
+    if (overlaps) {
+      throw new ImportedExpenseMismatchError(
+        `"${entries[0]!.input.name}" was imported somewhere else at the same time, with some of the same people.`,
+      );
+    }
+  });
+
   const expenses = await tx.expense.createManyAndReturn({
     data: prepared.map(({ input }) => ({
       groupId,
@@ -390,6 +429,7 @@ export const insertImportedExpenses = async (
         splitwiseExpenseId: true,
         splitwiseScope: true,
         splitwisePart: true,
+        groupId: true,
         amount: true,
         currency: true,
         paidBy: true,
@@ -413,7 +453,7 @@ export const insertImportedExpenses = async (
         splitwisePart: input.splitwisePart,
         shares: participants,
       }));
-      if (!isSameImportedExpense(rows, parts)) {
+      if (!isSameImportedExpense(rows, groupId, parts)) {
         throw new ImportedExpenseMismatchError(
           `"${entries[0]!.input.name}" was imported at the same time with different amounts or people.`,
         );

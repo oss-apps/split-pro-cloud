@@ -125,9 +125,27 @@ void describe('convertExpense', () => {
     );
   });
 
-  void it('works out the debts itself only when one person owes or one is owed', () => {
-    const spec = {
+  void it('works out the debts itself only when one person paid', () => {
+    const onePayer = {
       id: 3,
+      users: [
+        [1, 10000, 3334],
+        [2, 0, 3333],
+        [3, 0, 3333],
+      ] as [number, number, number][],
+    };
+    [[], [[3, 1, 9999]] as [number, number, number][]].forEach((repayments) => {
+      const ledger = createLedger();
+      parts({ ...onePayer, repayments }).forEach((p) => addExpense(ledger, p));
+      assert.deepEqual(Object.fromEntries([...ledger.pairs].filter(([, v]) => 0 !== v)), {
+        'USD|1|2': 3333,
+        'USD|1|3': 3333,
+      });
+    });
+
+    // Two payers, even with a single person owed overall: missing or wrong repayments refuse.
+    const twoPayers = {
+      id: 4,
       users: [
         [1, 6000, 3334],
         [2, 4000, 3333],
@@ -135,14 +153,92 @@ void describe('convertExpense', () => {
       ] as [number, number, number][],
     };
     [[], [[3, 1, 9999]] as [number, number, number][]].forEach((repayments) => {
-      const ledger = createLedger();
-      parts({ ...spec, repayments }).forEach((p) => addExpense(ledger, p));
-      assert.deepEqual(Object.fromEntries(ledger.nets), {
-        'USD|1': 2666,
-        'USD|2': 667,
-        'USD|3': -3333,
-      });
+      const result = convertExpense(
+        splitwiseExpenseSchema.parse(expense({ ...twoPayers, repayments })),
+      );
+      assert.ok('error' in result, JSON.stringify(repayments));
+      assert.match(result.error, /several people paid and Splitwise didn't say who owes whom/);
     });
+    assert.ok(
+      'parts' in
+        convertExpense(
+          splitwiseExpenseSchema.parse(
+            expense({
+              ...twoPayers,
+              repayments: [
+                [3, 1, 2666],
+                [3, 2, 667],
+              ],
+            }),
+          ),
+        ),
+    );
+  });
+
+  void it("refuses a chain through a debtor who also paid, without repayments (Sol's MISSING_MULTI_PAYER_CHAIN)", () => {
+    // A paid 20, owes 0. B paid 10, owes 20. C owes 10. Splitwise: C owes B 10, B owes A 20.
+    // Only A is owed overall, but B owing A 10 and C owing A 10 would erase B and C's debt.
+    const users: [number, number, number][] = [
+      [1, 0, 0],
+      [2, 2000, 0],
+      [3, 1000, 2000],
+      [4, 0, 1000],
+    ];
+    const withRepayments = parts({
+      id: 9,
+      users,
+      repayments: [
+        [4, 3, 1000],
+        [3, 2, 2000],
+      ],
+    });
+    const ledger = createLedger();
+    withRepayments.forEach((p) => addExpense(ledger, p));
+    assert.deepEqual(Object.fromEntries([...ledger.pairs].filter(([, v]) => 0 !== v)), {
+      'USD|2|3': 2000,
+      'USD|3|4': 1000,
+    });
+    const without = convertExpense(
+      splitwiseExpenseSchema.parse({
+        ...expense({
+          id: 9,
+          users,
+          repayments: [
+            [4, 3, 1000],
+            [3, 2, 2000],
+          ],
+        }),
+        repayments: [],
+      }),
+    );
+    assert.ok('error' in without);
+  });
+
+  void it("refuses a zero-net cycle of payers without repayments (Sol's MISSING_MULTI_PAYER_CYCLE)", () => {
+    // Everyone paid 10 and owes 10, so every net is 0, but Splitwise says A owes B, B owes C and
+    // C owes A 10 each. Without repayments those debts would be erased.
+    const users: [number, number, number][] = [
+      [1, 0, 0],
+      [2, 1000, 1000],
+      [3, 1000, 1000],
+      [4, 1000, 1000],
+    ];
+    const repayments: [number, number, number][] = [
+      [2, 3, 1000],
+      [3, 4, 1000],
+      [4, 2, 1000],
+    ];
+    const ledger = createLedger();
+    parts({ id: 10, users, repayments }).forEach((p) => addExpense(ledger, p));
+    assert.deepEqual(Object.fromEntries([...ledger.pairs].filter(([, v]) => 0 !== v)), {
+      'USD|2|3': -1000,
+      'USD|3|4': -1000,
+      'USD|2|4': 1000,
+    });
+    const without = convertExpense(
+      splitwiseExpenseSchema.parse({ ...expense({ id: 10, users, repayments }), repayments: [] }),
+    );
+    assert.ok('error' in without);
   });
 
   void it("refuses rather than invent who owes whom when repayments are missing (Sol's case)", () => {
@@ -300,6 +396,12 @@ void describe('convertExpense', () => {
         users: ids.map((id, i) => [id, paid[i]!, owed[i]!] as [number, number, number]),
         repayments,
       };
+      // Several payers with every net zero have no repayments, which can't be told apart from
+      // missing ones (a cycle of debts would fit too), so they are refused.
+      if (!repayments.length && 1 < paid.filter((amount) => 0 < amount).length) {
+        assert.ok('error' in convertExpense(splitwiseExpenseSchema.parse(expense(spec))));
+        continue;
+      }
       const converted = parts(spec);
       const actual = createLedger();
       converted.forEach((p) => {
@@ -343,13 +445,11 @@ void describe('convertExpense', () => {
       );
       ids.forEach((id, i) => assert.equal(owedInParts.get(id) ?? 0, owed[i]!, `owed by ${id}`));
 
-      // Without repayments, it converts only when the debts follow from the nets alone.
-      const creditorCount = nets.filter(([, n]) => 0 < n).length;
-      const debtorCount = nets.filter(([, n]) => 0 > n).length;
+      // Without repayments, it converts only when one person paid.
       const withoutRepayments = convertExpense(
         splitwiseExpenseSchema.parse({ ...expense(spec), repayments: [] }),
       );
-      if (1 < creditorCount && 1 < debtorCount) {
+      if (1 < payers.length) {
         assert.ok('error' in withoutRepayments, 'ambiguous without repayments');
       } else {
         assert.ok('parts' in withoutRepayments);

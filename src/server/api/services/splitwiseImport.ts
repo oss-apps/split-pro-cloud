@@ -32,6 +32,7 @@ import {
   type ImportedExpenseInput,
   ImportedExpenseMismatchError,
   assertValidImportedExpense,
+  getFinancialParties,
   insertImportedExpenses,
   isSameImportedExpense,
 } from './splitService';
@@ -63,6 +64,9 @@ const refuse = (...reasons: string[]): never => {
 };
 
 const normalizeEmail = (email: string) => email.trim().toLowerCase();
+
+const joinNames = (names: string[]) =>
+  1 < names.length ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : names[0];
 
 /**
  * Where an imported expense belongs. Splitwise ids are only trusted within it: a group in SplitPro,
@@ -357,10 +361,11 @@ const importItem = async (
     const ids = expense.users.map((user) => toUserId(user.user_id));
     return ids.every((id) => undefined !== id) ? usersScope(ids as number[]) : null;
   };
-  /** The SplitPro accounts of the people in an expense, as far as they exist. */
+  /** The SplitPro accounts of the people who paid or owe something in an expense, if they exist. */
   const partiesOf = (expense: SplitwiseExpense) =>
     new Set(
       expense.users
+        .filter((user) => 0 !== parseAmount(user.paid_share) || 0 !== parseAmount(user.owed_share))
         .map((user) => toUserId(user.user_id))
         .filter((id): id is number => undefined !== id),
     );
@@ -393,12 +398,16 @@ const importItem = async (
       inScope.push(row);
       return;
     }
-    // The same Splitwise expense, saved elsewhere by you or by someone in it: it moved between
-    // groups in Splitwise, or was imported with other people. Importing it here would count it
-    // twice. Anyone else's file can't stand for your expenses, so theirs are ignored.
-    if (row.addedBy === userId || partiesOf(expense).has(row.addedBy)) {
+    // The same Splitwise id saved elsewhere, moving money for any of the same people, is the same
+    // expense: it moved between groups in Splitwise, or someone else in it imported it with other
+    // people. Importing it here would count it twice. An id with none of these people is
+    // someone else's, so it can't block this import or change anyone's money.
+    const parties = partiesOf(expense);
+    if (
+      [...getFinancialParties(row.paidBy, row.expenseParticipants)].some((id) => parties.has(id))
+    ) {
       refuse(
-        `${describeExpense(expense)} was already imported ${null === row.groupId ? 'outside groups' : 'in another group'} with other people.`,
+        `${describeExpense(expense)} was already imported ${null === row.groupId ? 'outside groups' : 'in another group'}, so it can't be imported here too.`,
       );
     }
   });
@@ -423,7 +432,7 @@ const importItem = async (
       paidBy: toUserId(part.paidBy) ?? -1,
       shares: part.shares.map((share) => ({ ...share, userId: toUserId(share.userId) ?? -1 })),
     }));
-    if (!isSameImportedExpense(rows, inUserIds)) {
+    if (!isSameImportedExpense(rows, existingGroup?.id ?? null, inUserIds)) {
       changed.push(
         rows.some((row) => row.deletedAt)
           ? `${describeExpense(expense)} was deleted in SplitPro after it was imported.`
@@ -462,26 +471,32 @@ const importItem = async (
   const newExpenses = active.filter((expense) => !storedById.has(String(expense.id)));
   const newParts = newExpenses.flatMap((expense) => converted.get(String(expense.id))!);
 
-  // New expenses between two other people change their balance with each other. Like adding a
-  // group expense in the app, that needs everyone who already has an account to be known to you.
-  const others = new Set<number>();
-  newParts.forEach((part) =>
-    part.shares
-      .filter((share) => 0 !== share.amount && share.userId !== part.paidBy)
-      .filter((share) => me !== share.userId && me !== part.paidBy)
-      .forEach((share) => [share.userId, part.paidBy].forEach((id) => others.add(id))),
-  );
-  const existingOthers = [...others].flatMap((swId) => {
+  /**
+   * The people this import adds to a group, or puts in an expense or a friendship with you, in
+   * Splitwise ids. A new group gets everyone in it; an existing one only who new expenses need.
+   */
+  const touched = new Set<number>(newParts.flatMap((part) => part.shares.map((s) => s.userId)));
+  if (isGroup && !existingGroup) {
+    item.group.members.forEach((member) => touched.add(member.id));
+  }
+  if (!isGroup) {
+    item.friends.forEach((friend) => touched.add(friend.id));
+  }
+  touched.delete(me);
+  // Like adding someone to a group or an expense in the app, everyone who already has an account
+  // must be known to you: a friend, someone you have a balance with, or someone in a group with
+  // you, before this import. People without an account get one, as an invite would.
+  const existingTouched = [...touched].flatMap((swId) => {
     const spId = toUserId(swId);
     return undefined === spId ? [] : [spId];
   });
-  if (existingOthers.length) {
-    const known = await getKnownUserIds(userId, existingOthers);
-    const unknown = existingOthers.filter((spId) => !known.has(spId));
+  if (existingTouched.length) {
+    const known = await getKnownUserIds(userId, existingTouched);
+    const unknown = existingTouched.filter((spId) => !known.has(spId));
     if (unknown.length) {
       const names = unknown.map((spId) => name(splitwiseIdOf.get(spId)!)).sort();
       refuse(
-        `${names.join(', ')} already ${1 === names.length ? 'uses' : 'use'} SplitPro, and these expenses would change what they owe others, but they aren't your friends or in a group with you. Add them as friends, then import again.`,
+        `${joinNames(names)} already ${1 === names.length ? 'uses' : 'use'} SplitPro but ${1 === names.length ? "isn't" : "aren't"} connected to you there yet. Add ${1 === names.length ? 'them' : 'each of them'} as a friend in SplitPro, then import again.`,
       );
     }
   }
@@ -596,26 +611,66 @@ const importItem = async (
     }
   });
 
-  /** Pairs whose balance the new expenses change, in SplitPro ids. */
-  const pairsOf = (ids: (swId: number) => number | undefined) =>
-    newParts.flatMap((part) =>
-      part.shares
-        .filter((share) => 0 !== share.amount && share.userId !== part.paidBy)
-        .map((share) => [ids(share.userId), ids(part.paidBy)])
-        .filter((pair): pair is [number, number] => pair.every((id) => undefined !== id)),
+  /**
+   * The pairs whose balance this history covers, in SplitPro ids. Outside groups, the pairs the
+   * new expenses change. In a group, every pair of its members: a balance-only import wrote each
+   * friend's whole Splitwise balance, which includes the group's debts as Splitwise shows them,
+   * simplified to other pairs when the group simplifies debts.
+   */
+  const scopePairs = (ids: (swId: number) => number | undefined, groupMemberIds: number[]) => {
+    if (!isGroup) {
+      return newParts.flatMap((part) =>
+        part.shares
+          .filter((share) => 0 !== share.amount && share.userId !== part.paidBy)
+          .map((share) => [ids(share.userId), ids(part.paidBy)])
+          .filter((pair): pair is [number, number] => pair.every((id) => undefined !== id)),
+      );
+    }
+    const members = [
+      ...new Set([
+        ...[me, ...item.group.members.map((member) => member.id)]
+          .concat(newParts.flatMap((part) => part.shares.map((share) => share.userId)))
+          .map(ids)
+          .filter((id): id is number => undefined !== id),
+        ...groupMemberIds,
+      ]),
+    ].sort((a, b) => a - b);
+    return members.flatMap((a, index) =>
+      members.slice(index + 1).map((b) => [a, b] as [number, number]),
     );
-  const describePairs = (pairs: { userId: number; friendId: number }[]) =>
-    pairs.map((pair) => {
-      const [a, b] = [splitwiseIdOf.get(pair.userId), splitwiseIdOf.get(pair.friendId)];
-      const [first, second] =
-        b === me
-          ? [name(b), a ? name(a) : 'someone']
-          : [a ? name(a) : 'someone', b ? name(b) : 'someone'];
-      return `The balance between ${first} and ${second} was already imported from Splitwise without history, so importing these expenses would count it twice.`;
-    });
+  };
+  const describePairs = (pairs: { userId: number; friendId: number }[]) => {
+    const names = (spId: number) => {
+      const swId = splitwiseIdOf.get(spId);
+      return undefined === swId ? 'someone' : name(swId);
+    };
+    const withYou = pairs.filter((pair) => [pair.userId, pair.friendId].includes(userId));
+    const between = pairs.filter((pair) => ![pair.userId, pair.friendId].includes(userId));
+    const listed = [
+      ...withYou.map((pair) => names(pair.userId === userId ? pair.friendId : pair.userId)),
+    ].sort();
+    return [
+      ...(listed.length
+        ? [
+            `Your ${1 === listed.length ? 'balance' : 'balances'} with ${joinNames(listed)} ${1 === listed.length ? 'was' : 'were'} imported from Splitwise earlier as one amount, without ${1 === listed.length ? 'its' : 'their'} expenses.`,
+          ]
+        : []),
+      ...between
+        .slice(0, 2)
+        .map(
+          (pair) =>
+            `The balance between ${names(pair.userId)} and ${names(pair.friendId)} was imported from Splitwise earlier as one amount, without its expenses.`,
+        ),
+      isGroup
+        ? "That amount already includes this group, so its expenses can't be imported on top of it. The balances already imported stay as they are."
+        : "That amount already includes these expenses, so they can't be imported on top of it. The balances already imported stay as they are.",
+    ];
+  };
 
   if (newParts.length) {
-    const balanceOnly = await getBalanceOnlyPairs(pairsOf(toUserId));
+    const balanceOnly = await getBalanceOnlyPairs(
+      scopePairs(toUserId, existingGroup?.groupUsers.map((member) => member.userId) ?? []),
+    );
     if (balanceOnly.length) {
       refuse(...describePairs(balanceOnly));
     }
@@ -627,11 +682,22 @@ const importItem = async (
   await renewLocks();
   const { ids, groupId } = await runBalanceTransaction(async (tx) => {
     const ids = await createMissingUsers(tx, emails, new Map(userIds), people);
-    const balancePairs = await claimSplitwisePairs(
-      tx,
-      pairsOf((swId) => ids.get(swId)),
-      SplitwiseImportMode.HISTORY,
-    );
+    const groupMembers = existingGroup
+      ? await tx.groupUser.findMany({
+          where: { groupId: existingGroup.id },
+          select: { userId: true },
+        })
+      : [];
+    const balancePairs = newParts.length
+      ? await claimSplitwisePairs(
+          tx,
+          scopePairs(
+            (swId) => ids.get(swId),
+            groupMembers.map((member) => member.userId),
+          ),
+          SplitwiseImportMode.HISTORY,
+        )
+      : [];
     if (balancePairs.length) {
       throw new Refusal(
         describePairs(balancePairs.map(([a, b]) => ({ userId: a, friendId: b }))).slice(
@@ -681,7 +747,13 @@ const importItem = async (
       saved += result.added;
       alreadySaved += result.skipped;
     }
-  } catch (error) {
+  } catch (stopped) {
+    // What smaller transactions of the failed batch committed before it stopped.
+    if (stopped instanceof SaveStoppedError) {
+      saved += stopped.progress.added;
+      alreadySaved += stopped.progress.skipped;
+    }
+    const error = stopped instanceof SaveStoppedError ? stopped.cause : stopped;
     if (!(error instanceof ImportedExpenseMismatchError)) {
       console.error('Splitwise import stopped part way', error);
     }
@@ -708,14 +780,38 @@ const importItem = async (
   };
 };
 
+type SaveProgress = { added: number; skipped: number };
+
+/** Saving stopped, after `progress` was committed by earlier transactions of the same batch. */
+class SaveStoppedError extends Error {
+  constructor(
+    readonly cause: unknown,
+    readonly progress: SaveProgress,
+  ) {
+    super('Saving stopped part way');
+  }
+}
+
+const withProgress = (error: unknown, before: SaveProgress): SaveStoppedError => {
+  const inner =
+    error instanceof SaveStoppedError
+      ? error
+      : new SaveStoppedError(error, { added: 0, skipped: 0 });
+  return new SaveStoppedError(inner.cause, {
+    added: before.added + inner.progress.added,
+    skipped: before.skipped + inner.progress.skipped,
+  });
+};
+
 /**
  * Saves a batch in one balance transaction. Returns how many Splitwise expenses it added, and how
- * many it found already saved with the same money (someone imported them in the meantime).
+ * many it found already saved with the same money (someone imported them in the meantime). If it
+ * stops, the error says how much smaller transactions committed first.
  */
 const saveBatch = async (
   groupId: number | null,
   inputs: ImportedExpenseInput[],
-): Promise<{ added: number; skipped: number }> => {
+): Promise<SaveProgress> => {
   try {
     return await runBalanceTransaction(async (tx) => {
       const { added, skippedIds } = await insertImportedExpenses(tx, groupId, inputs);
@@ -734,11 +830,15 @@ const saveBatch = async (
         groupId,
         inputs.filter((input) => firstHalf.has(input.splitwiseExpenseId)),
       );
-      const second = await saveBatch(
-        groupId,
-        inputs.filter((input) => !firstHalf.has(input.splitwiseExpenseId)),
-      );
-      return { added: first.added + second.added, skipped: first.skipped + second.skipped };
+      try {
+        const second = await saveBatch(
+          groupId,
+          inputs.filter((input) => !firstHalf.has(input.splitwiseExpenseId)),
+        );
+        return { added: first.added + second.added, skipped: first.skipped + second.skipped };
+      } catch (secondError) {
+        throw withProgress(secondError, first);
+      }
     }
     throw error;
   }

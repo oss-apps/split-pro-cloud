@@ -102,6 +102,15 @@ const setup = async () => {
 
   const cleanUp = () => db.user.deleteMany({ where: { email: { contains: suffix } } });
 
+  /** Makes everyone friends with everyone, like inviting each other in the app. */
+  const befriend = (...users: { id: number }[]) =>
+    db.friendship.createMany({
+      data: users.flatMap((a) =>
+        users.filter((b) => b.id !== a.id).map((b) => ({ userId: a.id, friendId: b.id })),
+      ),
+      skipDuplicates: true,
+    });
+
   return {
     db,
     lib,
@@ -109,6 +118,7 @@ const setup = async () => {
     sw,
     email,
     createUser,
+    befriend,
     callerFor,
     importFile,
     importSplitwiseItem,
@@ -654,7 +664,7 @@ void test(
     const { results } = await t.importFile(me, file);
     refused(
       results[`group:${gid}`],
-      /between you and Bo was already imported from Splitwise without history/,
+      /Your balance with Bo was imported from Splitwise earlier as one amount/,
     );
     // Cy had no balance-only import, so their history comes in.
     imported(results[`friends:${cy.id}`]);
@@ -1318,6 +1328,7 @@ void test(
     const { importUserBalanceFromSplitWise } = await import('~/server/api/services/splitService');
     const me = await t.createUser('Ada');
     const boUser = await t.createUser('Bo');
+    await t.befriend(me, boUser);
     const { file, key } = twoPeopleFile(t);
     const request = requestFor(t, file, key);
 
@@ -1336,7 +1347,7 @@ void test(
       hook.restore();
     }
 
-    refused(result, /already imported from Splitwise without history/);
+    refused(result, /imported from Splitwise earlier as one amount/);
     // The balance is counted once, from the balance-only import, and no expense was saved.
     assert.deepEqual(await t.balances([me.id, boUser.id]), [
       `USD ${me.id}->${boUser.id} 1000`,
@@ -1353,6 +1364,7 @@ void test(
     const { importUserBalanceFromSplitWise } = await import('~/server/api/services/splitService');
     const me = await t.createUser('Ada');
     const boUser = await t.createUser('Bo');
+    await t.befriend(me, boUser);
     const { file, key } = twoPeopleFile(t);
     const request = requestFor(t, file, key);
 
@@ -1417,6 +1429,7 @@ void test(
     const bo = t.sw('Bo', 2);
     const adaUser = await t.createUser('Ada');
     const boUser = await t.createUser('Bo');
+    await t.befriend(adaUser, boUser);
     const first = sharedGroupFile(t, ada, bo, 1000);
     const second = sharedGroupFile(t, bo, ada, 2000);
     const key = `group:${first.gid}`;
@@ -1467,6 +1480,7 @@ void test(
     const { insertImportedExpenses } = await import('~/server/api/services/splitService');
     const adaUser = await t.createUser('Ada');
     const boUser = await t.createUser('Bo');
+    await t.befriend(adaUser, boUser);
     const { gid, file } = sharedGroupFile(t, t.sw('Ada', 1), t.sw('Bo', 2), 1000);
     const request = requestFor(t, file, `group:${gid}`);
 
@@ -1528,6 +1542,7 @@ void test(
     const bo = t.sw('Bo', 2);
     const adaUser = await t.createUser('Ada');
     const boUser = await t.createUser('Bo');
+    await t.befriend(adaUser, boUser);
     const first = sharedGroupFile(t, ada, bo, 1000);
     imported(await t.importSplitwiseItem(adaUser, requestFor(t, first.file, `group:${first.gid}`)));
 
@@ -1550,64 +1565,63 @@ void test(
 );
 
 void test(
-  "ids are scoped: someone else's file claiming your expense ids can't block or change your import (Sol's repro)",
+  "ids are scoped: someone else's file reusing your expense ids can't change money, and can only refuse people connected to them (Sol's repro)",
   { skip: !databaseUrl },
   withSetup(async (t) => {
     const ada = t.sw('Ada', 1);
     const bo = t.sw('Bo', 2);
     const fred = t.sw('Fred', 3);
+    const gil = t.sw('Gil', 4);
     const adaUser = await t.createUser('Ada');
     const fredUser = await t.createUser('Fred');
-    const [groupExpenseId, friendExpenseId] = [t.base + 9201, t.base + 9202];
+    const [groupExpenseId, friendExpenseId, sharedId] = [
+      t.base + 9201,
+      t.base + 9202,
+      t.base + 9203,
+    ];
+    const twoWay = (id: number, payer: Person, other: Person, groupId?: number) =>
+      expense({
+        id,
+        groupId: groupId ?? null,
+        users: [
+          [payer.id, 3000, 1500],
+          [other.id, 0, 1500],
+        ],
+      });
 
-    // Fred makes up a group with Ada and Bo, and an expense outside groups with Ada, reusing ids.
-    // (A debt between Ada and Bo alone would be refused; see the next test.)
-    const forged = buildExport({
+    // Fred isn't connected to Ada, so he can't put her in a made-up group or expense at all.
+    const withAda = buildExport({
       me: fred,
-      people: [ada, bo],
-      groups: [{ id: t.base + 400, name: 'Forged', memberIds: [ada.id, bo.id, fred.id] }],
+      people: [ada],
+      groups: [{ id: t.base + 400, name: 'Forged', memberIds: [ada.id, fred.id] }],
       expenses: [
-        expense({
-          id: groupExpenseId,
-          groupId: t.base + 400,
-          users: [
-            [fred.id, 10000, 0],
-            [ada.id, 0, 10000],
-          ],
-        }),
-        expense({
-          id: friendExpenseId,
-          users: [
-            [fred.id, 4000, 2000],
-            [ada.id, 0, 2000],
-          ],
-        }),
+        twoWay(groupExpenseId, fred, ada, t.base + 400),
+        twoWay(friendExpenseId, fred, ada),
       ],
     });
-    Object.values((await t.importFile(fredUser, forged)).results).forEach(imported);
+    const before = await t.balances([adaUser.id, fredUser.id]);
+    Object.values((await t.importFile(fredUser, withAda)).results).forEach((r) =>
+      refused(r, /Ada already uses SplitPro but isn't connected to you/),
+    );
+    assert.deepEqual(await t.balances([adaUser.id, fredUser.id]), before);
 
-    // Ada's real group and expense outside groups, with the same ids, still import.
+    // With someone new instead, Fred's file can reuse Ada's ids, but they aren't Ada's expenses.
+    const withGil = buildExport({
+      me: fred,
+      people: [gil],
+      groups: [{ id: t.base + 401, name: 'Forged', memberIds: [gil.id, fred.id] }],
+      expenses: [
+        twoWay(groupExpenseId, fred, gil, t.base + 401),
+        twoWay(friendExpenseId, fred, gil),
+      ],
+    });
+    Object.values((await t.importFile(fredUser, withGil)).results).forEach(imported);
+
     const real = buildExport({
       me: ada,
       people: [bo],
-      groups: [{ id: t.base + 401, name: 'Real', memberIds: [ada.id, bo.id] }],
-      expenses: [
-        expense({
-          id: groupExpenseId,
-          groupId: t.base + 401,
-          users: [
-            [ada.id, 3000, 1500],
-            [bo.id, 0, 1500],
-          ],
-        }),
-        expense({
-          id: friendExpenseId,
-          users: [
-            [ada.id, 1000, 500],
-            [bo.id, 0, 500],
-          ],
-        }),
-      ],
+      groups: [{ id: t.base + 402, name: 'Real', memberIds: [ada.id, bo.id] }],
+      expenses: [twoWay(groupExpenseId, ada, bo, t.base + 402), twoWay(friendExpenseId, ada, bo)],
     });
     const { results } = await t.importFile(adaUser, real);
     assert.deepEqual(
@@ -1618,24 +1632,49 @@ void test(
       ],
     );
 
-    // Ada's own expense that moved out of the group in Splitwise is caught, not imported twice.
-    const moved = buildExport({
-      me: ada,
-      people: [bo],
-      groups: [],
-      expenses: [
-        expense({
-          id: groupExpenseId,
-          users: [
-            [ada.id, 3000, 1500],
-            [bo.id, 0, 1500],
-          ],
-        }),
-      ],
-    });
+    // Once Fred and Ada are connected, an expense of theirs with an id Ada uses elsewhere makes
+    // Ada's import refuse, which is the worst it can do: no money changes.
+    await t.befriend(adaUser, fredUser);
+    Object.values(
+      (
+        await t.importFile(
+          fredUser,
+          buildExport({
+            me: fred,
+            people: [ada],
+            groups: [],
+            expenses: [twoWay(sharedId, fred, ada)],
+          }),
+        )
+      ).results,
+    ).forEach(imported);
+    const boUser = await t.userByEmail('Bo');
+    const balancesBefore = await t.balances([adaUser.id, boUser.id, fredUser.id]);
     refused(
-      (await t.importFile(adaUser, moved)).results[`friends:${bo.id}`],
-      /already imported in another group with other people/,
+      (
+        await t.importFile(
+          adaUser,
+          buildExport({ me: ada, people: [bo], groups: [], expenses: [twoWay(sharedId, ada, bo)] }),
+        )
+      ).results[`friends:${bo.id}`],
+      /was already imported outside groups, so it can't be imported here too/,
+    );
+    assert.deepEqual(await t.balances([adaUser.id, boUser.id, fredUser.id]), balancesBefore);
+
+    // Ada's own expense that moved out of the group in Splitwise is caught, not imported twice.
+    refused(
+      (
+        await t.importFile(
+          adaUser,
+          buildExport({
+            me: ada,
+            people: [bo],
+            groups: [],
+            expenses: [twoWay(groupExpenseId, ada, bo)],
+          }),
+        )
+      ).results[`friends:${bo.id}`],
+      /was already imported in another group, so it can't be imported here too/,
     );
   }),
 );
@@ -1673,7 +1712,7 @@ void test(
     // Ada and Bo already use SplitPro and don't know Fred: Fred can't put a debt between them.
     refused(
       (await t.importFile(fredUser, fileWith(bo, [ada, bo], gid))).results[`group:${gid}`],
-      /Ada, Bo already use SplitPro/,
+      /Ada and Bo already use SplitPro/,
     );
     // Nor between Ada and someone new.
     refused(
@@ -1705,6 +1744,7 @@ void test(
     const bo = t.sw('Bo', 2);
     const cy = t.sw('Cy', 3);
     const [adaUser, boUser, cyUser] = await Promise.all(['Ada', 'Bo', 'Cy'].map(t.createUser));
+    await t.befriend(adaUser!, boUser!, cyUser!);
     const shared = (me: Person, others: Person[], cents: number) =>
       buildExport({
         me,
@@ -1968,4 +2008,543 @@ void test(
       /don't add up to the balances Splitwise reports/,
     );
   }),
+);
+
+/**
+ * Writes what the balance-only import on main wrote, with no claims: each friend's whole
+ * Splitwise balance on both sides with `importedFromSplitwise`, and groups with members only.
+ */
+const importLikeMain = async (
+  t: Setup,
+  importerId: number,
+  balances: { friendId: number; currency: string; cents: number }[],
+  groups: { splitwiseGroupId: number; name: string; memberIds: number[] }[] = [],
+) => {
+  await t.db.$transaction([
+    ...balances.flatMap(({ friendId, currency, cents }) => [
+      t.db.balance.upsert({
+        where: { userId_currency_friendId: { userId: importerId, currency, friendId } },
+        update: { amount: { increment: cents }, importedFromSplitwise: true },
+        create: {
+          userId: importerId,
+          currency,
+          friendId,
+          amount: cents,
+          importedFromSplitwise: true,
+        },
+      }),
+      t.db.balance.upsert({
+        where: { userId_currency_friendId: { userId: friendId, currency, friendId: importerId } },
+        update: { amount: { increment: -cents }, importedFromSplitwise: true },
+        create: {
+          userId: friendId,
+          currency,
+          friendId: importerId,
+          amount: -cents,
+          importedFromSplitwise: true,
+        },
+      }),
+    ]),
+    ...groups.map((group) =>
+      t.db.group.create({
+        data: {
+          name: group.name,
+          splitwiseGroupId: String(group.splitwiseGroupId),
+          publicId: `legacy-${t.base}-${group.splitwiseGroupId}`,
+          userId: importerId,
+          groupUsers: { create: group.memberIds.map((userId) => ({ userId })) },
+        },
+      }),
+    ),
+  ]);
+};
+
+/** Ada owes Bo 10 and Bo owes Cy 10; Splitwise simplifies it to Ada owes Cy 10. */
+const simplifiedChainFile = (t: Setup) => {
+  const ada = t.sw('Ada', 1);
+  const bo = t.sw('Bo', 2);
+  const cy = t.sw('Cy', 3);
+  const gid = t.base + 800;
+  const file = buildExport({
+    me: ada,
+    people: [bo, cy],
+    groups: [{ id: gid, name: 'Simplified', memberIds: [ada.id, bo.id, cy.id], simplify: true }],
+    expenses: [
+      expense({
+        id: t.base + 8001,
+        groupId: gid,
+        users: [
+          [bo.id, 1000, 0],
+          [ada.id, 0, 1000],
+        ],
+      }),
+      expense({
+        id: t.base + 8002,
+        groupId: gid,
+        users: [
+          [cy.id, 1000, 0],
+          [bo.id, 0, 1000],
+        ],
+      }),
+    ],
+  });
+  return { ada, bo, cy, gid, file };
+};
+
+void test(
+  "finding 1: a balance-only import of a simplified group's other pair refuses its history (Sol's LEGACY_SIMPLIFIED_DOUBLE)",
+  { skip: !databaseUrl },
+  withSetup(async (t) => {
+    const { importUserBalanceFromSplitWise, importGroupFromSplitwise } = await import(
+      '~/server/api/services/splitService'
+    );
+    const me = await t.createUser('Ada');
+    const { cy, gid, file } = simplifiedChainFile(t);
+    const cyFriend = file.friends.find((f) => f.id === cy.id)!;
+    // Splitwise shows Ada owing Cy 10, so that's what the balance-only import brings over.
+    assert.deepEqual(cyFriend.balance, [{ currency_code: 'USD', amount: '-10.0' }]);
+    await importUserBalanceFromSplitWise(me.id, [oldFriendOf(cyFriend)]);
+    const group = file.groups.find((g) => g.id === gid)!;
+    await importGroupFromSplitwise(me.id, [
+      {
+        id: gid,
+        name: group.name,
+        members: group.members.map((m) => ({ ...oldFriendOf({ ...m, balance: [] }) })),
+      },
+    ]);
+    const before = await t.snapshot();
+
+    const result = (await t.importFile(me, file)).results[`group:${gid}`];
+    refused(result, /Your balance with Cy was imported from Splitwise earlier as one amount/);
+    refused(result, /already includes this group, so its expenses can't be imported/);
+    assert.deepEqual(await t.snapshot(), before, 'nothing written');
+    const total = await t.db.balance.aggregate({
+      where: { userId: me.id },
+      _sum: { amount: true },
+    });
+    assert.equal(total._sum.amount, -1000, 'Ada still owes 10 in all, not 20');
+  }),
+);
+
+void test(
+  'finding 1: balance-only imports made before claims existed are found from their balances, for groups and friends',
+  { skip: !databaseUrl },
+  withSetup(async (t) => {
+    const me = await t.createUser('Ada');
+    const boUser = await t.createUser('Bo');
+    const cyUser = await t.createUser('Cy');
+    const { bo, cy, gid, file } = simplifiedChainFile(t);
+    await importLikeMain(
+      t,
+      me.id,
+      [{ friendId: cyUser.id, currency: 'USD', cents: -1000 }],
+      [{ splitwiseGroupId: gid, name: 'Simplified', memberIds: [me.id, boUser.id, cyUser.id] }],
+    );
+    assert.equal(
+      await t.db.splitwiseImportPair.count({
+        where: { userId: { in: [me.id, boUser.id, cyUser.id] } },
+      }),
+      0,
+      'no claims, like data written before this change',
+    );
+    const before = await t.snapshot();
+    refused(
+      (await t.importFile(me, file)).results[`group:${gid}`],
+      /Your balance with Cy was imported from Splitwise earlier as one amount/,
+    );
+    assert.deepEqual(await t.snapshot(), before);
+
+    // Outside groups too: Bo's balance came over as one amount, so his expenses can't.
+    await importLikeMain(t, me.id, [{ friendId: boUser.id, currency: 'USD', cents: 500 }]);
+    const nonGroup = buildExport({
+      me: t.sw('Ada', 1),
+      people: [bo, cy],
+      groups: [],
+      expenses: [
+        expense({
+          id: t.base + 8101,
+          users: [
+            [t.sw('Ada', 1).id, 1000, 500],
+            [bo.id, 0, 500],
+          ],
+        }),
+      ],
+    });
+    const nonGroupResult = (await t.importFile(me, nonGroup)).results[`friends:${bo.id}`];
+    refused(
+      nonGroupResult,
+      /Your balance with Bo was imported from Splitwise earlier as one amount/,
+    );
+    refused(nonGroupResult, /already includes these expenses/);
+    assert.deepEqual(await t.balances([me.id, boUser.id]), [
+      `USD ${me.id}->${boUser.id} 500`,
+      `USD ${boUser.id}->${me.id} -500`,
+    ]);
+  }),
+);
+
+void test(
+  "finding 1: after a group's history, a balance-only import of any two of its members is skipped",
+  { skip: !databaseUrl },
+  withSetup(async (t) => {
+    const { importUserBalanceFromSplitWise } = await import('~/server/api/services/splitService');
+    const me = await t.createUser('Ada');
+    const { cy, gid, file } = simplifiedChainFile(t);
+    imported((await t.importFile(me, file)).results[`group:${gid}`]);
+    const cyUser = await t.userByEmail('Cy');
+    // Ada and Cy have no expense together, but Splitwise's simplified balance puts the group's
+    // debt between them.
+    const skipped = await importUserBalanceFromSplitWise(me.id, [
+      oldFriendOf(file.friends.find((f) => f.id === cy.id)!),
+    ]);
+    assert.deepEqual(skipped, ['Cy']);
+    assert.deepEqual(await t.balances([me.id, cyUser.id]), []);
+  }),
+);
+
+void test(
+  "finding 2: an expense moved out of a group isn't imported again by someone in it (Sol's THIRD_MEMBER_MOVED_DOUBLE)",
+  { skip: !databaseUrl },
+  withSetup(async (t) => {
+    const me = await t.createUser('Ada');
+    const ada = t.sw('Ada', 1);
+    const bo = t.sw('Bo', 2);
+    const cy = t.sw('Cy', 3);
+    const gid = t.base + 820;
+    const rent = expense({
+      id: t.base + 8201,
+      groupId: gid,
+      users: [
+        [bo.id, 2000, 1000],
+        [cy.id, 0, 1000],
+      ],
+    });
+    imported(
+      (
+        await t.importFile(
+          me,
+          buildExport({
+            me: ada,
+            people: [bo, cy],
+            groups: [{ id: gid, name: 'Flat', memberIds: [ada.id, bo.id, cy.id] }],
+            expenses: [rent],
+          }),
+        )
+      ).results[`group:${gid}`],
+    );
+    const boUser = await t.userByEmail('Bo');
+    const cyUser = await t.userByEmail('Cy');
+    const before = await t.balances([boUser.id, cyUser.id]);
+    assert.deepEqual(before, [
+      `USD ${boUser.id}->${cyUser.id} 1000`,
+      `USD ${cyUser.id}->${boUser.id} -1000`,
+    ]);
+
+    // Bo, who didn't import the group, imports the same expense after it moved outside groups.
+    const moved = buildExport({
+      me: bo,
+      people: [cy],
+      groups: [],
+      expenses: [{ ...rent, group_id: null }],
+    });
+    refused(
+      (await t.importFile(boUser, moved)).results[`friends:${cy.id}`],
+      /was already imported in another group, so it can't be imported here too/,
+    );
+    assert.equal(await t.db.expense.count({ where: { splitwiseExpenseId: String(rent.id) } }), 1);
+    assert.deepEqual(await t.balances([boUser.id, cyUser.id]), before);
+  }),
+);
+
+void test(
+  'finding 2: the same expense saved meanwhile in another scope is caught in the saving transaction',
+  { skip: !databaseUrl },
+  withSetup(async (t) => {
+    const { insertImportedExpenses } = await import('~/server/api/services/splitService');
+    const adaUser = await t.createUser('Ada');
+    const boUser = await t.createUser('Bo');
+    await t.befriend(adaUser, boUser);
+    const { file, key } = twoPeopleFile(t);
+    const request = requestFor(t, file, key);
+    const group = await t.db.group.create({
+      data: {
+        name: 'Elsewhere',
+        publicId: `elsewhere-${t.base}`,
+        userId: boUser.id,
+        groupUsers: { create: [{ userId: adaUser.id }, { userId: boUser.id }] },
+      },
+    });
+
+    // After every check passed, someone saves the same expense in a group.
+    const hook = hookTransactions(t, async (n, run) => {
+      if (2 === n) {
+        await hook.original(async (tx: unknown) =>
+          insertImportedExpenses(tx as never, group.id, [
+            {
+              paidBy: adaUser.id,
+              name: 'Same expense, in a group',
+              category: 'general',
+              amount: 20,
+              splitType: 'EXACT',
+              currency: 'USD',
+              participants: [
+                { userId: adaUser.id, amount: 10 },
+                { userId: boUser.id, amount: -10 },
+              ],
+              currentUserId: boUser.id,
+              expenseDate: new Date(),
+              splitwiseExpenseId: String(t.base + 9001),
+              splitwiseScope: `group:${group.id}`,
+              splitwisePart: 0,
+            },
+          ]),
+        );
+      }
+      return run();
+    });
+    let result;
+    try {
+      result = await t.importSplitwiseItem(adaUser, request);
+    } finally {
+      hook.restore();
+    }
+    assert.equal(result.status, 'partial', JSON.stringify(result));
+    assert.match((result as { reason: string }).reason, /imported somewhere else at the same time/);
+    assert.equal(
+      await t.db.expense.count({ where: { splitwiseExpenseId: String(t.base + 9001) } }),
+      1,
+    );
+    assert.deepEqual(await t.balances([adaUser.id, boUser.id]), [
+      `USD ${adaUser.id}->${boUser.id} 1000`,
+      `USD ${boUser.id}->${adaUser.id} -1000`,
+    ]);
+  }),
+);
+
+void test(
+  "finding 4: an import can't add existing accounts you aren't connected to, even to an empty group (Sol's EMPTY_GROUP_CONNECTION_BOOTSTRAP)",
+  { skip: !databaseUrl },
+  withSetup(async (t) => {
+    const { getKnownUserIds } = await import('~/server/api/services/accessControl');
+    const fred = t.sw('Fred', 1);
+    const ada = t.sw('Ada', 2);
+    const bo = t.sw('Bo', 3);
+    const newcomer = t.sw('Cy', 4);
+    const fredUser = await t.createUser('Fred');
+    const adaUser = await t.createUser('Ada');
+    const boUser = await t.createUser('Bo');
+    const gid = t.base + 840;
+    const before = await t.snapshot();
+
+    refused(
+      (
+        await t.importFile(
+          fredUser,
+          buildExport({
+            me: fred,
+            people: [ada, bo],
+            groups: [{ id: gid, name: 'Empty', memberIds: [fred.id, ada.id, bo.id] }],
+            expenses: [],
+          }),
+        )
+      ).results[`group:${gid}`],
+      /Ada and Bo already use SplitPro but aren't connected to you there yet/,
+    );
+    assert.deepEqual(await t.snapshot(), before, 'no group, nothing written');
+    assert.equal((await getKnownUserIds(fredUser.id, [adaUser.id, boUser.id])).size, 0);
+
+    // People without an account are added, as an invite would.
+    imported(
+      (
+        await t.importFile(
+          fredUser,
+          buildExport({
+            me: fred,
+            people: [newcomer],
+            groups: [{ id: gid + 1, name: 'New people', memberIds: [fred.id, newcomer.id] }],
+            expenses: [],
+          }),
+        )
+      ).results[`group:${gid + 1}`],
+    );
+
+    // An existing group gets no one new you aren't connected to either.
+    const flat = await t.db.group.findUniqueOrThrow({
+      where: { splitwiseGroupId: String(gid + 1) },
+    });
+    refused(
+      (
+        await t.importFile(
+          fredUser,
+          buildExport({
+            me: fred,
+            people: [newcomer, ada],
+            groups: [
+              { id: gid + 1, name: 'New people', memberIds: [fred.id, newcomer.id, ada.id] },
+            ],
+            expenses: [
+              expense({
+                id: t.base + 8401,
+                groupId: gid + 1,
+                users: [
+                  [fred.id, 1000, 500],
+                  [ada.id, 0, 500],
+                ],
+              }),
+            ],
+          }),
+        )
+      ).results[`group:${gid + 1}`],
+      /Ada already uses SplitPro but isn't connected to you there yet/,
+    );
+    assert.equal(
+      await t.db.groupUser.count({ where: { groupId: flat.id, userId: adaUser.id } }),
+      0,
+    );
+  }),
+);
+
+void test(
+  "finding 5: a split batch that stops part way reports what its first half saved (Sol's RECURSIVE_PARTIAL_COUNTS)",
+  { skip: !databaseUrl },
+  withSetup(async (t) => {
+    const { Prisma } = await import('@prisma/client');
+    const me = await t.createUser('Ada');
+    const ada = t.sw('Ada', 1);
+    const bo = t.sw('Bo', 2);
+    const gid = t.base + 860;
+    const ids = Array.from({ length: 4 }, (_, i) => t.base + 8601 + i);
+    const file = buildExport({
+      me: ada,
+      people: [bo],
+      groups: [{ id: gid, name: 'Flat', memberIds: [ada.id, bo.id] }],
+      expenses: ids.map((id) =>
+        expense({
+          id,
+          groupId: gid,
+          users: [
+            [ada.id, 200, 100],
+            [bo.id, 0, 100],
+          ],
+        }),
+      ),
+    });
+
+    // The whole batch keeps conflicting, so it is split; the first half saves, the second fails.
+    const failing = <T extends object>(tx: T): T =>
+      new Proxy(tx, {
+        get(target, prop, receiver) {
+          const value = Reflect.get(target, prop, receiver) as unknown;
+          if ('expense' !== prop) return value;
+          const delegate = value as {
+            createManyAndReturn: (args: { data: { splitwiseExpenseId: string }[] }) => unknown;
+          };
+          return new Proxy(delegate, {
+            get(model, name) {
+              if ('createManyAndReturn' !== name) return Reflect.get(model, name) as unknown;
+              return (args: { data: { splitwiseExpenseId: string }[] }) => {
+                if (4 === args.data.length) {
+                  throw new Prisma.PrismaClientKnownRequestError('write conflict', {
+                    code: 'P2034',
+                    clientVersion: 'test',
+                  });
+                }
+                if (args.data.some((row) => String(ids[2]) === row.splitwiseExpenseId)) {
+                  throw new Error('second half failed');
+                }
+                return model.createManyAndReturn(args);
+              };
+            },
+          });
+        },
+      });
+    const hook = hookTransactions(t, (_n, _run, operation) =>
+      hook.original((tx: unknown) => operation(failing(tx as object)), {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      }),
+    );
+    let result;
+    try {
+      result = (await t.importFile(me, file)).results[`group:${gid}`];
+    } finally {
+      hook.restore();
+    }
+    assert.deepEqual(
+      { ...result, reason: undefined },
+      { status: 'partial', imported: 2, remaining: 2, alreadyImported: 0, reason: undefined },
+    );
+    const group = await t.db.group.findUniqueOrThrow({ where: { splitwiseGroupId: String(gid) } });
+    assert.equal(await t.db.expense.count({ where: { groupId: group.id } }), 2);
+
+    const resumed = imported((await t.importFile(me, file)).results[`group:${gid}`]);
+    assert.deepEqual([resumed.imported, resumed.alreadyImported], [2, 2]);
+  }),
+);
+
+void test(
+  'finding 2: the comparison covers the group, the money and the people, and ignores zero shares',
+  { skip: !databaseUrl },
+  async () => {
+    process.env.SKIP_ENV_VALIDATION = '1';
+    const { isSameImportedExpense } = await import('~/server/api/services/splitService');
+    const saved = [
+      {
+        groupId: 7,
+        amount: 1000,
+        currency: 'USD',
+        paidBy: 1,
+        splitType: 'EXACT' as const,
+        splitwisePart: 0,
+        deletedAt: null,
+        expenseParticipants: [
+          { userId: 1, amount: 500 },
+          { userId: 2, amount: -500 },
+        ],
+      },
+    ];
+    const part = {
+      amount: 1000,
+      currency: 'USD',
+      paidBy: 1,
+      isSettlement: false,
+      splitwisePart: 0,
+      shares: [
+        { userId: 1, amount: 500 },
+        { userId: 2, amount: -500 },
+      ],
+    };
+    assert.equal(isSameImportedExpense(saved, 7, [part]), true);
+    assert.equal(
+      isSameImportedExpense(saved, 7, [
+        { ...part, shares: [...part.shares, { userId: 3, amount: 0 }] },
+      ]),
+      true,
+    );
+    assert.equal(isSameImportedExpense(saved, 8, [part]), false, 'another group');
+    assert.equal(isSameImportedExpense(saved, null, [part]), false, 'outside groups');
+    [
+      { amount: 1001 },
+      { currency: 'EUR' },
+      { paidBy: 2 },
+      { isSettlement: true },
+      { splitwisePart: 1 },
+      {
+        shares: [
+          { userId: 1, amount: 499 },
+          { userId: 2, amount: -499 },
+        ],
+      },
+    ].forEach((changed) =>
+      assert.equal(
+        isSameImportedExpense(saved, 7, [{ ...part, ...changed }]),
+        false,
+        JSON.stringify(changed),
+      ),
+    );
+    assert.equal(
+      isSameImportedExpense([{ ...saved[0]!, deletedAt: new Date() }], 7, [part]),
+      false,
+      'deleted in SplitPro',
+    );
+  },
 );

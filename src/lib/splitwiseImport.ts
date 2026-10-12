@@ -275,8 +275,9 @@ type Share = { id: number; paid: number; owed: number };
  * Who owes whom in one expense, from Splitwise's own data only:
  * - its `repayments`, when they are valid: every amount positive, between two people in the
  *   expense, adding up to each person's net, and each going to someone who paid enough to cover it;
- * - otherwise only when there is a single answer: one person is owed money, or one person owes it.
- * Returns null when several matchings would fit, rather than inventing one between two people.
+ * - otherwise only when one person paid: everyone else owes them their share.
+ * With several payers, money can go through anyone who paid, so the nets alone don't say who owes
+ * whom (even when only one person is owed overall). Returns null then, rather than guessing.
  */
 const getDebts = (users: Share[], repayments: SplitwiseExpense['repayments']): Debt[] | null => {
   const byId = new Map(users.map((user) => [user.id, user]));
@@ -310,24 +311,19 @@ const getDebts = (users: Share[], repayments: SplitwiseExpense['repayments']): D
     }
   }
 
-  const creditors = users.filter((user) => 0 < nets.get(user.id)!);
-  const debtors = users.filter((user) => 0 > nets.get(user.id)!);
-  if (1 < creditors.length && 1 < debtors.length) {
+  const payers = users.filter((user) => 0 < user.paid);
+  if (1 < payers.length) {
     return null;
   }
-  // With one side a single person, each debt is forced: it's everyone else's net.
+  const [payer] = payers;
+  // Nobody paid, so nobody owes anything.
+  if (!payer) {
+    return [];
+  }
   return netDebts(
-    1 === creditors.length
-      ? debtors.map((debtor) => ({
-          from: debtor.id,
-          to: creditors[0]!.id,
-          amount: -nets.get(debtor.id)!,
-        }))
-      : creditors.map((creditor) => ({
-          from: debtors[0]!.id,
-          to: creditor.id,
-          amount: nets.get(creditor.id)!,
-        })),
+    users
+      .filter((user) => user.id !== payer.id && 0 < user.owed)
+      .map((user) => ({ from: user.id, to: payer.id, amount: user.owed })),
   );
 };
 
@@ -396,7 +392,7 @@ export const convertExpense = (
   const debts = getDebts(valid, expense.repayments);
   if (!debts) {
     return fail(
-      "several people paid and several owe, and Splitwise didn't say who owes whom, so it can't be imported exactly",
+      "several people paid and Splitwise didn't say who owes whom, so it can't be imported exactly",
     );
   }
 
