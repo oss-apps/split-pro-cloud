@@ -7,6 +7,8 @@ import { buildExport, expense, person } from './splitwiseFixtures';
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const enabled = !!databaseUrl && '1' === process.env.SPLITWISE_IMPORT_LOAD;
 const GROUP_EXPENSES = Number(process.env.SPLITWISE_IMPORT_LOAD_EXPENSES ?? 12_000);
+/** Expenses Ada and Bo already have in SplitPro, which the balance guard adds up. */
+const EXISTING_EXPENSES = Number(process.env.SPLITWISE_IMPORT_LOAD_EXISTING ?? 10_000);
 
 void test(
   'imports a long group history in batches without blocking other writes',
@@ -16,12 +18,15 @@ void test(
     process.env.DATABASE_URL = databaseUrl;
     process.env.SKIP_ENV_VALIDATION = '1';
 
-    const [{ db }, lib, { importSplitwiseItem }, { createGroupExpense }] = await Promise.all([
-      import('~/server/db'),
-      import('~/lib/splitwiseImport'),
-      import('~/server/api/services/splitwiseImport'),
-      import('~/server/api/services/splitService'),
-    ]);
+    const [{ db }, lib, { importSplitwiseItem }, { createGroupExpense }, guard] = await Promise.all(
+      [
+        import('~/server/db'),
+        import('~/lib/splitwiseImport'),
+        import('~/server/api/services/splitwiseImport'),
+        import('~/server/api/services/splitService'),
+        import('~/server/api/services/balanceConsistency'),
+      ],
+    );
     db.pushNotification.findMany =
       (async () => []) as unknown as typeof db.pushNotification.findMany;
     await db.appMetadata.upsert({
@@ -37,6 +42,36 @@ void test(
     );
     const [ada] = people as [ReturnType<typeof person>];
     const me = await db.user.create({ data: { email: ada.email!, name: 'Ada' } });
+    const bo = await db.user.create({ data: { email: people[1]!.email!, name: 'Bo' } });
+    await db.friendship.createMany({
+      data: [
+        { userId: me.id, friendId: bo.id },
+        { userId: bo.id, friendId: me.id },
+      ],
+    });
+    // Their existing expenses outside groups, in all three currencies, with matching balances.
+    await db.$executeRaw`
+      INSERT INTO "Expense" (id, "paidBy", "addedBy", name, category, amount, "splitType",
+        "expenseDate", "createdAt", "updatedAt", currency)
+      SELECT ${suffix} || '-' || g, CASE WHEN 0 = g % 3 THEN ${bo.id} ELSE ${me.id} END, ${me.id},
+        'Existing', 'general', 2 * (100 + g % 1000), 'EXACT', now(), now(), now(),
+        (ARRAY['USD', 'EUR', 'JPY'])[1 + g % 3]
+      FROM generate_series(1, ${EXISTING_EXPENSES}) g`;
+    await db.$executeRaw`
+      INSERT INTO "ExpenseParticipant" ("expenseId", "userId", amount)
+      SELECT id, "paidBy", amount / 2 FROM "Expense" WHERE id LIKE ${suffix} || '-%'
+      UNION ALL
+      SELECT id, CASE WHEN "paidBy" = ${me.id} THEN ${bo.id} ELSE ${me.id} END, -amount / 2
+      FROM "Expense" WHERE id LIKE ${suffix} || '-%'`;
+    await db.$executeRaw`
+      INSERT INTO "Balance" ("userId", "friendId", currency, amount, "updatedAt")
+      SELECT u, f, currency, SUM(a), now() FROM (
+        SELECT "paidBy" AS u, CASE WHEN "paidBy" = ${me.id} THEN ${bo.id} ELSE ${me.id} END AS f,
+               currency, amount / 2 AS a FROM "Expense" WHERE id LIKE ${suffix} || '-%'
+        UNION ALL
+        SELECT CASE WHEN "paidBy" = ${me.id} THEN ${bo.id} ELSE ${me.id} END, "paidBy",
+               currency, -amount / 2 FROM "Expense" WHERE id LIKE ${suffix} || '-%'
+      ) rows GROUP BY u, f, currency`;
     const gid = base + 100;
     const currencies = ['USD', 'EUR', 'JPY'];
 
@@ -97,7 +132,8 @@ void test(
     const item = plan.items.find((i) => i.key === `group:${gid}`)!;
     const body = JSON.stringify(item.request);
 
-    // Someone adds an expense in another group every 100 ms while the import runs.
+    // While the import runs, every 100 ms: Ada adds an expense in another group, and two people
+    // with nothing to do with the import add one between them. Failed writes are counted.
     const other = await db.group.create({
       data: {
         name: 'Other',
@@ -106,12 +142,40 @@ void test(
         groupUsers: { create: [{ userId: me.id }] },
       },
     });
-    const latencies: number[] = [];
+    const [gus, hal] = await Promise.all(
+      ['gus', 'hal'].map((name) =>
+        db.user.create({ data: { email: `${name}-${suffix}@example.com`, name } }),
+      ),
+    );
+    const unrelated = await db.group.create({
+      data: {
+        name: 'Unrelated',
+        publicId: `unrelated-${suffix}`,
+        userId: gus!.id,
+        groupUsers: { create: [{ userId: gus!.id }, { userId: hal!.id }] },
+      },
+    });
     let running = true;
-    const probe = (async () => {
-      while (running) {
-        const start = performance.now();
-        await createGroupExpense(
+    const writer = (write: () => Promise<unknown>) => {
+      const stats = { latencies: [] as number[], failed: 0 };
+      const done = (async () => {
+        while (running) {
+          const start = performance.now();
+          try {
+            await write();
+            stats.latencies.push(performance.now() - start);
+          } catch {
+            stats.failed++;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+      })();
+      return { stats, done };
+    };
+    const date = new Date();
+    const writers = {
+      adaElsewhere: writer(() =>
+        createGroupExpense(
           other.id,
           me.id,
           'Probe',
@@ -121,12 +185,43 @@ void test(
           'USD',
           [{ userId: me.id, amount: 0 }],
           me.id,
-          new Date(),
-        );
-        latencies.push(performance.now() - start);
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-    })();
+          date,
+        ),
+      ),
+      unrelatedUsers: writer(() =>
+        createGroupExpense(
+          unrelated.id,
+          gus!.id,
+          'Probe',
+          'general',
+          2,
+          'EQUAL',
+          'USD',
+          [
+            { userId: gus!.id, amount: 1 },
+            { userId: hal!.id, amount: -1 },
+          ],
+          gus!.id,
+          date,
+        ),
+      ),
+    };
+    const stopWriters = async () => {
+      running = false;
+      await Promise.all(Object.values(writers).map((w) => w.done));
+    };
+    const summary = ({ stats }: ReturnType<typeof writer>) => {
+      const sorted = [...stats.latencies].sort((a, b) => a - b);
+      const p = (q: number) =>
+        sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))] ?? 0;
+      return {
+        ok: sorted.length,
+        failed: stats.failed,
+        p50: Math.round(p(0.5)),
+        p95: Math.round(p(0.95)),
+        max: Math.round(sorted.at(-1) ?? 0),
+      };
+    };
 
     try {
       const start = performance.now();
@@ -135,8 +230,7 @@ void test(
         lib.importItemRequestSchema.parse(JSON.parse(body)),
       );
       const importMs = performance.now() - start;
-      running = false;
-      await probe;
+      await stopWriters();
 
       assert.equal(result.status, 'imported', JSON.stringify(result));
       const again = performance.now();
@@ -147,8 +241,59 @@ void test(
       const reimportMs = performance.now() - again;
       assert.equal(second.status, 'imported');
 
-      const sorted = [...latencies].sort((a, b) => a - b);
-      const p = (q: number) => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))]!;
+      // The balance guard on its own: preflight's check for every pair, currency and the group,
+      // and a batch's lock, compare and read back for the same rows, which a batch of this group
+      // touches.
+      const userIds = (
+        await db.user.findMany({
+          where: { email: { contains: suffix }, id: { notIn: [gus!.id, hal!.id] } },
+          select: { id: true },
+        })
+      ).map((u) => u.id);
+      const groupId = 'imported' === result.status ? result.groupId : null;
+      const keys = userIds.flatMap((a) =>
+        userIds
+          .filter((b) => a < b)
+          .flatMap((b) =>
+            currencies.flatMap((currency) => [
+              { userId: a, friendId: b, currency, groupId },
+              { userId: a, friendId: b, currency, groupId: null },
+            ]),
+          ),
+      );
+      const time = async (run: () => Promise<unknown>) => {
+        const ms: number[] = [];
+        for (let i = 0; i < 20; i++) {
+          const start = performance.now();
+          await run();
+          ms.push(performance.now() - start);
+        }
+        ms.sort((a, b) => a - b);
+        return { p50: +ms[10]!.toFixed(1), max: +ms[19]!.toFixed(1) };
+      };
+      const { unexplained, snapshot } = await guard.checkBalances(db, keys);
+      assert.deepEqual(unexplained, []);
+      const adaBoKeys = keys.filter((k) =>
+        [k.userId, k.friendId].every((id) => [me.id, bo.id].includes(id)),
+      );
+      const guardMs = {
+        pairs: keys.length / 2,
+        adaAndBoExpenses: await db.expense.count({
+          where: { OR: [{ paidBy: me.id }, { paidBy: bo.id }], deletedAt: null },
+        }),
+        preflightAllPairs: await time(() => guard.checkBalances(db, keys)),
+        preflightAdaAndBo: await time(() => guard.checkBalances(db, adaBoKeys)),
+        batchLockCompareReadBack: await time(() =>
+          db.$transaction(
+            async (tx) => {
+              await guard.assertBalancesUnchanged(tx, keys, snapshot);
+              return guard.readBalances(tx, keys);
+            },
+            { isolationLevel: 'Serializable' },
+          ),
+        ),
+      };
+
       console.info(
         JSON.stringify(
           {
@@ -158,14 +303,14 @@ void test(
             parts: await db.expense.count({ where: { group: { splitwiseGroupId: String(gid) } } }),
             requestMb: +(body.length / 1024 / 1024).toFixed(2),
             maxBodyMb: lib.MAX_IMPORT_BODY_BYTES / 1024 / 1024,
+            existingAdaAndBoExpenses: EXISTING_EXPENSES,
             importSeconds: +(importMs / 1000).toFixed(1),
             reimportSeconds: +(reimportMs / 1000).toFixed(1),
             otherWrites: {
-              count: sorted.length,
-              p50: Math.round(p(0.5)),
-              p95: Math.round(p(0.95)),
-              max: Math.round(sorted.at(-1) ?? 0),
+              adaElsewhere: summary(writers.adaElsewhere),
+              unrelatedUsers: summary(writers.unrelatedUsers),
             },
+            guard: guardMs,
           },
           null,
           2,
@@ -173,8 +318,7 @@ void test(
       );
       assert.ok(body.length < lib.MAX_IMPORT_BODY_BYTES);
     } finally {
-      running = false;
-      await probe.catch(() => undefined);
+      await stopWriters();
       await db.user.deleteMany({ where: { email: { contains: suffix } } });
     }
   },

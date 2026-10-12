@@ -28,6 +28,15 @@ import {
 import { db } from '~/server/db';
 import { MAX_AMOUNT_CENTS, toFixedNumber } from '~/utils/numbers';
 import { getKnownUserIds } from './accessControl';
+import {
+  type BalanceKey,
+  type BalanceSnapshot,
+  BalancesChangedError,
+  assertBalancesUnchanged,
+  checkBalances,
+  getBalanceKeys,
+  readBalances,
+} from './balanceConsistency';
 import { BALANCE_CONFLICT_MESSAGE, runBalanceTransaction } from './balanceTransaction';
 import {
   type ImportedExpenseInput,
@@ -656,8 +665,59 @@ const importItem = async (
     ];
   };
 
+  /**
+   * History may only be added where the stored balances are exactly what the expenses already in
+   * SplitPro add up to (see `balanceConsistency`). The person rule above can't see a balance-only
+   * import once its rows are gone; this can.
+   */
+  const balanceKeysOf = (ids: (swId: number) => number | undefined, groupId: number | null) =>
+    getBalanceKeys(
+      groupId,
+      newParts.map((part) => ({
+        paidBy: ids(part.paidBy) ?? -1,
+        currency: part.currency,
+        participants: part.shares.map((share) => ({
+          userId: ids(share.userId) ?? -1,
+          amount: share.amount,
+        })),
+      })),
+    ).filter(({ userId, friendId }) => 0 < userId && 0 < friendId);
+  const describeUnexplained = (keys: BalanceKey[]) => {
+    const pairs = [
+      ...new Set(
+        keys.map(({ userId, friendId, groupId }) => `${userId}:${friendId}:${null !== groupId}`),
+      ),
+    ].map((pair) => {
+      const [a, b, inGroup] = pair.split(':');
+      const [x, y] = [Number(a), Number(b)].map((spId) => {
+        const swId = splitwiseIdOf.get(spId);
+        return undefined === swId ? 'someone' : name(swId);
+      }) as [string, string];
+      const where = 'true' === inGroup ? ' in this group' : '';
+      return 'you' === x || 'you' === y
+        ? `Your SplitPro balance with ${'you' === x ? y : x}${where} doesn't match your expenses together.`
+        : `The SplitPro balance between ${x} and ${y}${where} doesn't match their expenses together.`;
+    });
+    return [
+      ...pairs.slice(0, MAX_REASONS - 1),
+      "So history can't be added safely, and nothing was imported. This can happen after an earlier Splitwise import of balances only, or when a friend was removed and added again. The balances stay as they are.",
+    ];
+  };
+
+  let checkedRows: BalanceSnapshot = new Map();
   if (newParts.length) {
     await assertBalancesFit(resulting, newParts, toUserId, existingGroup?.id ?? null);
+    // The person rule first: its message says more about why.
+    const balanceOnly = await getBalanceOnlyPeople(db, writtenPeople(newParts, toUserId));
+    if (balanceOnly.length) {
+      refuse(...describeBalanceOnly(balanceOnly));
+    }
+    const checked = await checkBalances(db, balanceKeysOf(toUserId, existingGroup?.id ?? null));
+    if (checked.unexplained.length) {
+      refuse(...describeUnexplained(checked.unexplained));
+    }
+    // The rows as checked: each batch requires them unchanged.
+    checkedRows = checked.snapshot;
   }
 
   // Everything checks out. Accounts, the group and friendships are saved together, once nobody
@@ -673,6 +733,15 @@ const importItem = async (
     if (balanceOnly.length) {
       throw new Refusal(describeBalanceOnly(balanceOnly));
     }
+    // Unchanged since they were checked, so the group isn't created for nothing.
+    await assertBalancesUnchanged(
+      tx,
+      balanceKeysOf((swId) => ids.get(swId), existingGroup?.id ?? null),
+      checkedRows,
+      { lock: false },
+    ).catch((error: unknown) => {
+      throw error instanceof BalancesChangedError ? new Refusal([error.message]) : error;
+    });
     const groupId = isGroup
       ? await saveGroup(tx, userId, item.group, existingGroup?.id ?? null, ids, newParts, active)
       : null;
@@ -687,6 +756,26 @@ const importItem = async (
     }
     return { ids, groupId };
   });
+
+  // People who had no account when the balances were checked may have one now that wasn't made
+  // here, and a group may be new: check the balances again with everyone's account.
+  ids.forEach((spId, swId) => {
+    if (!splitwiseIdOf.has(spId)) splitwiseIdOf.set(spId, swId);
+  });
+  if (
+    newParts.length &&
+    ([...userIds.values()].some((id) => undefined === id) ||
+      (existingGroup?.id ?? null) !== groupId)
+  ) {
+    const checked = await checkBalances(
+      db,
+      balanceKeysOf((swId) => ids.get(swId), groupId),
+    );
+    if (checked.unexplained.length) {
+      return { status: 'refused', reasons: describeUnexplained(checked.unexplained) };
+    }
+    checkedRows = checked.snapshot;
+  }
 
   const scopeFor = (part: ConvertedPart) =>
     null !== groupId
@@ -710,9 +799,11 @@ const importItem = async (
           ids,
           scopeFor,
         ),
+        checkedRows,
       );
       saved += result.added;
       alreadySaved += result.skipped;
+      checkedRows = new Map([...checkedRows, ...result.balances]);
     }
   } catch (stopped) {
     // What smaller transactions of the failed batch committed before it stopped.
@@ -724,8 +815,15 @@ const importItem = async (
     if (error instanceof BalanceOnlyPeopleError && 0 === saved + alreadySaved) {
       return { status: 'refused', reasons: describeBalanceOnly(error.userIds) };
     }
+    if (error instanceof BalancesChangedError && 0 === saved + alreadySaved) {
+      return { status: 'refused', reasons: [error.message] };
+    }
     if (
-      !(error instanceof ImportedExpenseMismatchError || error instanceof BalanceOnlyPeopleError)
+      !(
+        error instanceof ImportedExpenseMismatchError ||
+        error instanceof BalanceOnlyPeopleError ||
+        error instanceof BalancesChangedError
+      )
     ) {
       console.error('Splitwise import stopped part way', error);
     }
@@ -735,7 +833,9 @@ const importItem = async (
       remaining: newExpenses.length - saved - alreadySaved,
       alreadyImported: active.length - newExpenses.length + alreadySaved,
       reason:
-        error instanceof ImportedExpenseMismatchError || error instanceof LostImportLockError
+        error instanceof ImportedExpenseMismatchError ||
+        error instanceof LostImportLockError ||
+        error instanceof BalancesChangedError
           ? error.message
           : error instanceof BalanceOnlyPeopleError
             ? describeBalanceOnly(error.userIds).join(' ')
@@ -777,15 +877,19 @@ const withProgress = (error: unknown, before: SaveProgress): SaveStoppedError =>
   });
 };
 
+type SaveResult = SaveProgress & { balances: BalanceSnapshot };
+
 /**
- * Saves a batch in one balance transaction. Returns how many Splitwise expenses it added, and how
- * many it found already saved with the same money (someone imported them in the meantime). If it
+ * Saves a batch in one balance transaction, once the balance rows it writes are exactly as
+ * `expected`. Returns how many Splitwise expenses it added, how many it found already saved with
+ * the same money (someone imported them in the meantime), and the rows as it left them. If it
  * stops, the error says how much smaller transactions committed first.
  */
 const saveBatch = async (
   groupId: number | null,
   inputs: ImportedExpenseInput[],
-): Promise<SaveProgress> => {
+  expected: BalanceSnapshot,
+): Promise<SaveResult> => {
   try {
     return await runBalanceTransaction(async (tx) => {
       // Checked and marked with the balances themselves, so a balance-only import committed at
@@ -799,10 +903,14 @@ const saveBatch = async (
             .map((participant) => participant.userId),
         ]),
       );
+      // Locked and unchanged since they were checked, or since the last batch wrote them.
+      const keys = getBalanceKeys(groupId, inputs);
+      await assertBalancesUnchanged(tx, keys, expected);
       const { added, skippedIds } = await insertImportedExpenses(tx, groupId, inputs);
       return {
         added: new Set(added.map((expense) => expense.splitwiseExpenseId)).size,
         skipped: skippedIds.length,
+        balances: await readBalances(tx, keys),
       };
     });
   } catch (error) {
@@ -814,13 +922,19 @@ const saveBatch = async (
       const first = await saveBatch(
         groupId,
         inputs.filter((input) => firstHalf.has(input.splitwiseExpenseId)),
+        expected,
       );
       try {
         const second = await saveBatch(
           groupId,
           inputs.filter((input) => !firstHalf.has(input.splitwiseExpenseId)),
+          new Map([...expected, ...first.balances]),
         );
-        return { added: first.added + second.added, skipped: first.skipped + second.skipped };
+        return {
+          added: first.added + second.added,
+          skipped: first.skipped + second.skipped,
+          balances: new Map([...first.balances, ...second.balances]),
+        };
       } catch (secondError) {
         throw withProgress(secondError, first);
       }

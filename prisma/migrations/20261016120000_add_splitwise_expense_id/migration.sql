@@ -34,10 +34,12 @@ CREATE TABLE "SplitwiseImportLock" (
 -- CreateIndex
 CREATE UNIQUE INDEX "Expense_splitwiseExpenseId_splitwiseScope_splitwisePart_key" ON "Expense"("splitwiseExpenseId", "splitwiseScope", "splitwisePart");
 
--- Everyone with a balance from the balance-only import keeps it, so no history can be imported
--- for them on top of it. The flag can disappear later (removing a settled friend deletes the
--- rows), so it is recorded here once. Importing history stays off until it is turned on (see the
--- PR), and turning it on runs this again for anything written in the meantime.
+-- Records everyone with a balance from the balance-only import, so no history is imported for
+-- them on top of it, even once the rows are gone (removing a settled friend deletes them). This
+-- can't prove someone never had a balance-only import: rows deleted before it ran leave no trace.
+-- What makes turning history on safe is the balance check of each import (balanceConsistency.ts),
+-- which refuses a pair whose stored balance doesn't match its expenses. These marks, and the
+-- import's check of importedFromSplitwise rows, are an extra layer.
 INSERT INTO "SplitwiseImportPerson" ("userId", "mode")
 SELECT "userId", 'BALANCE'::"SplitwiseImportMode" FROM "Balance" WHERE "importedFromSplitwise"
 UNION
