@@ -1,86 +1,97 @@
 import { randomUUID } from 'crypto';
-import { type Prisma, type SplitwiseImportMode } from '@prisma/client';
+import { type Prisma } from '@prisma/client';
 
 import { db } from '~/server/db';
 
-/**
- * Claims how each pair's Splitwise balance comes over, inside the transaction that writes it, and
- * returns the pairs already claimed the other way. A claim is never changed or removed, so a pair
- * imported as a balance can't also get its history, and the other way around.
+type Client = Prisma.TransactionClient | typeof db;
+
+const uniqueIds = (ids: number[]) => [...new Set(ids)].sort((a, b) => a - b);
+
+/*
+ * Balance-only and history imports never both write balances of the same person.
  *
- * Two transactions claiming the same new pair can't both succeed: the second waits on the primary
- * key and then fails to serialize, and `runBalanceTransaction` retries it, now seeing the claim.
- * Claims take no row locks, so they add nothing to the lock order of balance transactions.
+ * Why this is enough: the balance-only import writes a balance only between two people it marks
+ * (a `BALANCE` person, and `importedFromSplitwise` on both rows). A history import writes balances
+ * only for people whose balance its expenses change (each payer and everyone with a non-zero
+ * share), and marks them `HISTORY`. If none of those has any balance-only data, the two imports
+ * change balances of disjoint sets of people, so nobody's total can include the same Splitwise
+ * money twice. A person has one mode only (the primary key), and both importers check and set it
+ * in the transaction that writes the balances.
  */
-export const claimSplitwisePairs = async (
-  tx: Prisma.TransactionClient,
-  pairs: [number, number][],
-  mode: SplitwiseImportMode,
-) => {
-  const sorted = [
-    ...new Map(
-      pairs
-        .filter(([a, b]) => a !== b)
-        .map(([a, b]) => (a < b ? [a, b] : [b, a]) as [number, number])
-        .map((pair) => [pair.join(':'), pair]),
-    ).values(),
-  ].sort((x, y) => x[0] - y[0] || x[1] - y[1]);
-  if (!sorted.length) {
+
+/**
+ * The people among `userIds` with balances from the balance-only import: recorded as `BALANCE`,
+ * or with any balance it wrote (`importedFromSplitwise`, in any currency, settled or not). That
+ * includes balances written before this check existed, or by an older version of the app still
+ * running during a deploy. The import writes both directions of a pair and pairs are only removed
+ * together, so a person's own rows are enough, and reading them stays on the primary key.
+ */
+export const getBalanceOnlyPeople = async (client: Client, userIds: number[]) => {
+  const ids = uniqueIds(userIds);
+  if (!ids.length) {
     return [];
   }
-
-  const userIds = sorted.map(([a]) => a);
-  const friendIds = sorted.map(([, b]) => b);
-  await tx.$executeRaw`
-    INSERT INTO "SplitwiseImportPair" ("userId", "friendId", "mode")
-    SELECT u, f, ${mode}::"SplitwiseImportMode"
-    FROM unnest(${userIds}::int[], ${friendIds}::int[]) AS t(u, f)
-    ORDER BY u, f
-    ON CONFLICT DO NOTHING`;
-  const claims = await tx.$queryRaw<{ userId: number; friendId: number; mode: string }[]>`
-    SELECT "userId", "friendId", "mode"::text AS "mode"
-    FROM "SplitwiseImportPair"
-    WHERE ("userId", "friendId") IN (
-      SELECT * FROM unnest(${userIds}::int[], ${friendIds}::int[])
-    )`;
-
-  return claims
-    .filter((claim) => claim.mode !== mode)
-    .map((claim) => [claim.userId, claim.friendId] as [number, number]);
+  const rows = await client.$queryRaw<{ userId: number }[]>`
+    SELECT "userId" FROM "SplitwiseImportPerson"
+    WHERE "userId" = ANY(${ids}::int[]) AND "mode" = 'BALANCE'
+    UNION
+    SELECT "userId" FROM "Balance"
+    WHERE "userId" = ANY(${ids}::int[]) AND "importedFromSplitwise"`;
+  return rows.map((row) => row.userId).sort((a, b) => a - b);
 };
 
-/**
- * Pairs whose Splitwise balance came over as one amount, without claiming anything: claimed as a
- * balance-only import, or with a balance the balance-only import wrote before claims existed
- * (`importedFromSplitwise`; it writes both directions, so either one counts).
- */
-export const getBalanceOnlyPairs = async (pairs: [number, number][]) => {
-  const keys = [
-    ...new Map(
-      pairs
-        .filter(([a, b]) => a !== b)
-        .map(([a, b]) => (a < b ? [a, b] : [b, a]) as [number, number])
-        .map((pair) => [pair.join(':'), pair]),
-    ).values(),
-  ];
-  if (!keys.length) {
-    return [];
+/** History can't be written for these people: they have balances from the balance-only import. */
+export class BalanceOnlyPeopleError extends Error {
+  constructor(readonly userIds: number[]) {
+    super('Some people have balances from the balance-only import');
   }
-  const userIds = keys.map(([a]) => a);
-  const friendIds = keys.map(([, b]) => b);
-  return db.$queryRaw<{ userId: number; friendId: number }[]>`
-    WITH pairs(u, f) AS (SELECT * FROM unnest(${userIds}::int[], ${friendIds}::int[]))
-    SELECT u AS "userId", f AS "friendId" FROM pairs
-    WHERE EXISTS (
-        SELECT 1 FROM "SplitwiseImportPair" c
-        WHERE c."userId" = u AND c."friendId" = f AND c."mode" = 'BALANCE'
-      )
-      OR EXISTS (
-        SELECT 1 FROM "Balance" b
-        WHERE b."importedFromSplitwise"
-          AND ((b."userId" = u AND b."friendId" = f) OR (b."userId" = f AND b."friendId" = u))
-      )
-    ORDER BY u, f`;
+}
+
+/**
+ * In the transaction that writes history for `userIds`: marks them `HISTORY`, or throws
+ * `BalanceOnlyPeopleError` if any of them has balance-only data. A balance-only import of one of
+ * them committing at the same time makes one of the two transactions fail to serialize, and the
+ * retry sees the other's mark.
+ */
+export const claimHistoryPeople = async (tx: Prisma.TransactionClient, userIds: number[]) => {
+  const ids = uniqueIds(userIds);
+  if (!ids.length) {
+    return;
+  }
+  await tx.$executeRaw`
+    INSERT INTO "SplitwiseImportPerson" ("userId", "mode")
+    SELECT u, 'HISTORY'::"SplitwiseImportMode" FROM unnest(${ids}::int[]) AS t(u)
+    ORDER BY u
+    ON CONFLICT DO NOTHING`;
+  const balanceOnly = await getBalanceOnlyPeople(tx, ids);
+  if (balanceOnly.length) {
+    throw new BalanceOnlyPeopleError(balanceOnly);
+  }
+};
+
+/** The people among `userIds` with history imported, read in the balance-only transaction. */
+export const getHistoryPeople = async (tx: Prisma.TransactionClient, userIds: number[]) => {
+  const ids = uniqueIds(userIds);
+  if (!ids.length) {
+    return new Set<number>();
+  }
+  const rows = await tx.$queryRaw<{ userId: number }[]>`
+    SELECT "userId" FROM "SplitwiseImportPerson"
+    WHERE "userId" = ANY(${ids}::int[]) AND "mode" = 'HISTORY'`;
+  return new Set(rows.map((row) => row.userId));
+};
+
+/** In the balance-only transaction: marks the people it writes balances for as `BALANCE`. */
+export const claimBalanceOnlyPeople = async (tx: Prisma.TransactionClient, userIds: number[]) => {
+  const ids = uniqueIds(userIds);
+  if (!ids.length) {
+    return;
+  }
+  await tx.$executeRaw`
+    INSERT INTO "SplitwiseImportPerson" ("userId", "mode")
+    SELECT u, 'BALANCE'::"SplitwiseImportMode" FROM unnest(${ids}::int[]) AS t(u)
+    ORDER BY u
+    ON CONFLICT DO NOTHING`;
 };
 
 /** How long a lease lasts without being renewed, e.g. after a crash. */

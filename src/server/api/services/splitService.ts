@@ -1,4 +1,4 @@
-import { SplitType, SplitwiseImportMode, type Prisma, type User } from '@prisma/client';
+import { SplitType, type Prisma, type User } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { nanoid } from 'nanoid';
 import { db } from '~/server/db';
@@ -7,7 +7,7 @@ import { toFixedNumber, toInteger } from '~/utils/numbers';
 import { InvalidExpenseError, assertGroupSettlement, toBalancedParticipants } from '~/utils/splits';
 import { captureSettlementAllocations, restoreSettlementAllocations } from './balanceProjection';
 import { runBalanceTransaction } from './balanceTransaction';
-import { claimSplitwisePairs } from './splitwiseImportLocks';
+import { claimBalanceOnlyPeople, getHistoryPeople } from './splitwiseImportLocks';
 import {
   sendExpensePushNotification,
   sendRecurringStatusPushNotification,
@@ -324,6 +324,29 @@ export const isSameImportedExpense = (
 export const getFinancialParties = (paidBy: number, shares: { userId: number; amount: number }[]) =>
   new Set([paidBy, ...shares.filter((share) => 0 !== share.amount).map((share) => share.userId)]);
 
+/**
+ * Whether an expense saved with the same Splitwise id in another scope is the same expense as the
+ * one being imported. It is if they share anyone who pays or owes, or if the importer added the
+ * saved one or is in it: the expense moved between groups in Splitwise, possibly with everyone
+ * else changed. Only an id with none of that in common belongs to someone else.
+ */
+export const isSameSplitwiseExpense = (
+  saved: {
+    addedBy: number;
+    paidBy: number;
+    expenseParticipants: { userId: number; amount: number }[];
+  },
+  importerId: number,
+  parties: Set<number>,
+) =>
+  saved.addedBy === importerId ||
+  saved.expenseParticipants.some((participant) => participant.userId === importerId) ||
+  [...getFinancialParties(saved.paidBy, saved.expenseParticipants)].some((id) => parties.has(id));
+
+/** The message for a Splitwise expense an earlier import added somewhere else. */
+export const describeImportedElsewhere = (expense: string, groupId: number | null) =>
+  `An earlier import already added a different version of the Splitwise expense ${expense}, ${null === groupId ? 'outside groups' : 'in another group'}, so it can't be imported here. Check that expense in SplitPro, or ask the people in it which version is right.`;
+
 /** Checks an expense to import exactly like a manual add would, without saving anything. */
 export const assertValidImportedExpense = (groupId: number | null, input: ExpenseInput) => {
   getBalancedParticipants(groupId, input);
@@ -364,6 +387,8 @@ export const insertImportedExpenses = async (
     select: {
       splitwiseExpenseId: true,
       splitwiseScope: true,
+      groupId: true,
+      addedBy: true,
       paidBy: true,
       expenseParticipants: { select: { userId: true, amount: true } },
     },
@@ -374,13 +399,19 @@ export const insertImportedExpenses = async (
         input.splitwiseExpenseId === row.splitwiseExpenseId &&
         input.splitwiseScope !== row.splitwiseScope,
     );
-    const rowParties = getFinancialParties(row.paidBy, row.expenseParticipants);
-    const overlaps = entries.some(({ input, participants }) =>
-      [...getFinancialParties(input.paidBy, participants)].some((id) => rowParties.has(id)),
+    const same = entries.some(({ input, participants }) =>
+      isSameSplitwiseExpense(
+        row,
+        input.currentUserId,
+        getFinancialParties(input.paidBy, participants),
+      ),
     );
-    if (overlaps) {
+    if (same) {
       throw new ImportedExpenseMismatchError(
-        `"${entries[0]!.input.name}" was imported somewhere else at the same time, with some of the same people.`,
+        describeImportedElsewhere(
+          `"${entries[0]!.input.name}" (id ${row.splitwiseExpenseId})`,
+          row.groupId,
+        ),
       );
     }
   });
@@ -841,9 +872,9 @@ export async function getCompleteGroupDetails(userId: number) {
 
 /**
  * Imports a balance-only file: each friend's Splitwise balance is added as one amount. Returns
- * the friends skipped because their history was imported with expenses, which already make up
- * their balance. The pair is claimed in the same transaction as the balance, so an import with
- * history at the same time can't add it a second time.
+ * the friends skipped because they, or you, have history imported from Splitwise, whose expenses
+ * already make up part of these balances. Both people are marked in the same transaction as the
+ * balance, so an import with history at the same time can't add it a second time.
  */
 export async function importUserBalanceFromSplitWise(
   currentUserId: number,
@@ -875,20 +906,23 @@ export async function importUserBalanceFromSplitWise(
     const withBalance = friends.filter(({ user }) =>
       user.balance.some((balance) => 0 !== toInteger(parseFloat(balance.amount))),
     );
-    const historyPairs = await claimSplitwisePairs(
-      tx,
-      withBalance.map(({ dbUser }) => [currentUserId, dbUser.id]),
-      SplitwiseImportMode.BALANCE,
+    // Someone with history imported from Splitwise already has those expenses in their balances,
+    // and this balance would include them again. If that's you, nothing can be added.
+    const withHistory = await getHistoryPeople(tx, [
+      currentUserId,
+      ...withBalance.map(({ dbUser }) => dbUser.id),
+    ]);
+    const toWrite = withBalance.filter(
+      ({ dbUser }) => !withHistory.has(currentUserId) && !withHistory.has(dbUser.id),
     );
-    const withHistory = new Set(historyPairs.flat());
+    withBalance
+      .filter((entry) => !toWrite.includes(entry))
+      .forEach(({ user, dbUser }) => skipped.push(dbUser.name ?? dbUser.email ?? user.email));
+    if (toWrite.length) {
+      await claimBalanceOnlyPeople(tx, [currentUserId, ...toWrite.map(({ dbUser }) => dbUser.id)]);
+    }
 
-    for (const { user, dbUser } of withBalance) {
-      // Adding the balance on top would count it twice.
-      if (withHistory.has(dbUser.id)) {
-        skipped.push(dbUser.name ?? dbUser.email ?? user.email);
-        continue;
-      }
-
+    for (const { user, dbUser } of toWrite) {
       for (const balance of user.balance) {
         const amount = toInteger(parseFloat(balance.amount));
         const currency = balance.currency_code;

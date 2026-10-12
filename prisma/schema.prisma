@@ -322,17 +322,14 @@ enum SplitwiseImportMode {
     HISTORY
 }
 
-/// How a pair's balance came over from Splitwise: as one amount (the balance-only import), or as
-/// the expenses that make it up. A pair has one or the other, so it is never counted twice. Both
-/// importers set it in the transaction that writes the balance. `userId` is the lower id.
-/// No foreign keys: ids aren't reused, and deleting an account shouldn't lock these rows.
-model SplitwiseImportPair {
-    userId    Int
-    friendId  Int
+/// How a person's Splitwise balances came over: as one amount per friend (the balance-only
+/// import), or as the expenses that make them up. A person has one or the other, never both, so
+/// no total is counted twice. Each importer sets it in the transaction that writes the balances.
+/// No foreign key: ids aren't reused, and deleting an account shouldn't lock these rows.
+model SplitwiseImportPerson {
+    userId    Int                 @id
     mode      SplitwiseImportMode
     createdAt DateTime            @default(now())
-
-    @@id([userId, friendId])
 }
 
 /// A short lease while a Splitwise group, or a pair outside groups, is being imported, so two

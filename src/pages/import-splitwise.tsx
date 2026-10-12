@@ -28,6 +28,8 @@ const ImportSpliwisePage: NextPageWithUser = () => {
   const [plan, setPlan] = useState<ImportPlan | null>(null);
 
   const router = useRouter();
+  // Until expense history is turned on, every file imports balances only, as before.
+  const historyEnabled = true === api.user.splitwiseHistoryImportEnabled.useQuery().data;
 
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
@@ -42,7 +44,7 @@ const ImportSpliwisePage: NextPageWithUser = () => {
     try {
       const json = JSON.parse(await file.text()) as Record<string, unknown>;
 
-      if (undefined !== json.version) {
+      if (historyEnabled && undefined !== json.version) {
         const parsed = exportFileSchema.safeParse(json);
         if (!parsed.success) {
           toast.error("This file isn't from a version of the exporter SplitPro can read.");
@@ -107,7 +109,7 @@ const ImportSpliwisePage: NextPageWithUser = () => {
           toast.success('Import successful');
           if (skippedFriends.length) {
             toast.info(
-              `Balances with ${skippedFriends.join(', ')} weren't added again: their expenses were already imported with history.`,
+              `Balances with ${skippedFriends.join(', ')} weren't added: you or they already have expenses imported from Splitwise, and these balances would count them again.`,
             );
           }
           router.push('/balances').catch((err) => console.error(err));
@@ -182,18 +184,20 @@ const ImportSpliwisePage: NextPageWithUser = () => {
             <SplitwiseHistoryImport key={uploadedFile?.name} plan={plan} />
           ) : uploadedFile ? (
             <>
-              <div className="mt-4 text-sm text-gray-400">
-                This file only has balances, so past expenses won&apos;t be imported. To bring them
-                over too, download a new file from the{' '}
-                <Link
-                  href="https://export-splitwise.vercel.app/"
-                  target="_blank"
-                  className="text-primary underline"
-                >
-                  exporter
-                </Link>
-                .
-              </div>
+              {historyEnabled ? (
+                <div className="mt-4 text-sm text-gray-400">
+                  This file only has balances, so past expenses won&apos;t be imported. To bring
+                  them over too, download a new file from the{' '}
+                  <Link
+                    href="https://export-splitwise.vercel.app/"
+                    target="_blank"
+                    className="text-primary underline"
+                  >
+                    exporter
+                  </Link>
+                  .
+                </div>
+              ) : null}
               <div className="mt-8 font-semibold">Friends ({usersWithBalance.length})</div>
               {usersWithBalance.length ? (
                 <div className="mt-4 flex flex-col gap-3">

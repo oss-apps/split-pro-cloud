@@ -27,6 +27,7 @@ import { toFixedNumber, toUIString } from '~/utils/numbers';
 import { SplitwiseGroupSchema, SplitwiseUserSchema } from '~/types';
 import { env } from '~/env';
 import { runBalanceTransaction } from '../services/balanceTransaction';
+import { isHistoryImportEnabled } from '../services/splitwiseImport';
 import { getBalanceBreakdownWithFriend } from '../services/balanceBreakdown';
 import { sendRecurringStatusPushNotification } from '../services/notificationService';
 import { pauseRulesWith, recurrenceInputSchema } from '../services/recurringService';
@@ -554,6 +555,8 @@ export const userRouter = createTRPCRouter({
 
     return { friends, groups };
   }),
+
+  splitwiseHistoryImportEnabled: protectedProcedure.query(() => isHistoryImportEnabled()),
 
   importUsersFromSplitWise: protectedProcedure
     .input(

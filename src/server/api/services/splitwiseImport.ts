@@ -1,4 +1,4 @@
-import { Prisma, SplitType, SplitwiseImportMode } from '@prisma/client';
+import { Prisma, SplitType } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { nanoid } from 'nanoid';
 
@@ -14,6 +14,7 @@ import {
   convertExpense,
   createLedger,
   describeExpense,
+  describeExpenseWithId,
   formatAmount,
   getNet,
   getNonGroupBalances,
@@ -32,21 +33,37 @@ import {
   type ImportedExpenseInput,
   ImportedExpenseMismatchError,
   assertValidImportedExpense,
-  getFinancialParties,
+  describeImportedElsewhere,
   insertImportedExpenses,
   isSameImportedExpense,
+  isSameSplitwiseExpense,
 } from './splitService';
 import {
   LostImportLockError,
   acquireImportLocks,
-  claimSplitwisePairs,
-  getBalanceOnlyPairs,
+  BalanceOnlyPeopleError,
+  claimHistoryPeople,
+  getBalanceOnlyPeople,
   releaseImportLocks,
   renewImportLocks,
 } from './splitwiseImportLocks';
 
 /** Splitwise expenses saved per transaction, so a long history never holds locks for long. */
 export const IMPORT_BATCH_SIZE = 250;
+
+/**
+ * Set to "true" to allow importing expense history. Missing or anything else means off: the server
+ * refuses history imports and the page offers the balance-only import, as before. It stays off
+ * until no older version of the app (which doesn't check the rules below) is running.
+ */
+export const HISTORY_IMPORT_ENABLED_KEY = 'splitwise_history_import_enabled';
+
+export const isHistoryImportEnabled = async () =>
+  'true' ===
+  (await db.appMetadata.findUnique({ where: { key: HISTORY_IMPORT_ENABLED_KEY } }))?.value;
+
+export const HISTORY_IMPORT_OFF_MESSAGE =
+  "Importing expense history from Splitwise isn't turned on yet. You can still import balances.";
 
 /** How long an import waits for another import of the same group or friends to finish. */
 export const IMPORT_LOCK_WAIT_MS = 15_000;
@@ -164,6 +181,10 @@ export const importSplitwiseItem = async (
   request: ImportItemRequest,
   { lockWaitMs = IMPORT_LOCK_WAIT_MS }: { lockWaitMs?: number } = {},
 ): Promise<ImportItemResult> => {
+  if (!(await isHistoryImportEnabled())) {
+    return { status: 'refused', reasons: [HISTORY_IMPORT_OFF_MESSAGE] };
+  }
+
   const { item, currentUser: me } = request;
   const keys =
     'group' === item.kind
@@ -398,17 +419,12 @@ const importItem = async (
       inScope.push(row);
       return;
     }
-    // The same Splitwise id saved elsewhere, moving money for any of the same people, is the same
-    // expense: it moved between groups in Splitwise, or someone else in it imported it with other
-    // people. Importing it here would count it twice. An id with none of these people is
-    // someone else's, so it can't block this import or change anyone's money.
-    const parties = partiesOf(expense);
-    if (
-      [...getFinancialParties(row.paidBy, row.expenseParticipants)].some((id) => parties.has(id))
-    ) {
-      refuse(
-        `${describeExpense(expense)} was already imported ${null === row.groupId ? 'outside groups' : 'in another group'}, so it can't be imported here too.`,
-      );
+    // The same Splitwise id saved elsewhere is the same expense if it involves you or any of the
+    // same people: it moved between groups in Splitwise, or someone else in it imported it with
+    // other people. It's never saved twice. An id with nothing in common is someone else's, so it
+    // can't block this import or change anyone's money.
+    if (isSameSplitwiseExpense(row, userId, partiesOf(expense))) {
+      refuse(describeImportedElsewhere(describeExpenseWithId(expense), row.groupId));
     }
   });
 
@@ -611,100 +627,51 @@ const importItem = async (
     }
   });
 
-  /**
-   * The pairs whose balance this history covers, in SplitPro ids. Outside groups, the pairs the
-   * new expenses change. In a group, every pair of its members: a balance-only import wrote each
-   * friend's whole Splitwise balance, which includes the group's debts as Splitwise shows them,
-   * simplified to other pairs when the group simplifies debts.
-   */
-  const scopePairs = (ids: (swId: number) => number | undefined, groupMemberIds: number[]) => {
-    if (!isGroup) {
-      return newParts.flatMap((part) =>
-        part.shares
-          .filter((share) => 0 !== share.amount && share.userId !== part.paidBy)
-          .map((share) => [ids(share.userId), ids(part.paidBy)])
-          .filter((pair): pair is [number, number] => pair.every((id) => undefined !== id)),
-      );
-    }
-    const members = [
-      ...new Set([
-        ...[me, ...item.group.members.map((member) => member.id)]
-          .concat(newParts.flatMap((part) => part.shares.map((share) => share.userId)))
-          .map(ids)
-          .filter((id): id is number => undefined !== id),
-        ...groupMemberIds,
-      ]),
-    ].sort((a, b) => a - b);
-    return members.flatMap((a, index) =>
-      members.slice(index + 1).map((b) => [a, b] as [number, number]),
-    );
-  };
-  const describePairs = (pairs: { userId: number; friendId: number }[]) => {
-    const names = (spId: number) => {
-      const swId = splitwiseIdOf.get(spId);
-      return undefined === swId ? 'someone' : name(swId);
-    };
-    const withYou = pairs.filter((pair) => [pair.userId, pair.friendId].includes(userId));
-    const between = pairs.filter((pair) => ![pair.userId, pair.friendId].includes(userId));
-    const listed = [
-      ...withYou.map((pair) => names(pair.userId === userId ? pair.friendId : pair.userId)),
-    ].sort();
+  /** Everyone whose balance the new expenses change: each payer and every non-zero share. */
+  const writtenPeople = (parts: ConvertedPart[], ids: (swId: number) => number | undefined) =>
+    parts
+      .flatMap((part) => [
+        part.paidBy,
+        ...part.shares.filter((share) => 0 !== share.amount).map((share) => share.userId),
+      ])
+      .map(ids)
+      .filter((id): id is number => undefined !== id);
+  const describeBalanceOnly = (spIds: number[]) => {
+    const names = spIds
+      .map((spId) => {
+        const swId = splitwiseIdOf.get(spId);
+        return undefined === swId ? 'someone' : name(swId);
+      })
+      .sort((a, b) => ('you' === a ? -1 : 'you' === b ? 1 : a.localeCompare(b)));
+    const you = 'you' === names[0];
+    const others = you ? names.slice(1) : names;
+    const who = you
+      ? others.length
+        ? `You and ${joinNames(others)} have`
+        : 'You have'
+      : `${joinNames(others)} ${1 === others.length ? 'has' : 'have'}`;
     return [
-      ...(listed.length
-        ? [
-            `Your ${1 === listed.length ? 'balance' : 'balances'} with ${joinNames(listed)} ${1 === listed.length ? 'was' : 'were'} imported from Splitwise earlier as one amount, without ${1 === listed.length ? 'its' : 'their'} expenses.`,
-          ]
-        : []),
-      ...between
-        .slice(0, 2)
-        .map(
-          (pair) =>
-            `The balance between ${names(pair.userId)} and ${names(pair.friendId)} was imported from Splitwise earlier as one amount, without its expenses.`,
-        ),
-      isGroup
-        ? "That amount already includes this group, so its expenses can't be imported on top of it. The balances already imported stay as they are."
-        : "That amount already includes these expenses, so they can't be imported on top of it. The balances already imported stay as they are.",
+      `${who} balances from an earlier Splitwise import that brought over balances only, without expenses.`,
+      "Those balances may already include these expenses, so they can't be imported on top of them. The balances already imported stay as they are.",
     ];
   };
 
   if (newParts.length) {
-    const balanceOnly = await getBalanceOnlyPairs(
-      scopePairs(toUserId, existingGroup?.groupUsers.map((member) => member.userId) ?? []),
-    );
-    if (balanceOnly.length) {
-      refuse(...describePairs(balanceOnly));
-    }
     await assertBalancesFit(resulting, newParts, toUserId, existingGroup?.id ?? null);
   }
 
-  // Everything checks out. Accounts, the claim on each pair, the group and friendships are saved
-  // together; a balance-only import of one of these pairs since the check above refuses it all.
+  // Everything checks out. Accounts, the group and friendships are saved together, once nobody
+  // whose balance changes has balance-only data. Each batch below checks and marks the people it
+  // writes in its own transaction too, which is what makes it sound.
   await renewLocks();
   const { ids, groupId } = await runBalanceTransaction(async (tx) => {
     const ids = await createMissingUsers(tx, emails, new Map(userIds), people);
-    const groupMembers = existingGroup
-      ? await tx.groupUser.findMany({
-          where: { groupId: existingGroup.id },
-          select: { userId: true },
-        })
-      : [];
-    const balancePairs = newParts.length
-      ? await claimSplitwisePairs(
-          tx,
-          scopePairs(
-            (swId) => ids.get(swId),
-            groupMembers.map((member) => member.userId),
-          ),
-          SplitwiseImportMode.HISTORY,
-        )
-      : [];
-    if (balancePairs.length) {
-      throw new Refusal(
-        describePairs(balancePairs.map(([a, b]) => ({ userId: a, friendId: b }))).slice(
-          0,
-          MAX_REASONS,
-        ),
-      );
+    const balanceOnly = await getBalanceOnlyPeople(
+      tx,
+      writtenPeople(newParts, (swId) => ids.get(swId)),
+    );
+    if (balanceOnly.length) {
+      throw new Refusal(describeBalanceOnly(balanceOnly));
     }
     const groupId = isGroup
       ? await saveGroup(tx, userId, item.group, existingGroup?.id ?? null, ids, newParts, active)
@@ -754,7 +721,12 @@ const importItem = async (
       alreadySaved += stopped.progress.skipped;
     }
     const error = stopped instanceof SaveStoppedError ? stopped.cause : stopped;
-    if (!(error instanceof ImportedExpenseMismatchError)) {
+    if (error instanceof BalanceOnlyPeopleError && 0 === saved + alreadySaved) {
+      return { status: 'refused', reasons: describeBalanceOnly(error.userIds) };
+    }
+    if (
+      !(error instanceof ImportedExpenseMismatchError || error instanceof BalanceOnlyPeopleError)
+    ) {
       console.error('Splitwise import stopped part way', error);
     }
     return {
@@ -765,9 +737,11 @@ const importItem = async (
       reason:
         error instanceof ImportedExpenseMismatchError || error instanceof LostImportLockError
           ? error.message
-          : error instanceof TRPCError && 'CONFLICT' === error.code
-            ? BALANCE_CONFLICT_MESSAGE
-            : 'Something went wrong while saving.',
+          : error instanceof BalanceOnlyPeopleError
+            ? describeBalanceOnly(error.userIds).join(' ')
+            : error instanceof TRPCError && 'CONFLICT' === error.code
+              ? BALANCE_CONFLICT_MESSAGE
+              : 'Something went wrong while saving.',
     };
   }
 
@@ -814,6 +788,17 @@ const saveBatch = async (
 ): Promise<SaveProgress> => {
   try {
     return await runBalanceTransaction(async (tx) => {
+      // Checked and marked with the balances themselves, so a balance-only import committed at
+      // any point before, by this or an older version of the app, is always seen.
+      await claimHistoryPeople(
+        tx,
+        inputs.flatMap((input) => [
+          input.paidBy,
+          ...input.participants
+            .filter((participant) => 0 !== participant.amount)
+            .map((participant) => participant.userId),
+        ]),
+      );
       const { added, skippedIds } = await insertImportedExpenses(tx, groupId, inputs);
       return {
         added: new Set(added.map((expense) => expense.splitwiseExpenseId)).size,

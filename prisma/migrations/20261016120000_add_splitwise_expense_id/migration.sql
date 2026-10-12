@@ -14,13 +14,12 @@ ADD COLUMN     "splitwisePart" INTEGER,
 ADD COLUMN     "splitwiseScope" TEXT;
 
 -- CreateTable
-CREATE TABLE "SplitwiseImportPair" (
+CREATE TABLE "SplitwiseImportPerson" (
     "userId" INTEGER NOT NULL,
-    "friendId" INTEGER NOT NULL,
     "mode" "SplitwiseImportMode" NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-    CONSTRAINT "SplitwiseImportPair_pkey" PRIMARY KEY ("userId","friendId")
+    CONSTRAINT "SplitwiseImportPerson_pkey" PRIMARY KEY ("userId")
 );
 
 -- CreateTable
@@ -35,11 +34,14 @@ CREATE TABLE "SplitwiseImportLock" (
 -- CreateIndex
 CREATE UNIQUE INDEX "Expense_splitwiseExpenseId_splitwiseScope_splitwisePart_key" ON "Expense"("splitwiseExpenseId", "splitwiseScope", "splitwisePart");
 
--- Pairs already imported with the balance-only import keep that balance, so their history can't
--- be imported on top of it.
-INSERT INTO "SplitwiseImportPair" ("userId", "friendId", "mode")
-SELECT DISTINCT LEAST("userId", "friendId"), GREATEST("userId", "friendId"), 'BALANCE'::"SplitwiseImportMode"
-FROM "Balance"
-WHERE "importedFromSplitwise" AND "userId" <> "friendId";
+-- Everyone with a balance from the balance-only import keeps it, so no history can be imported
+-- for them on top of it. The flag can disappear later (removing a settled friend deletes the
+-- rows), so it is recorded here once. Importing history stays off until it is turned on (see the
+-- PR), and turning it on runs this again for anything written in the meantime.
+INSERT INTO "SplitwiseImportPerson" ("userId", "mode")
+SELECT "userId", 'BALANCE'::"SplitwiseImportMode" FROM "Balance" WHERE "importedFromSplitwise"
+UNION
+SELECT "friendId", 'BALANCE'::"SplitwiseImportMode" FROM "Balance" WHERE "importedFromSplitwise"
+ON CONFLICT DO NOTHING;
 
 COMMIT;

@@ -236,6 +236,11 @@ const getName = (description: string | null | undefined) => {
 export const describeExpense = (expense: Pick<SplitwiseExpense, 'description' | 'date'>) =>
   `"${getName(expense.description)}" (${expense.date.slice(0, 10)})`;
 
+/** Like `describeExpense`, with the Splitwise id, for when someone needs to find it. */
+export const describeExpenseWithId = (
+  expense: Pick<SplitwiseExpense, 'description' | 'date' | 'id'>,
+) => `"${getName(expense.description)}" (${expense.date.slice(0, 10)}, id ${expense.id})`;
+
 /** One SplitPro expense, in Splitwise user ids. Amounts in hundredths. */
 export type ConvertedPart = {
   splitwiseExpenseId: string;

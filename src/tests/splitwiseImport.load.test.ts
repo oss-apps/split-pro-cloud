@@ -24,6 +24,11 @@ void test(
     ]);
     db.pushNotification.findMany =
       (async () => []) as unknown as typeof db.pushNotification.findMany;
+    await db.appMetadata.upsert({
+      where: { key: 'splitwise_history_import_enabled' },
+      update: { value: 'true' },
+      create: { key: 'splitwise_history_import_enabled', value: 'true' },
+    });
 
     const suffix = `${Date.now()}-load`;
     const base = 2_000_000_000 + Math.floor(Math.random() * 1_000_000_000);
