@@ -492,9 +492,10 @@ const importItem = async (
   }
 
   // Parts of one Splitwise expense are always saved together.
+  let saved = 0;
   for (let start = 0; start < newExpenses.length; start += IMPORT_BATCH_SIZE) {
     const batch = newExpenses.slice(start, start + IMPORT_BATCH_SIZE);
-    await saveBatch(
+    saved += await saveBatch(
       groupId,
       inputsFor(
         batch.flatMap((e) => converted.get(String(e.id))!),
@@ -505,16 +506,21 @@ const importItem = async (
 
   return {
     status: 'imported',
-    imported: newExpenses.length,
-    alreadyImported: active.length - newExpenses.length,
+    imported: saved,
+    alreadyImported: active.length - saved,
     skippedDeleted: deleted.length,
     groupId,
   };
 };
 
-const saveBatch = async (groupId: number | null, inputs: ImportedExpenseInput[], attempt = 1) => {
+/** Saves a batch in one balance transaction. Returns how many Splitwise expenses it added. */
+const saveBatch = async (
+  groupId: number | null,
+  inputs: ImportedExpenseInput[],
+  attempt = 1,
+): Promise<number> => {
   try {
-    await runBalanceTransaction(async (tx) => {
+    return await runBalanceTransaction(async (tx) => {
       // Someone else may have imported some of these in the meantime.
       const existing = await tx.expense.findMany({
         where: {
@@ -523,20 +529,18 @@ const saveBatch = async (groupId: number | null, inputs: ImportedExpenseInput[],
         select: { splitwiseExpenseId: true },
       });
       const existingIds = new Set(existing.map((expense) => expense.splitwiseExpenseId));
-      await insertImportedExpenses(
-        tx,
-        groupId,
-        inputs.filter((input) => !existingIds.has(input.splitwiseExpenseId)),
-      );
+      const toSave = inputs.filter((input) => !existingIds.has(input.splitwiseExpenseId));
+      await insertImportedExpenses(tx, groupId, toSave);
+      return new Set(toSave.map((input) => input.splitwiseExpenseId)).size;
     });
   } catch (error) {
+    // The same expenses were saved at the same time; the next attempt skips them.
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       'P2002' === error.code &&
       attempt < 3
     ) {
-      await saveBatch(groupId, inputs, attempt + 1);
-      return;
+      return saveBatch(groupId, inputs, attempt + 1);
     }
     throw error;
   }

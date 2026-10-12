@@ -7,6 +7,8 @@ const databaseUrl = process.env.TEST_DATABASE_URL;
 
 /** Who notifications were looked up for, without sending any. */
 const notifiedUserIds: number[] = [];
+/** Lets notifications sent after a save look up who gets them. */
+const settle = () => new Promise((resolve) => setTimeout(resolve, 200));
 
 const setup = async () => {
   assert.match(new URL(databaseUrl!).pathname, /test/i, 'Refusing to use a non-test database');
@@ -345,6 +347,7 @@ void test(
       await t.groupBalances(group.id),
     );
     assert.equal(group.defaultCurrency, 'USD');
+    await settle();
     assert.deepEqual(notifiedUserIds, [], 'no notifications for imported expenses');
   }),
 );
@@ -453,6 +456,7 @@ void test(
       friendships.map((f) => f.friendId).sort((a, b) => a - b),
       [boUser!.id, cyUser!.id, diUser!.id].sort((a, b) => a - b),
     );
+    await settle();
     assert.deepEqual(notifiedUserIds, []);
   }),
 );
@@ -578,6 +582,7 @@ void test(
     assert.equal(r.imported, 5);
     assert.equal(r.alreadyImported, 10);
     assert.deepEqual(await t.balances([me.id, boUser.id]), balancesAfter);
+    await settle();
     assert.deepEqual(notifiedUserIds, []);
   }),
 );
@@ -1047,5 +1052,84 @@ void test(
       await t.db.expense.count({ where: { splitwiseExpenseId: String(t.base + 9001) } }),
       1,
     );
+  }),
+);
+
+void test(
+  'two members importing the same group at the same time save each expense once',
+  { skip: !databaseUrl },
+  withSetup(async (t) => {
+    const { TRPCError } = await import('@trpc/server');
+    const ada = t.sw('Ada', 1);
+    const bo = t.sw('Bo', 2);
+    const cy = t.sw('Cy', 3);
+    const gid = t.base + 100;
+    const groups = [{ id: gid, name: 'Flat', memberIds: [ada.id, bo.id, cy.id] }];
+    const expenses = Array.from({ length: 600 }, (_, index) =>
+      expense({
+        id: t.base + 10_000 + index,
+        groupId: gid,
+        users: [
+          [[ada, bo, cy][index % 3]!.id, 3000 + index, 1000 + index],
+          [[ada, bo, cy][(index + 1) % 3]!.id, 0, 1000],
+          [[ada, bo, cy][(index + 2) % 3]!.id, 0, 1000],
+        ],
+      }),
+    );
+    const boUser = await t.createUser('Bo');
+    const cyUser = await t.createUser('Cy');
+    const fileFor = (me: Person, others: Person[], list: typeof expenses) =>
+      buildExport({ me, people: others, groups, expenses: list });
+
+    // The group exists with everyone in it, from a first import of one expense.
+    imported(
+      (await t.importFile(boUser, fileFor(bo, [ada, cy], expenses.slice(0, 1)))).results[
+        `group:${gid}`
+      ],
+    );
+
+    const importWithRetry = async (user: { id: number }, file: unknown) => {
+      for (let attempt = 1; ; attempt++) {
+        try {
+          return (await t.importFile(user, file)).results[`group:${gid}`];
+        } catch (error) {
+          // "Someone else updated these balances at the same time": the user tries again.
+          if (!(error instanceof TRPCError) || 'CONFLICT' !== error.code || 3 <= attempt) {
+            throw error;
+          }
+        }
+      }
+    };
+    const [fromBo, fromCy] = await Promise.all([
+      importWithRetry(boUser, fileFor(bo, [ada, cy], expenses)),
+      importWithRetry(cyUser, fileFor(cy, [ada, bo], expenses)),
+    ]);
+    const added = imported(fromBo).imported + imported(fromCy).imported;
+    assert.equal(added, 599);
+
+    const group = await t.db.group.findUniqueOrThrow({ where: { splitwiseGroupId: String(gid) } });
+    assert.equal(await t.db.expense.count({ where: { groupId: group.id } }), 600);
+    // The group's balances are Splitwise's.
+    const file = fileFor(bo, [ada, cy], expenses);
+    const adaUser = await t.userByEmail('Ada');
+    const ids = new Map([
+      [ada.id, adaUser.id],
+      [bo.id, boUser.id],
+      [cy.id, cyUser.id],
+    ]);
+    const nets = await t.db.groupBalance.groupBy({
+      by: ['userId', 'currency'],
+      where: { groupId: group.id },
+      _sum: { amount: true },
+    });
+    file.groups
+      .find((g) => g.id === gid)!
+      .members.forEach((member) => {
+        const net = nets.find((n) => n.userId === ids.get(member.id));
+        assert.equal(
+          net?._sum.amount ?? 0,
+          Math.round(Number(member.balance[0]?.amount ?? 0) * 100),
+        );
+      });
   }),
 );
