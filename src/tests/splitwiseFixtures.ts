@@ -290,6 +290,7 @@ export const buildExport = ({
         ...groupObjects[0]!,
         id: 0,
         name: 'Non-group expenses',
+        simplify_by_default: false,
         members: [{ ...user(me.id), balance: [] as { currency_code: string; amount: string }[] }],
         original_debts: [],
         simplified_debts: [],
