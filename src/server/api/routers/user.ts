@@ -28,6 +28,8 @@ import { SplitwiseGroupSchema, SplitwiseUserSchema } from '~/types';
 import { env } from '~/env';
 import { runBalanceTransaction } from '../services/balanceTransaction';
 import { getBalanceBreakdownWithFriend } from '../services/balanceBreakdown';
+import { sendRecurringStatusPushNotification } from '../services/notificationService';
+import { pauseRulesWith, recurrenceInputSchema } from '../services/recurringService';
 
 export const userRouter = createTRPCRouter({
   me: protectedProcedure.query(async ({ ctx }) => {
@@ -192,6 +194,8 @@ export const userRouter = createTRPCRouter({
         fileKey: z.string().optional(),
         expenseDate: z.date().optional(),
         expenseId: z.string().optional(),
+        /** How a new expense repeats. For an edit, `null` stops it repeating. */
+        recurrence: recurrenceInputSchema.nullable().optional(),
       }),
     )
     .mutation(async ({ input, ctx }) => {
@@ -211,6 +215,7 @@ export const userRouter = createTRPCRouter({
               ctx.session.user.id,
               input.expenseDate ?? new Date(),
               input.fileKey,
+              input.recurrence,
             )
           : await addUserExpense(
               input.paidBy,
@@ -223,6 +228,7 @@ export const userRouter = createTRPCRouter({
               ctx.session.user.id,
               input.expenseDate ?? new Date(),
               input.fileKey,
+              input.recurrence ?? undefined,
             );
 
         return expense;
@@ -326,6 +332,7 @@ export const userRouter = createTRPCRouter({
           deletedByUser: true,
           updatedByUser: true,
           group: true,
+          recurring: { select: { id: true, frequency: true, status: true } },
         },
       });
 
@@ -490,7 +497,18 @@ export const userRouter = createTRPCRouter({
   deleteFriend: protectedProcedure
     .input(z.object({ friendId: z.number() }))
     .mutation(async ({ input, ctx }) => {
-      await runBalanceTransaction(async (tx) => {
+      const pausedIds = await runBalanceTransaction(async (tx) => {
+        // Rules are locked first, like everywhere else; a failing check below undoes this.
+        const friend = await tx.user.findUnique({
+          where: { id: input.friendId },
+          select: { name: true, email: true },
+        });
+        const pausedIds = await pauseRulesWith(tx, {
+          groupId: null,
+          userIds: [ctx.session.user.id, input.friendId],
+          reason: `${ctx.session.user.name ?? ctx.session.user.email ?? 'Someone'} and ${friend?.name ?? friend?.email ?? 'someone'} aren't friends anymore`,
+        });
+
         const friendBalances = await tx.balance.findMany({
           where: {
             OR: [
@@ -518,9 +536,14 @@ export const userRouter = createTRPCRouter({
             ],
           },
         });
+
+        return pausedIds;
       });
 
       await deleteFriendship(ctx.session.user.id, input.friendId);
+      pausedIds.forEach((id) => {
+        sendRecurringStatusPushNotification(id).catch(console.error);
+      });
     }),
 
   downloadData: protectedProcedure.mutation(async ({ ctx }) => {

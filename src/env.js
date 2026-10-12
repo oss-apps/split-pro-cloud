@@ -53,6 +53,10 @@ export const env = createEnv({
     ADSENSE_FEED_SLOT: z.string().optional(),
     ADSENSE_FEED_LAYOUT_KEY: z.string().optional(),
     ADSENSE_DEMO: z.boolean(),
+    /** Don't start the recurring expense runner in this process, e.g. locally or in tests. */
+    RECURRING_RUNNER_DISABLED: z.boolean(),
+    /** Seconds between recurring expense ticks. Only for local demos, defaults to 5 minutes. */
+    RECURRING_RUNNER_INTERVAL_SECONDS: z.coerce.number().int().min(5).optional(),
   },
 
   /**
@@ -100,6 +104,8 @@ export const env = createEnv({
     ADSENSE_FEED_SLOT: process.env.ADSENSE_FEED_SLOT,
     ADSENSE_FEED_LAYOUT_KEY: process.env.ADSENSE_FEED_LAYOUT_KEY,
     ADSENSE_DEMO: process.env.ADSENSE_DEMO === 'true',
+    RECURRING_RUNNER_DISABLED: process.env.RECURRING_RUNNER_DISABLED === 'true',
+    RECURRING_RUNNER_INTERVAL_SECONDS: process.env.RECURRING_RUNNER_INTERVAL_SECONDS,
   },
   /**
    * Run `build` or `dev` with `SKIP_ENV_VALIDATION` to skip env validation. This is especially

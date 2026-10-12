@@ -7,11 +7,24 @@ import { toFixedNumber, toInteger } from '~/utils/numbers';
 import { InvalidExpenseError, assertGroupSettlement, toBalancedParticipants } from '~/utils/splits';
 import { captureSettlementAllocations, restoreSettlementAllocations } from './balanceProjection';
 import { runBalanceTransaction } from './balanceTransaction';
-import { sendExpensePushNotification } from './notificationService';
+import {
+  sendExpensePushNotification,
+  sendRecurringStatusPushNotification,
+} from './notificationService';
+import {
+  type RecurrenceInput,
+  assertCanChangeRecurrence,
+  createRecurringRule,
+  lockRuleOfExpense,
+  onOccurrenceDeleted,
+  setExpenseRecurrence,
+  setRuleTemplate,
+  syncRuleTemplate,
+} from './recurringService';
 
 type StoredParticipant = { userId: number; amount: number };
 
-type ExpenseInput = {
+export type ExpenseInput = {
   paidBy: number;
   name: string;
   category: string;
@@ -171,47 +184,79 @@ export async function joinGroup(userId: number, publicGroupId: string) {
   return group;
 }
 
-const createExpense = async (groupId: number | null, input: ExpenseInput) => {
+/**
+ * Adds an expense and applies it to the balances, inside a balance transaction. Recurring
+ * occurrences are added through here too, so they change balances exactly like a manual add.
+ * Send the notification once the transaction has committed.
+ */
+export const insertExpense = async (
+  tx: Prisma.TransactionClient,
+  groupId: number | null,
+  input: ExpenseInput,
+  occurrence?: { recurringId: number; occurrenceDate: Date },
+) => {
   const participants = getBalancedParticipants(groupId, input);
   // Only personal settlements clear group balances, so only they track allocations.
   const tracksAllocations = SplitType.SETTLEMENT === input.splitType && null === groupId;
 
-  const expense = await runBalanceTransaction(async (tx) => {
-    const expense = await tx.expense.create({
-      data: {
-        groupId,
-        paidBy: input.paidBy,
-        name: input.name,
-        category: input.category,
-        amount: toInteger(input.amount),
-        splitType: input.splitType,
-        currency: input.currency,
-        expenseParticipants: { create: participants },
-        fileKey: input.fileKey,
-        addedBy: input.currentUserId,
-        expenseDate: input.expenseDate,
-        settlementAllocationVersion: tracksAllocations ? SETTLEMENT_ALLOCATION_VERSION : null,
-      },
-    });
+  const expense = await tx.expense.create({
+    data: {
+      groupId,
+      paidBy: input.paidBy,
+      name: input.name,
+      category: input.category,
+      amount: toInteger(input.amount),
+      splitType: input.splitType,
+      currency: input.currency,
+      expenseParticipants: { create: participants },
+      fileKey: input.fileKey,
+      addedBy: input.currentUserId,
+      expenseDate: input.expenseDate,
+      settlementAllocationVersion: tracksAllocations ? SETTLEMENT_ALLOCATION_VERSION : null,
+      recurringId: occurrence?.recurringId,
+      occurrenceDate: occurrence?.occurrenceDate,
+    },
+  });
 
-    await updateBalances(
+  await updateBalances(
+    tx,
+    { groupId, paidBy: input.paidBy, currency: input.currency, participants },
+    1,
+  );
+
+  // A personal settlement that clears a pair also clears their group balances, and records
+  // what it cleared so editing or deleting the settlement can put it back.
+  if (tracksAllocations) {
+    await captureSettlementAllocations(
       tx,
-      { groupId, paidBy: input.paidBy, currency: input.currency, participants },
-      1,
+      expense.id,
+      input.paidBy,
+      participants.map((participant) => participant.userId),
+      input.currency,
     );
+  }
 
-    // A personal settlement that clears a pair also clears their group balances, and records
-    // what it cleared so editing or deleting the settlement can put it back.
-    if (tracksAllocations) {
-      await captureSettlementAllocations(
-        tx,
-        expense.id,
-        input.paidBy,
-        participants.map((participant) => participant.userId),
-        input.currency,
-      );
+  return expense;
+};
+
+const createExpense = async (
+  groupId: number | null,
+  input: ExpenseInput,
+  recurrence?: RecurrenceInput,
+) => {
+  const expense = await runBalanceTransaction(async (tx) => {
+    const occurrence = recurrence
+      ? await createRecurringRule(
+          tx,
+          { groupId, expenseDate: input.expenseDate, splitType: input.splitType },
+          recurrence,
+          input.currentUserId,
+        )
+      : undefined;
+    const expense = await insertExpense(tx, groupId, input, occurrence);
+    if (occurrence) {
+      await setRuleTemplate(tx, occurrence.recurringId, expense.id);
     }
-
     return expense;
   });
 
@@ -231,19 +276,24 @@ export async function createGroupExpense(
   currentUserId: number,
   expenseDate: Date,
   fileKey?: string,
+  recurrence?: RecurrenceInput,
 ) {
-  return createExpense(groupId, {
-    paidBy,
-    name,
-    category,
-    amount,
-    splitType,
-    currency,
-    participants,
-    currentUserId,
-    expenseDate,
-    fileKey,
-  });
+  return createExpense(
+    groupId,
+    {
+      paidBy,
+      name,
+      category,
+      amount,
+      splitType,
+      currency,
+      participants,
+      currentUserId,
+      expenseDate,
+      fileKey,
+    },
+    recurrence,
+  );
 }
 
 export async function addUserExpense(
@@ -257,23 +307,29 @@ export async function addUserExpense(
   currentUserId: number,
   expenseDate: Date,
   fileKey?: string,
+  recurrence?: RecurrenceInput,
 ) {
-  return createExpense(null, {
-    paidBy,
-    name,
-    category,
-    amount,
-    splitType,
-    currency,
-    participants,
-    currentUserId,
-    expenseDate,
-    fileKey,
-  });
+  return createExpense(
+    null,
+    {
+      paidBy,
+      name,
+      category,
+      amount,
+      splitType,
+      currency,
+      participants,
+      currentUserId,
+      expenseDate,
+      fileKey,
+    },
+    recurrence,
+  );
 }
 
 export async function deleteExpense(expenseId: string, deletedBy: number) {
   const deleted = await runBalanceTransaction(async (tx) => {
+    await lockRuleOfExpense(tx, expenseId);
     const expense = await tx.expense.findUnique({
       where: { id: expenseId },
       include: { expenseParticipants: true },
@@ -285,7 +341,7 @@ export async function deleteExpense(expenseId: string, deletedBy: number) {
 
     // Deleting twice must never revert the balances twice.
     if (expense.deletedAt) {
-      return false;
+      return { deleted: false };
     }
 
     const { count } = await tx.expense.updateMany({
@@ -294,9 +350,10 @@ export async function deleteExpense(expenseId: string, deletedBy: number) {
     });
 
     if (0 === count) {
-      return false;
+      return { deleted: false };
     }
 
+    const changedRuleId = await onOccurrenceDeleted(tx, expense);
     await restoreSettlementAllocations(tx, expenseId);
     await updateBalances(
       tx,
@@ -309,13 +366,114 @@ export async function deleteExpense(expenseId: string, deletedBy: number) {
       -1,
     );
 
-    return true;
+    return { deleted: true, changedRuleId };
   });
 
-  if (deleted) {
+  if (deleted.deleted) {
     sendExpensePushNotification(expenseId).catch(console.error);
   }
+  if (deleted.changedRuleId) {
+    sendRecurringStatusPushNotification(deleted.changedRuleId).catch(console.error);
+  }
 }
+
+/** Saves an edit and moves the balances from the old version to the new one. */
+const updateExpense = async (
+  tx: Prisma.TransactionClient,
+  expenseId: string,
+  input: ExpenseInput,
+) => {
+  const {
+    paidBy,
+    name,
+    category,
+    amount,
+    splitType,
+    currency,
+    currentUserId,
+    expenseDate,
+    fileKey,
+  } = input;
+
+  const expense = await tx.expense.findUnique({
+    where: { id: expenseId },
+    include: { expenseParticipants: true },
+  });
+
+  if (!expense) {
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'Expense not found' });
+  }
+  if (expense.deletedAt) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'Deleted expenses cannot be edited' });
+  }
+
+  // Renaming or changing the date, category or receipt never touches balances, so it must work
+  // for old expenses that would not pass today's validations.
+  if (hasSameFinancialEffect(expense, input)) {
+    await tx.expense.update({
+      where: { id: expenseId },
+      data: { name, category, fileKey, expenseDate, updatedBy: currentUserId },
+    });
+    return { id: expenseId };
+  }
+
+  const newParticipants = getBalancedParticipants(expense.groupId, input);
+  const isSettlement = SplitType.SETTLEMENT === splitType;
+  // Settlements created before allocations existed keep their original semantics: they only
+  // ever change `Balance`, never `GroupBalance`. Group settlements never track allocations.
+  const settlementAllocationVersion =
+    !isSettlement || null !== expense.groupId
+      ? null
+      : SplitType.SETTLEMENT === expense.splitType
+        ? expense.settlementAllocationVersion
+        : SETTLEMENT_ALLOCATION_VERSION;
+
+  await restoreSettlementAllocations(tx, expenseId);
+  await updateBalances(
+    tx,
+    {
+      groupId: expense.groupId,
+      paidBy: expense.paidBy,
+      currency: expense.currency,
+      participants: expense.expenseParticipants,
+    },
+    -1,
+  );
+  await tx.expenseParticipant.deleteMany({ where: { expenseId } });
+  await tx.expense.update({
+    where: { id: expenseId },
+    data: {
+      paidBy,
+      name,
+      category,
+      amount: toInteger(amount),
+      splitType,
+      currency,
+      expenseParticipants: { create: newParticipants },
+      fileKey,
+      expenseDate,
+      updatedBy: currentUserId,
+      settlementAllocationVersion,
+    },
+  });
+  await updateBalances(
+    tx,
+    { groupId: expense.groupId, paidBy, currency, participants: newParticipants },
+    1,
+  );
+
+  if (null === expense.groupId && SETTLEMENT_ALLOCATION_VERSION === settlementAllocationVersion) {
+    await captureSettlementAllocations(
+      tx,
+      expenseId,
+      paidBy,
+      newParticipants.map((participant) => participant.userId),
+      currency,
+    );
+  }
+
+  return { id: expenseId };
+};
 
 export async function editExpense(
   expenseId: string,
@@ -329,6 +487,7 @@ export async function editExpense(
   currentUserId: number,
   expenseDate: Date,
   fileKey?: string,
+  recurrence?: RecurrenceInput | null,
 ) {
   const input: ExpenseInput = {
     paidBy,
@@ -343,89 +502,25 @@ export async function editExpense(
     fileKey,
   };
 
-  const result = await runBalanceTransaction(async (tx) => {
-    const expense = await tx.expense.findUnique({
-      where: { id: expenseId },
-      include: { expenseParticipants: true },
-    });
-
-    if (!expense) {
-      throw new TRPCError({ code: 'NOT_FOUND', message: 'Expense not found' });
+  const { edited, changedRuleIds } = await runBalanceTransaction(async (tx) => {
+    const recurringId = await lockRuleOfExpense(tx, expenseId);
+    // Checked against the rule and expense as they were before this edit.
+    const changesRecurrence =
+      undefined !== recurrence &&
+      (await assertCanChangeRecurrence(tx, expenseId, recurrence, currentUserId));
+    const edited = await updateExpense(tx, expenseId, input);
+    const changedRuleIds = await syncRuleTemplate(tx, expenseId, recurringId);
+    if (changesRecurrence) {
+      await setExpenseRecurrence(tx, expenseId, recurrence, currentUserId);
     }
-    if (expense.deletedAt) {
-      throw new TRPCError({ code: 'BAD_REQUEST', message: 'Deleted expenses cannot be edited' });
-    }
-
-    // Renaming or changing the date, category or receipt never touches balances, so it must work
-    // for old expenses that would not pass today's validations.
-    if (hasSameFinancialEffect(expense, input)) {
-      await tx.expense.update({
-        where: { id: expenseId },
-        data: { name, category, fileKey, expenseDate, updatedBy: currentUserId },
-      });
-      return { id: expenseId };
-    }
-
-    const newParticipants = getBalancedParticipants(expense.groupId, input);
-    const isSettlement = SplitType.SETTLEMENT === splitType;
-    // Settlements created before allocations existed keep their original semantics: they only
-    // ever change `Balance`, never `GroupBalance`. Group settlements never track allocations.
-    const settlementAllocationVersion =
-      !isSettlement || null !== expense.groupId
-        ? null
-        : SplitType.SETTLEMENT === expense.splitType
-          ? expense.settlementAllocationVersion
-          : SETTLEMENT_ALLOCATION_VERSION;
-
-    await restoreSettlementAllocations(tx, expenseId);
-    await updateBalances(
-      tx,
-      {
-        groupId: expense.groupId,
-        paidBy: expense.paidBy,
-        currency: expense.currency,
-        participants: expense.expenseParticipants,
-      },
-      -1,
-    );
-    await tx.expenseParticipant.deleteMany({ where: { expenseId } });
-    await tx.expense.update({
-      where: { id: expenseId },
-      data: {
-        paidBy,
-        name,
-        category,
-        amount: toInteger(amount),
-        splitType,
-        currency,
-        expenseParticipants: { create: newParticipants },
-        fileKey,
-        expenseDate,
-        updatedBy: currentUserId,
-        settlementAllocationVersion,
-      },
-    });
-    await updateBalances(
-      tx,
-      { groupId: expense.groupId, paidBy, currency, participants: newParticipants },
-      1,
-    );
-
-    if (null === expense.groupId && SETTLEMENT_ALLOCATION_VERSION === settlementAllocationVersion) {
-      await captureSettlementAllocations(
-        tx,
-        expenseId,
-        paidBy,
-        newParticipants.map((participant) => participant.userId),
-        currency,
-      );
-    }
-
-    return { id: expenseId };
+    return { edited, changedRuleIds };
   });
 
   sendExpensePushNotification(expenseId).catch(console.error);
-  return result;
+  changedRuleIds.forEach((ruleId) => {
+    sendRecurringStatusPushNotification(ruleId).catch(console.error);
+  });
+  return edited;
 }
 
 export async function getCompleteFriendsDetails(userId: number) {

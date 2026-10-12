@@ -1,4 +1,10 @@
-import { type Group, SplitType, type User } from '@prisma/client';
+import {
+  type Group,
+  type RecurringFrequency,
+  RecurringStatus,
+  SplitType,
+  type User,
+} from '@prisma/client';
 import { create } from 'zustand';
 import {
   type DefaultSplit,
@@ -70,6 +76,13 @@ interface AddExpenseState {
   canSplitScreenClosed: boolean;
   splitScreenOpen: boolean;
   expenseDate: Date | undefined;
+  /** How the expense repeats, or null if it doesn't. */
+  recurrence: RecurringFrequency | null;
+  /**
+   * How the expense being edited repeated when it was opened. An edit only changes how it repeats
+   * when this was changed.
+   */
+  loadedRecurrence: RecurringFrequency | null | undefined;
   /** Bumped on every reset. Async work started for an older form must not write to a newer one. */
   formGeneration: number;
   /**
@@ -103,6 +116,7 @@ interface AddExpenseState {
     resetState: () => void;
     setSplitScreenOpen: (splitScreenOpen: boolean) => void;
     setExpenseDate: (expenseDate: Date | undefined) => void;
+    setRecurrence: (recurrence: RecurringFrequency | null) => void;
   };
 }
 
@@ -338,6 +352,8 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
   canSplitScreenClosed: true,
   splitScreenOpen: false,
   expenseDate: undefined,
+  recurrence: null,
+  loadedRecurrence: undefined,
   formGeneration: 0,
   splitTypeSource: undefined,
   editSnapshot: undefined,
@@ -598,6 +614,8 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
         canSplitScreenClosed: true,
         splitScreenOpen: false,
         expenseDate: undefined,
+        recurrence: null,
+        loadedRecurrence: undefined,
         formGeneration: s.formGeneration + 1,
         splitTypeSource: undefined,
         editSnapshot: undefined,
@@ -605,6 +623,7 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
     },
     setSplitScreenOpen: (splitScreenOpen) => set({ splitScreenOpen }),
     setExpenseDate: (expenseDate) => set({ expenseDate }),
+    setRecurrence: (recurrence) => set({ recurrence }),
   },
 }));
 
@@ -749,11 +768,17 @@ type ExpenseToEdit = {
   group: Group | null;
   paidByUser: User;
   expenseParticipants: Array<{ amount: number; user: User }>;
+  recurring?: { frequency: RecurringFrequency; status: RecurringStatus } | null;
 };
 
 /** The form state for editing a stored expense. Its participant cents are kept as stored. */
 export const getEditFormState = (expense: ExpenseToEdit) => {
   const amount = toFixedNumber(expense.amount);
+  // A stopped rule only records where the expense came from.
+  const recurrence =
+    expense.recurring && RecurringStatus.STOPPED !== expense.recurring.status
+      ? expense.recurring.frequency
+      : null;
   const stored = expense.expenseParticipants.map((participant) => ({
     ...participant.user,
     amount: toFixedNumber(participant.amount),
@@ -796,6 +821,8 @@ export const getEditFormState = (expense: ExpenseToEdit) => {
     defaultSplitHint: undefined,
     description: expense.name,
     expenseDate: expense.expenseDate,
+    recurrence,
+    loadedRecurrence: recurrence,
     fileKey: expense.fileKey ?? undefined,
     group: expense.group ?? undefined,
     paidBy: expense.paidByUser,
@@ -1022,4 +1049,19 @@ export const uploadReceipt = async (
       actions.setFileUploading(false);
     }
   }
+};
+
+/**
+ * How the form's expense should repeat, as saved: for a new expense only when it repeats, for an
+ * edit only when that was changed (`null` stops it).
+ */
+export const getRecurrenceToSave = (
+  state: Pick<AddExpenseState, 'recurrence' | 'loadedRecurrence' | 'splitType'>,
+  timezone: string,
+) => {
+  const recurrence = SplitType.SETTLEMENT === state.splitType ? null : state.recurrence;
+  if (recurrence === (state.loadedRecurrence ?? null)) {
+    return undefined;
+  }
+  return recurrence ? { frequency: recurrence, timezone } : null;
 };

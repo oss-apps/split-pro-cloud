@@ -8,5 +8,15 @@ export async function register() {
     console.log('Registering instrumentation');
     const { validateAuthEnv } = await import('./server/auth');
     validateAuthEnv();
+
+    const { env } = await import('./env');
+    if (!env.RECURRING_RUNNER_DISABLED && 'phase-production-build' !== process.env.NEXT_PHASE) {
+      const { startRecurringRunner } = await import('./server/api/services/recurringRunner');
+      startRecurringRunner(
+        env.RECURRING_RUNNER_INTERVAL_SECONDS
+          ? env.RECURRING_RUNNER_INTERVAL_SECONDS * 1000
+          : undefined,
+      );
+    }
   }
 }

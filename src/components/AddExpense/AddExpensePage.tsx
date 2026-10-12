@@ -1,8 +1,10 @@
+import { SplitType } from '@prisma/client';
 import { useRouter } from 'next/router';
 import React from 'react';
 import { toast } from 'sonner';
 import {
   getParticipantsToSave,
+  getRecurrenceToSave,
   hasUnresolvedInvite,
   isSplitWaitingForInvite,
   useAddExpenseStore,
@@ -16,6 +18,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem } from '
 import { Banknote, CalendarIcon, Check, HeartHandshakeIcon } from 'lucide-react';
 import { Input } from '../ui/input';
 import { SplitTypeSection } from './SplitTypeSection';
+import { RepeatInput, getDeviceTimeZone } from './RepeatInput';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { cn } from '~/lib/utils';
 import { format } from 'date-fns';
@@ -134,6 +137,7 @@ export const AddOrEditExpensePage: React.FC<{
   const amtStr = useAddExpenseStore((s) => s.amountStr);
   const expenseDate = useAddExpenseStore((s) => s.expenseDate);
   const defaultSplitHint = useAddExpenseStore((s) => s.defaultSplitHint);
+  const splitType = useAddExpenseStore((s) => s.splitType);
 
   const {
     setCurrency,
@@ -219,6 +223,7 @@ export const AddOrEditExpensePage: React.FC<{
       userId: p.id,
       amount: p.amount ?? 0,
     }));
+    const recurrence = getRecurrenceToSave(useAddExpenseStore.getState(), getDeviceTimeZone());
 
     if (group) {
       addGroupExpenseMutation.mutate(
@@ -234,6 +239,7 @@ export const AddOrEditExpensePage: React.FC<{
           fileKey,
           expenseDate,
           expenseId,
+          recurrence,
         },
         {
           onSuccess: (d) => {
@@ -262,6 +268,7 @@ export const AddOrEditExpensePage: React.FC<{
           category,
           fileKey,
           expenseDate,
+          recurrence,
         },
         {
           onSuccess: (d) => {
@@ -483,6 +490,7 @@ export const AddOrEditExpensePage: React.FC<{
                         />
                       </PopoverContent>
                     </Popover>
+                    {SplitType.SETTLEMENT !== splitType ? <RepeatInput /> : null}
                   </div>
                   <div className="flex items-center gap-4">
                     {isStorageConfigured ? <UploadFile /> : null}

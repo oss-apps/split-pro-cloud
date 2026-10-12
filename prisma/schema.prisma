@@ -66,6 +66,7 @@ model User {
     updatedExpenses     Expense[]            @relation("UpdatedByUser")
     friendships         Friendship[]         @relation("UserFriendships")
     friendOf            Friendship[]         @relation("FriendFriendships")
+    recurringExpenses   RecurringExpense[]
 }
 
 model VerificationToken {
@@ -120,6 +121,7 @@ model Group {
     groupUsers       GroupUser[]
     expenses         Expense[]
     groupBalances    GroupBalance[]
+    recurringExpenses RecurringExpense[]
 }
 
 model GroupUser {
@@ -173,6 +175,9 @@ model Expense {
     deletedBy           Int?
     updatedBy           Int?
     settlementAllocationVersion Int?
+    /// The rule this expense was repeated by, and the local date it stands for.
+    recurringId         Int?
+    occurrenceDate      DateTime?            @db.Date
     group               Group?               @relation(fields: [groupId], references: [id], onDelete: Cascade)
     paidByUser          User                 @relation(name: "PaidByUser", fields: [paidBy], references: [id], onDelete: Cascade)
     addedByUser         User                 @relation(name: "AddedByUser", fields: [addedBy], references: [id], onDelete: Cascade)
@@ -181,9 +186,62 @@ model Expense {
     expenseParticipants ExpenseParticipant[]
     expenseNotes        ExpenseNote[]
     settlementAllocations SettlementAllocation[]
+    recurring           RecurringExpense?    @relation(fields: [recurringId], references: [id], onDelete: SetNull)
 
+    @@unique([recurringId, occurrenceDate])
     @@index([groupId])
     @@index([paidBy])
+}
+
+enum RecurringFrequency {
+    DAILY
+    WEEKLY
+    MONTHLY
+    LAST_DAY_OF_MONTH
+    YEARLY
+}
+
+enum RecurringStatus {
+    ACTIVE
+    PAUSED
+    STOPPED
+}
+
+/// Repeats an expense on a preset schedule. Each occurrence copies the latest one not deleted.
+model RecurringExpense {
+    id                 Int                @id @default(autoincrement())
+    frequency          RecurringFrequency
+    /// The creator's IANA time zone, in which dates start.
+    timezone           String
+    /// The local date of the expense it was set up on, which the schedule counts from.
+    startDate          DateTime           @db.Date
+    /// The local date of the next occurrence, and when it is due (the start of that day).
+    nextOccurrenceDate DateTime           @db.Date
+    nextOccurrenceAt   DateTime
+    status             RecurringStatus    @default(ACTIVE)
+    statusReason       String?
+    /// The occurrence the next one copies, and everyone in it (payer and zero shares included).
+    /// Kept without relations, so an account being removed can't silently change or clear them.
+    templateExpenseId  String?
+    templateUserIds    Int[]              @default([])
+    groupId            Int?
+    /// Null once their account is removed, which stops the rule.
+    createdById        Int?
+    createdAt          DateTime           @default(now())
+    updatedAt          DateTime           @updatedAt
+    group              Group?             @relation(fields: [groupId], references: [id], onDelete: Cascade)
+    createdBy          User?              @relation(fields: [createdById], references: [id], onDelete: SetNull)
+    occurrences        Expense[]
+
+    @@index([status, nextOccurrenceAt])
+    @@index([groupId])
+}
+
+/// App-wide settings and runtime markers, by key.
+model AppMetadata {
+    key       String   @id
+    value     String
+    updatedAt DateTime @updatedAt
 }
 
 model SettlementAllocation {

@@ -46,6 +46,8 @@ import { toast } from 'sonner';
 import GroupMyBalance from '~/components/group/GroupMyBalance';
 import { GroupSettleUp } from '~/components/group/GroupSettleUp';
 import { GroupDefaultSplit } from '~/components/group/GroupDefaultSplit';
+import { GroupRecurringRules } from '~/components/Expense/RecurringRule';
+import { RepeatIcon } from '~/components/Expense/RepeatIcon';
 
 const BalancePage: NextPageWithUser<{
   enableSendingInvites: boolean;
@@ -205,6 +207,7 @@ const BalancePage: NextPageWithUser<{
                 </div>
               </div>
               {groupDetailQuery.data ? <GroupDefaultSplit group={groupDetailQuery.data} /> : null}
+              <GroupRecurringRules groupId={groupId} />
               {groupDetailQuery?.data?.createdAt && (
                 <div className="mt-8">
                   <p className="font-semibold ">Group created</p>
@@ -410,8 +413,9 @@ const BalancePage: NextPageWithUser<{
                   </div>
                   <div>
                     {!isSettlement ? (
-                      <p className=" max-w-[180px] truncate text-sm lg:max-w-md lg:text-base">
-                        {e.name}
+                      <p className="flex items-center gap-1 text-sm lg:text-base">
+                        <span className="max-w-[180px] truncate lg:max-w-md">{e.name}</span>
+                        {e.recurringId ? <RepeatIcon /> : null}
                       </p>
                     ) : null}
                     <p

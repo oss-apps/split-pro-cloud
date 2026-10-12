@@ -11,7 +11,11 @@ export const BALANCE_CONFLICT_MESSAGE =
 
 const isSerializationFailure = (error: unknown) => {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
-    return 'P2034' === error.code;
+    // A raw query, e.g. locking a row, reports the database's own code.
+    return (
+      'P2034' === error.code ||
+      ('P2010' === error.code && ['40001', '40P01'].includes(String(error.meta?.code)))
+    );
   }
 
   // Serialization failures raised mid-query can surface without a Prisma error code.
