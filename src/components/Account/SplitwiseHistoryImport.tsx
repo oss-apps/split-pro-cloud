@@ -21,6 +21,30 @@ type ItemStatus =
 
 const plural = (count: number, word: string) => `${count} ${word}${1 === count ? '' : 's'}`;
 
+const SIMPLIFIED_DETAIL =
+  "Everyone's total matches Splitwise, but SplitPro shows who owes whom without simplifying, so amounts between two people can differ.";
+
+const ProblemList: React.FC<{
+  title: string;
+  problems: { item: PlanItem; reasons: string[] }[];
+}> = ({ title, problems }) => (
+  <div className="mt-4">
+    <p className="font-medium text-orange-600">{title}</p>
+    <ul className="mt-2 flex flex-col gap-3 text-sm">
+      {problems.map(({ item, reasons }) => (
+        <li key={item.key}>
+          <p className="font-medium">{item.label}</p>
+          <ul className="list-disc pl-5 text-gray-400">
+            {reasons.map((reason) => (
+              <li key={reason}>{reason}</li>
+            ))}
+          </ul>
+        </li>
+      ))}
+    </ul>
+  </div>
+);
+
 const importItem = async (item: PlanItem): Promise<ItemStatus> => {
   const body = JSON.stringify(item.request);
   if (MAX_IMPORT_BODY_BYTES < new Blob([body]).size) {
@@ -90,13 +114,36 @@ export const SplitwiseHistoryImport: React.FC<{ plan: ImportPlan }> = ({ plan })
   const results = chosen
     .map((item) => ({ item, status: statuses[item.key] }))
     .filter(({ status }) => status && ('done' === status.state || 'failed' === status.state));
-  const importedResults = results.flatMap(({ status }) =>
-    status?.state === 'done' && 'imported' === status.result.status ? [status.result] : [],
+  const savedResults = results.flatMap(({ item, status }) =>
+    status?.state === 'done' && 'refused' !== status.result.status
+      ? [{ item, result: status.result }]
+      : [],
   );
-  const problems = results.flatMap(({ item, status }) => {
-    if (status?.state === 'failed') return [{ item, reasons: [status.error] }];
-    if (status?.state === 'done' && 'refused' === status.result.status) {
-      return [{ item, reasons: status.result.reasons }];
+  const importedCount = savedResults.reduce((sum, { result }) => sum + result.imported, 0);
+  const alreadyCount = savedResults.reduce((sum, { result }) => sum + result.alreadyImported, 0);
+  const simplifiedSaved = savedResults.filter(({ item }) => item.simplified);
+  const refusedItems = results.flatMap(({ item, status }) =>
+    status?.state === 'done' && 'refused' === status.result.status
+      ? [{ item, reasons: status.result.reasons }]
+      : [],
+  );
+  // Stopped part way: what was saved stays, and importing again adds only the rest.
+  const unfinished = results.flatMap(({ item, status }) => {
+    if (status?.state === 'done' && 'partial' === status.result.status) {
+      const { imported, remaining, reason } = status.result;
+      return [
+        {
+          item,
+          reasons: [
+            `${imported} of ${imported + remaining} expenses were saved before it stopped: ${reason}`,
+          ],
+        },
+      ];
+    }
+    if (status?.state === 'failed') {
+      return [
+        { item, reasons: [status.error, 'Some expenses may have been saved before it stopped.'] },
+      ];
     }
     return [];
   });
@@ -118,6 +165,11 @@ export const SplitwiseHistoryImport: React.FC<{ plan: ImportPlan }> = ({ plan })
             <div>
               <p>{item.label}</p>
               {item.problem ? <p className="text-sm text-orange-600">{item.problem}</p> : null}
+              {item.simplified && !item.problem ? (
+                <p className="text-xs text-gray-400">
+                  Splitwise simplifies debts in this group. {SIMPLIFIED_DETAIL}
+                </p>
+              ) : null}
             </div>
           </label>
           <div className="shrink-0 text-right text-sm text-gray-400">
@@ -129,6 +181,8 @@ export const SplitwiseHistoryImport: React.FC<{ plan: ImportPlan }> = ({ plan })
               <p className="text-xs text-primary">Importing…</p>
             ) : status?.state === 'done' && 'imported' === status.result.status ? (
               <p className="text-xs text-green-500">Imported</p>
+            ) : status?.state === 'done' && 'partial' === status.result.status ? (
+              <p className="text-xs text-orange-600">Partly imported</p>
             ) : status?.state === 'done' || status?.state === 'failed' ? (
               <p className="text-xs text-orange-600">Not imported</p>
             ) : null}
@@ -143,9 +197,9 @@ export const SplitwiseHistoryImport: React.FC<{ plan: ImportPlan }> = ({ plan })
     <div>
       <div className="mt-4 text-sm text-gray-400">
         Each group, and your expenses with friends outside groups, comes over with its full history.
-        Before anything is saved, the balances are checked against the ones Splitwise reports;
-        anything that doesn&apos;t match is left out and listed at the end. Importing the same file
-        again doesn&apos;t add anything twice.
+        Before anything is saved, the expenses are added up and compared with the balances in the
+        same file; anything that doesn&apos;t match is left out and listed at the end. Importing the
+        same file again doesn&apos;t add anything twice.
       </div>
 
       <div className="mt-4 flex items-center gap-4">
@@ -176,42 +230,28 @@ export const SplitwiseHistoryImport: React.FC<{ plan: ImportPlan }> = ({ plan })
         <div className="mt-6 rounded border p-4" role="status">
           <p className="font-semibold">Import finished</p>
           <p className="mt-2 text-sm">
-            {plural(
-              importedResults.reduce(
-                (sum, r) => sum + ('imported' === r.status ? r.imported : 0),
-                0,
-              ),
-              'expense',
-            )}{' '}
-            imported.
-            {importedResults.some((r) => 'imported' === r.status && r.alreadyImported)
-              ? ` ${plural(
-                  importedResults.reduce(
-                    (sum, r) => sum + ('imported' === r.status ? r.alreadyImported : 0),
-                    0,
-                  ),
-                  'expense',
-                )} already in SplitPro left as they are.`
+            {plural(importedCount, 'expense')} imported.
+            {alreadyCount
+              ? ` ${plural(alreadyCount, 'expense')} already in SplitPro left as they are.`
               : ''}
           </p>
-          {problems.length ? (
-            <div className="mt-4">
-              <p className="font-medium text-orange-600">
-                Not imported ({problems.length}). Nothing was saved for these:
-              </p>
-              <ul className="mt-2 flex flex-col gap-3 text-sm">
-                {problems.map(({ item, reasons }) => (
-                  <li key={item.key}>
-                    <p className="font-medium">{item.label}</p>
-                    <ul className="list-disc pl-5 text-gray-400">
-                      {reasons.map((reason) => (
-                        <li key={reason}>{reason}</li>
-                      ))}
-                    </ul>
-                  </li>
-                ))}
-              </ul>
-            </div>
+          {simplifiedSaved.length ? (
+            <p className="mt-2 text-sm text-gray-400">
+              Splitwise simplifies debts in{' '}
+              {simplifiedSaved.map(({ item }) => item.label).join(', ')}. {SIMPLIFIED_DETAIL}
+            </p>
+          ) : null}
+          {unfinished.length ? (
+            <ProblemList
+              title={`Partly imported (${unfinished.length}). Import the same file again to finish; nothing is added twice:`}
+              problems={unfinished}
+            />
+          ) : null}
+          {refusedItems.length ? (
+            <ProblemList
+              title={`Not imported (${refusedItems.length}). Nothing was saved for these:`}
+              problems={refusedItems}
+            />
           ) : null}
           <Link href="/balances">
             <Button className="mt-4" size="sm" variant="secondary">

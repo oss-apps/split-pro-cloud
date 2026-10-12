@@ -122,7 +122,51 @@ const toBalances = (amounts: Map<string, number>) =>
     .filter(([, amount]) => 0 !== amount)
     .map(([currency_code, amount]) => ({ currency_code, amount: toDecimal(amount) }));
 
-export type GroupSpec = { id: number; name: string; memberIds: number[] };
+export type GroupSpec = {
+  id: number;
+  name: string;
+  memberIds: number[];
+  /** Splitwise's "simplify group debts": fewer payments, same totals. Friend balances follow. */
+  simplify?: boolean;
+};
+
+type Debt = { from: number; to: number; amount: string; currency_code: string };
+
+/** Fewest payments for the same totals, the way Splitwise simplifies (largest first). */
+const simplifyDebts = (nets: Map<number, Map<string, number>>): Debt[] => {
+  const currencies = new Set([...nets.values()].flatMap((balances) => [...balances.keys()]));
+  return [...currencies].sort().flatMap((currency) => {
+    const people = [...nets].map(([id, balances]) => [id, balances.get(currency) ?? 0]);
+    const debts: Debt[] = [];
+    for (;;) {
+      people.sort((a, b) => b[1]! - a[1]! || a[0]! - b[0]!);
+      const creditor = people[0]!;
+      const debtor = people[people.length - 1]!;
+      const amount = Math.min(creditor[1]!, -debtor[1]!);
+      if (0 >= amount) return debts;
+      debts.push({
+        from: debtor[0]!,
+        to: creditor[0]!,
+        amount: toDecimal(amount),
+        currency_code: currency,
+      });
+      creditor[1] = creditor[1]! - amount;
+      debtor[1] = debtor[1]! + amount;
+    }
+  });
+};
+
+/** What `friendId` owes `meId` per currency in these debts. */
+const owedBy = (debts: Debt[], friendId: number, meId: number) => {
+  const totals = new Map<string, number>();
+  debts.forEach(({ from, to, amount, currency_code }) => {
+    if (from === friendId && to === meId)
+      totals.set(currency_code, (totals.get(currency_code) ?? 0) + parse(amount));
+    if (from === meId && to === friendId)
+      totals.set(currency_code, (totals.get(currency_code) ?? 0) - parse(amount));
+  });
+  return totals;
+};
 
 export const buildExport = ({
   me,
@@ -171,28 +215,30 @@ export const buildExport = ({
         balances.set(e.currency_code, (balances.get(e.currency_code) ?? 0) + parse(u.net_balance));
       }),
     );
-    const debts = [...sumDebts(groupExpenses)]
+    const debts: Debt[] = [...sumDebts(groupExpenses)]
       .filter(([, amount]) => 0 !== amount)
       .map(([key, amount]) => {
-        const [currency, a, b] = key.split('|');
+        const [currency = '', a, b] = key.split('|');
         // amount > 0: b owes a.
         return 0 < amount
           ? { from: Number(b), to: Number(a), amount: toDecimal(amount), currency_code: currency }
           : { from: Number(a), to: Number(b), amount: toDecimal(-amount), currency_code: currency };
       });
 
+    const simplified = group.simplify ? simplifyDebts(nets) : debts;
+
     return {
       id: group.id,
       name: group.name,
       group_type: 'home',
       updated_at: '2024-06-01T12:00:00Z',
-      simplify_by_default: false,
+      simplify_by_default: !!group.simplify,
       members: group.memberIds.map((id) => ({
         ...user(id),
         balance: toBalances(nets.get(id) ?? new Map<string, number>()),
       })),
       original_debts: debts,
-      simplified_debts: debts,
+      simplified_debts: simplified,
       avatar: {},
       custom_avatar: false,
       cover_photo: {},
@@ -201,26 +247,32 @@ export const buildExport = ({
   });
 
   const friends = people.map((friend) => {
-    const groupBalances = groups
-      .filter((group) => group.memberIds.includes(friend.id) && group.memberIds.includes(me.id))
-      .map((group) => ({
+    // Splitwise reports balances in a group as it shows them: simplified, if the group is.
+    const groupOwed = groups
+      .map((group, index) => ({ group, object: groupObjects[index]! }))
+      .filter(({ group }) => group.memberIds.includes(friend.id) && group.memberIds.includes(me.id))
+      .map(({ group, object }) => ({
         group_id: group.id,
-        balance: toBalances(
-          owedToMe(
-            friend.id,
-            active.filter((e) => e.group_id === group.id),
-          ),
-        ),
+        owed: owedBy(object.simplified_debts, friend.id, me.id),
       }));
-    const nonGroup = toBalances(
-      owedToMe(
-        friend.id,
-        active.filter((e) => !e.group_id),
+    const nonGroupOwed = owedToMe(
+      friend.id,
+      active.filter((e) => !e.group_id),
+    );
+    const overall = new Map(nonGroupOwed);
+    groupOwed.forEach(({ owed }) =>
+      owed.forEach((amount, currency) =>
+        overall.set(currency, (overall.get(currency) ?? 0) + amount),
       ),
     );
+    const groupBalances = groupOwed.map(({ group_id, owed }) => ({
+      group_id,
+      balance: toBalances(owed),
+    }));
+    const nonGroup = toBalances(nonGroupOwed);
     return {
       ...user(friend.id),
-      balance: toBalances(owedToMe(friend.id, active)),
+      balance: toBalances(overall),
       groups: nonGroupEntry
         ? [...groupBalances, { group_id: 0, balance: nonGroup }]
         : groupBalances,

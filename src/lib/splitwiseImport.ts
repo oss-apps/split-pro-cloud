@@ -33,23 +33,28 @@ export const splitwisePersonSchema = z.object({
   email: z.string().max(320).nullish(),
 });
 
+const debtsSchema = z
+  .array(
+    z.object({
+      from: splitwiseId,
+      to: splitwiseId,
+      amount: decimalString,
+      currency_code: currencyCode,
+    }),
+  )
+  .max(50_000);
+
 export const splitwiseGroupSchema = z.object({
   id: splitwiseId,
   name: z.string().max(500),
   members: z
     .array(splitwisePersonSchema.extend({ balance: balancesSchema.nullish() }))
     .max(MAX_GROUP_MEMBERS),
-  original_debts: z
-    .array(
-      z.object({
-        from: splitwiseId,
-        to: splitwiseId,
-        amount: decimalString,
-        currency_code: currencyCode,
-      }),
-    )
-    .max(50_000)
-    .nullish(),
+  /** Who owes whom, from the expenses as they are. */
+  original_debts: debtsSchema.nullish(),
+  /** When on, Splitwise shows `simplified_debts` instead: fewer payments, same totals. */
+  simplify_by_default: z.boolean().nullish(),
+  simplified_debts: debtsSchema.nullish(),
 });
 
 export const splitwiseFriendSchema = splitwisePersonSchema.extend({
@@ -95,6 +100,17 @@ export type SplitwiseExportGroup = z.infer<typeof splitwiseGroupSchema>;
 export type SplitwiseFriend = z.infer<typeof splitwiseFriendSchema>;
 export type SplitwiseExpense = z.infer<typeof splitwiseExpenseSchema>;
 
+const hasDuplicateIds = (ids: unknown[]) => {
+  const seen = new Set<unknown>();
+  return ids.some((id) => {
+    if (seen.has(id)) return true;
+    seen.add(id);
+    return false;
+  });
+};
+
+const DUPLICATE_IDS = 'The file lists the same Splitwise expense more than once.';
+
 /** One group, or friends linked by expenses outside groups, imported in one request. */
 export const importItemRequestSchema = z.object({
   version: z.literal(2),
@@ -108,7 +124,10 @@ export const importItemRequestSchema = z.object({
       friends: z.array(splitwiseFriendSchema).min(1).max(MAX_PEOPLE),
     }),
   ]),
-  expenses: z.array(splitwiseExpenseSchema).max(MAX_EXPENSES_PER_REQUEST),
+  expenses: z
+    .array(splitwiseExpenseSchema)
+    .max(MAX_EXPENSES_PER_REQUEST)
+    .refine((expenses) => !hasDuplicateIds(expenses.map((expense) => expense.id)), DUPLICATE_IDS),
 });
 
 export type ImportItemRequest = z.infer<typeof importItemRequestSchema>;
@@ -121,6 +140,14 @@ export type ImportItemResult =
       alreadyImported: number;
       skippedDeleted: number;
       groupId: number | null;
+    }
+  | {
+      /** Stopped part way. What was saved stays; importing again adds only the rest. */
+      status: 'partial';
+      imported: number;
+      remaining: number;
+      alreadyImported: number;
+      reason: string;
     }
   | { status: 'refused'; reasons: string[] };
 
@@ -226,46 +253,90 @@ export type ConvertedPart = {
 
 type Debt = { from: number; to: number; amount: number };
 
-const mergeDebts = (debts: Debt[]) => {
-  const merged = new Map<string, Debt>();
-  debts.forEach((debt) => {
-    const key = `${debt.from}:${debt.to}`;
-    const existing = merged.get(key);
-    merged.set(key, { ...debt, amount: (existing?.amount ?? 0) + debt.amount });
+/** Adds up debts per pair, netting opposite directions, so each pair has at most one debt. */
+const netDebts = (debts: Debt[]) => {
+  const totals = new Map<string, number>();
+  debts.forEach(({ from, to, amount }) => {
+    const [a, b, sign] = from < to ? [from, to, 1] : [to, from, -1];
+    totals.set(`${a}:${b}`, (totals.get(`${a}:${b}`) ?? 0) + sign * amount);
   });
-  return [...merged.values()].filter((debt) => 0 !== debt.amount);
+  return [...totals]
+    .filter(([, amount]) => 0 !== amount)
+    .map(([key, amount]) => {
+      const [a, b] = key.split(':').map(Number) as [number, number];
+      return 0 < amount ? { from: a, to: b, amount } : { from: b, to: a, amount: -amount };
+    })
+    .sort((x, y) => x.to - y.to || x.from - y.from);
 };
 
-/** Matches people who are owed with people who owe, in id order, keeping everyone's net. */
-const matchDebts = (nets: Map<number, number>): Debt[] => {
-  const creditors = [...nets].filter(([, net]) => 0 < net).sort(([a], [b]) => a - b);
-  const debtors = [...nets]
-    .filter(([, net]) => 0 > net)
-    .map(([id, net]) => [id, -net] as [number, number])
-    .sort(([a], [b]) => a - b);
-  const debts: Debt[] = [];
+type Share = { id: number; paid: number; owed: number };
 
-  let creditor = 0;
-  let debtor = 0;
-  while (creditor < creditors.length && debtor < debtors.length) {
-    const [to, owed] = creditors[creditor]!;
-    const [from, owes] = debtors[debtor]!;
-    const amount = Math.min(owed, owes);
-    debts.push({ from, to, amount });
-    creditors[creditor]![1] -= amount;
-    debtors[debtor]![1] -= amount;
-    if (0 === creditors[creditor]![1]) creditor++;
-    if (0 === debtors[debtor]![1]) debtor++;
+/**
+ * Who owes whom in one expense, from Splitwise's own data only:
+ * - its `repayments`, when they are valid: every amount positive, between two people in the
+ *   expense, adding up to each person's net, and each going to someone who paid enough to cover it;
+ * - otherwise only when there is a single answer: one person is owed money, or one person owes it.
+ * Returns null when several matchings would fit, rather than inventing one between two people.
+ */
+const getDebts = (users: Share[], repayments: SplitwiseExpense['repayments']): Debt[] | null => {
+  const byId = new Map(users.map((user) => [user.id, user]));
+  const nets = new Map(users.map((user) => [user.id, user.paid - user.owed]));
+
+  const parsed = (repayments ?? []).map((repayment) => ({
+    from: repayment.from,
+    to: repayment.to,
+    amount: parseAmount(repayment.amount),
+  }));
+  if (
+    parsed.length &&
+    parsed.every(
+      ({ from, to, amount }) =>
+        null !== amount && 0 < amount && from !== to && byId.has(from) && byId.has(to),
+    )
+  ) {
+    const debts = netDebts(parsed as Debt[]);
+    const received = new Map<number, number>();
+    const balance = new Map<number, number>();
+    debts.forEach(({ from, to, amount }) => {
+      received.set(to, (received.get(to) ?? 0) + amount);
+      balance.set(to, (balance.get(to) ?? 0) + amount);
+      balance.set(from, (balance.get(from) ?? 0) - amount);
+    });
+    const valid =
+      users.every((user) => (balance.get(user.id) ?? 0) === nets.get(user.id)) &&
+      [...received].every(([id, amount]) => amount <= (byId.get(id)?.paid ?? 0));
+    if (valid) {
+      return debts;
+    }
   }
 
-  return debts;
+  const creditors = users.filter((user) => 0 < nets.get(user.id)!);
+  const debtors = users.filter((user) => 0 > nets.get(user.id)!);
+  if (1 < creditors.length && 1 < debtors.length) {
+    return null;
+  }
+  // With one side a single person, each debt is forced: it's everyone else's net.
+  return netDebts(
+    1 === creditors.length
+      ? debtors.map((debtor) => ({
+          from: debtor.id,
+          to: creditors[0]!.id,
+          amount: -nets.get(debtor.id)!,
+        }))
+      : creditors.map((creditor) => ({
+          from: debtors[0]!.id,
+          to: creditor.id,
+          amount: nets.get(creditor.id)!,
+        })),
+  );
 };
 
 /**
- * Converts one Splitwise expense. A payment becomes a settle up. An expense paid by one person
- * becomes one expense. An expense paid by several people becomes one expense per person who is
- * owed money, each with the people who owe them, using Splitwise's own `repayments` so every
- * person's net and every pair's balance stay exactly what Splitwise has.
+ * Converts one Splitwise expense. A payment becomes a settle up per pair. Any other expense
+ * becomes one expense per person who paid something, for what they paid, so the parts add up to
+ * the cost. In payer p's part, everyone who owes p (per `getDebts`) owes that amount and p's own
+ * share is the rest. Each person's shares across the parts then add up to what they owe in
+ * Splitwise, and each pair owes what Splitwise says. Both are checked before returning.
  */
 export const convertExpense = (
   expense: SplitwiseExpense,
@@ -315,35 +386,20 @@ export const convertExpense = (
     return fail('the shares are not valid');
   }
 
-  const valid = users as { id: number; paid: number; owed: number }[];
+  const valid = (users as Share[]).sort((a, b) => a.id - b.id);
   const totalPaid = valid.reduce((sum, user) => sum + user.paid, 0);
   const totalOwed = valid.reduce((sum, user) => sum + user.owed, 0);
   if (totalPaid !== cost || totalOwed !== cost) {
     return fail("the shares don't add up to the amount");
   }
 
-  const nets = new Map(valid.map((user) => [user.id, user.paid - user.owed]));
-  const repayments = (expense.repayments ?? []).map((repayment) => ({
-    from: repayment.from,
-    to: repayment.to,
-    amount: parseAmount(repayment.amount),
-  }));
-  const repaymentNets = new Map<number, number>();
-  repayments.forEach(({ from, to, amount }) => {
-    repaymentNets.set(to, (repaymentNets.get(to) ?? 0) + (amount ?? 0));
-    repaymentNets.set(from, (repaymentNets.get(from) ?? 0) - (amount ?? 0));
-  });
-  const repaymentsMatch =
-    0 < repayments.length &&
-    repayments.every(
-      ({ from, to, amount }) =>
-        null !== amount && 0 < amount && from !== to && nets.has(from) && nets.has(to),
-    ) &&
-    [...new Set([...nets.keys(), ...repaymentNets.keys()])].every(
-      (id) => (nets.get(id) ?? 0) === (repaymentNets.get(id) ?? 0),
+  const debts = getDebts(valid, expense.repayments);
+  if (!debts) {
+    return fail(
+      "several people paid and several owe, and Splitwise didn't say who owes whom, so it can't be imported exactly",
     );
+  }
 
-  const debts = mergeDebts(repaymentsMatch ? (repayments as Debt[]) : matchDebts(nets));
   const base = {
     splitwiseExpenseId: String(expense.id),
     name: getName(expense.description),
@@ -354,11 +410,10 @@ export const convertExpense = (
 
   if (expense.payment) {
     // Each payment between two people is a settle up: the payer is owed what they paid.
-    const sorted = [...debts].sort((a, b) => a.to - b.to || a.from - b.from);
     return {
-      parts: sorted.map((debt, index) => ({
+      parts: debts.map((debt, index) => ({
         ...base,
-        name: 1 < sorted.length ? `${base.name} (${index + 1} of ${sorted.length})` : base.name,
+        name: 1 < debts.length ? `${base.name} (${index + 1} of ${debts.length})` : base.name,
         splitwisePart: index,
         isSettlement: true,
         amount: debt.amount,
@@ -371,12 +426,12 @@ export const convertExpense = (
     };
   }
 
-  const creditors = [...new Set(debts.map((debt) => debt.to))].sort((a, b) => a - b);
+  const payers = valid.filter((user) => 0 < user.paid);
 
-  // Nobody owes anybody, e.g. someone paid only for themselves.
-  if (!creditors.length) {
-    const payer = [...valid].sort((a, b) => b.paid - a.paid || a.id - b.id)[0];
-    if (!payer) {
+  // Nothing was paid, so nobody owes anything.
+  if (!payers.length) {
+    const [first] = valid;
+    if (!first) {
       return fail('nobody is part of it');
     }
     return {
@@ -385,45 +440,60 @@ export const convertExpense = (
           ...base,
           splitwisePart: 0,
           isSettlement: false,
-          amount: cost,
-          paidBy: payer.id,
+          amount: 0,
+          paidBy: first.id,
           shares: valid.map((user) => ({ userId: user.id, amount: 0 })),
         },
       ],
     };
   }
 
-  const involved = new Set(debts.flatMap((debt) => [debt.from, debt.to]));
+  const involved = new Set([
+    ...payers.map((payer) => payer.id),
+    ...debts.flatMap((debt) => [debt.from, debt.to]),
+  ]);
   // People with no share in any part are kept on the first one, so they still see it.
   const uninvolved = valid.filter((user) => !involved.has(user.id)).map((user) => user.id);
 
-  return {
-    parts: creditors.map((payer, index) => {
-      const owedToPayer = debts.filter((debt) => debt.to === payer);
-      const owedTotal = owedToPayer.reduce((sum, debt) => sum + debt.amount, 0);
-      const payerShare = Math.max(
-        0,
-        (valid.find((user) => user.id === payer)?.paid ?? 0) - owedTotal,
-      );
+  const parts: ConvertedPart[] = payers.map((payer, index) => {
+    const owedToPayer = debts.filter((debt) => debt.to === payer.id);
+    return {
+      ...base,
+      name:
+        1 < payers.length
+          ? `${base.name} (${index + 1} of ${payers.length}, several payers)`
+          : base.name,
+      splitwisePart: index,
+      isSettlement: false,
+      amount: payer.paid,
+      paidBy: payer.id,
+      shares: [
+        { userId: payer.id, amount: owedToPayer.reduce((sum, debt) => sum + debt.amount, 0) },
+        ...owedToPayer.map((debt) => ({ userId: debt.from, amount: -debt.amount })),
+        ...(0 === index ? uninvolved.map((userId) => ({ userId, amount: 0 })) : []),
+      ],
+    };
+  });
 
-      return {
-        ...base,
-        name:
-          1 < creditors.length
-            ? `${base.name} (${index + 1} of ${creditors.length}, several payers)`
-            : base.name,
-        splitwisePart: index,
-        isSettlement: false,
-        amount: owedTotal + payerShare,
-        paidBy: payer,
-        shares: [
-          { userId: payer, amount: owedTotal },
-          ...owedToPayer.map((debt) => ({ userId: debt.from, amount: -debt.amount })),
-          ...(0 === index ? uninvolved.map((userId) => ({ userId, amount: 0 })) : []),
-        ],
-      };
+  // Each person's own shares across the parts must be exactly what they owe in Splitwise. The
+  // payer of a part owes its amount minus what the others owe them.
+  const owedInParts = new Map<number, number>();
+  parts.forEach((part) =>
+    part.shares.forEach((share) => {
+      const owed = share.userId === part.paidBy ? part.amount - share.amount : -share.amount;
+      owedInParts.set(share.userId, (owedInParts.get(share.userId) ?? 0) + owed);
     }),
-  };
+  );
+  if (
+    parts.some((part) =>
+      part.shares.some((share) => share.userId === part.paidBy && share.amount > part.amount),
+    ) ||
+    valid.some((user) => (owedInParts.get(user.id) ?? 0) !== user.owed)
+  ) {
+    return fail("the shares can't be split between the people who paid exactly");
+  }
+
+  return { parts };
 };
 
 /**
@@ -516,7 +586,19 @@ export const exportFileSchema = z.object({
   currentUser: splitwisePersonSchema,
   friends: z.array(z.unknown()).max(100_000),
   groups: z.array(z.unknown()).max(100_000),
-  expenses: z.array(z.unknown()).max(1_000_000),
+  // The exporter lists each expense once. A file that doesn't was changed, so it's refused whole.
+  expenses: z
+    .array(z.unknown())
+    .max(1_000_000)
+    .refine(
+      (expenses) =>
+        !hasDuplicateIds(
+          expenses
+            .map((expense) => (expense as { id?: unknown } | null)?.id)
+            .filter((id) => undefined !== id && null !== id),
+        ),
+      DUPLICATE_IDS,
+    ),
 });
 
 export type PlanItem = {
@@ -527,6 +609,11 @@ export type PlanItem = {
   deletedCount: number;
   /** Why the file alone shows this can't be imported, if it does. */
   problem: string | null;
+  /**
+   * Splitwise simplifies debts in this group. Everyone's total still matches, but SplitPro shows
+   * who owes whom from the expenses as they are, so amounts between two people can differ.
+   */
+  simplified: boolean;
   request: ImportItemRequest;
 };
 
@@ -591,6 +678,7 @@ export const buildImportPlan = (file: z.infer<typeof exportFileSchema>): ImportP
       items.push({
         key: `group:${group.id}`,
         label: group.name,
+        simplified: true === group.simplify_by_default,
         ...count(groupExpenses),
         problem: unreadableGroups.has(group.id)
           ? "Some of this group's expenses couldn't be read from the file."
@@ -615,7 +703,11 @@ export const buildImportPlan = (file: z.infer<typeof exportFileSchema>): ImportP
   const nonGroup = expenses.parsed.filter((expense) => !isGroupExpense(expense));
   const parent = new Map<number, number>();
   const find = (id: number): number => {
-    const next = parent.get(id) ?? id;
+    const next = parent.get(id);
+    if (undefined === next) {
+      parent.set(id, id);
+      return id;
+    }
     if (next === id) {
       return id;
     }
@@ -665,18 +757,22 @@ export const buildImportPlan = (file: z.infer<typeof exportFileSchema>): ImportP
       .filter((friend): friend is SplitwiseFriend => !!friend)
       .sort((a, b) => getPersonName(a).localeCompare(getPersonName(b)));
     const missing = ids.filter((id) => !friendsById.has(id));
+    const counts = count(componentExpenses);
 
     items.push({
       key: `friends:${[...ids].sort((a, b) => a - b).join(',')}`,
       label: componentFriends.map(getPersonName).join(', ') || 'People outside your friends',
-      ...count(componentExpenses),
+      simplified: false,
+      ...counts,
       problem: missing.length
         ? `${missing.length} ${1 === missing.length ? 'person' : 'people'} in these expenses ${1 === missing.length ? "isn't" : "aren't"} in your Splitwise friends, so they can't be matched.`
-        : unreadableGroups.has(null) || unreadableGroups.has(0)
-          ? "Some expenses outside groups couldn't be read from the file."
-          : MAX_EXPENSES_PER_REQUEST < componentExpenses.length
-            ? TOO_LARGE
-            : null,
+        : 0 === counts.expenseCount
+          ? 'Splitwise reports a balance outside groups, but the file has no expenses that explain it.'
+          : unreadableGroups.has(null) || unreadableGroups.has(0)
+            ? "Some expenses outside groups couldn't be read from the file."
+            : MAX_EXPENSES_PER_REQUEST < componentExpenses.length
+              ? TOO_LARGE
+              : null,
       request: {
         version: 2,
         currentUser: file.currentUser,

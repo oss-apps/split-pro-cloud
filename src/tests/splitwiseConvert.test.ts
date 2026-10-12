@@ -9,6 +9,7 @@ import {
   createLedger,
   exportFileSchema,
   getNonGroupBalances,
+  importItemRequestSchema,
   parseAmount,
   splitwiseExpenseSchema,
   splitwiseFriendSchema,
@@ -124,7 +125,7 @@ void describe('convertExpense', () => {
     );
   });
 
-  void it('matches payers itself when repayments are missing or wrong, keeping every net', () => {
+  void it('works out the debts itself only when one person owes or one is owed', () => {
     const spec = {
       id: 3,
       users: [
@@ -142,6 +143,67 @@ void describe('convertExpense', () => {
         'USD|3': -3333,
       });
     });
+  });
+
+  void it("refuses rather than invent who owes whom when repayments are missing (Sol's case)", () => {
+    // B and C paid 10 each; D and E owe 10 each. Splitwise says D owes C and E owes B. Without
+    // repayments, D owing B and E owing C would fit the nets just as well.
+    const users: [number, number, number][] = [
+      [1, 0, 0],
+      [2, 1000, 0],
+      [3, 1000, 0],
+      [4, 0, 1000],
+      [5, 0, 1000],
+    ];
+    const withRepayments = parts({
+      id: 8,
+      users,
+      repayments: [
+        [4, 3, 1000],
+        [5, 2, 1000],
+      ],
+    });
+    const ledger = createLedger();
+    withRepayments.forEach((p) => addExpense(ledger, p));
+    assert.deepEqual(Object.fromEntries([...ledger.pairs].filter(([, v]) => 0 !== v)), {
+      'USD|3|4': 1000,
+      'USD|2|5': 1000,
+    });
+
+    [[], [[4, 2, 1000]] as [number, number, number][]].forEach((repayments) => {
+      const result = convertExpense(
+        splitwiseExpenseSchema.parse(expense({ id: 8, users, repayments })),
+      );
+      assert.ok('error' in result);
+      assert.match(result.error, /didn't say who owes whom/);
+    });
+  });
+
+  void it('refuses repayments to someone who paid less than they would receive', () => {
+    // Nets fit, but the debt is routed through B, who paid nothing.
+    const result = convertExpense(
+      splitwiseExpenseSchema.parse(
+        expense({
+          id: 9,
+          users: [
+            [1, 1000, 0],
+            [2, 0, 0],
+            [3, 0, 1000],
+          ],
+          repayments: [
+            [3, 2, 1000],
+            [2, 1, 1000],
+          ],
+        }),
+      ),
+    );
+    // A single person owes, so the debt is still clear: C owes A.
+    assert.ok('parts' in result);
+    assert.deepEqual(result.parts[0]!.shares, [
+      { userId: 1, amount: 1000 },
+      { userId: 3, amount: -1000 },
+      { userId: 2, amount: 0 },
+    ]);
   });
 
   void it('turns a payment into a settle up from the payer', () => {
@@ -258,9 +320,109 @@ void describe('convertExpense', () => {
       ids.forEach((id, i) =>
         assert.equal(actual.nets.get(`USD|${id}`) ?? 0, paid[i]! - owed[i]!, `net of ${id}`),
       );
-      // One expense per person owed money, and the parts cost what the payers paid.
-      assert.equal(converted.length, new Set(repayments.map(([, to]) => to)).size || 1);
+      // One expense per person who paid, for what they paid, so the parts cost the whole amount.
+      const payers = ids.filter((_, i) => 0 < paid[i]!);
+      assert.deepEqual(
+        converted.map((p) => [p.paidBy, p.amount]),
+        payers.map((id) => [id, paid[ids.indexOf(id)]!]),
+      );
+      assert.equal(
+        converted.reduce((sum, p) => sum + p.amount, 0),
+        cost,
+      );
+      // Each person's own shares across the parts are what they owe in Splitwise.
+      const owedInParts = new Map<number, number>();
+      converted.forEach((p) =>
+        p.shares.forEach((share) =>
+          owedInParts.set(
+            share.userId,
+            (owedInParts.get(share.userId) ?? 0) +
+              (share.userId === p.paidBy ? p.amount - share.amount : -share.amount),
+          ),
+        ),
+      );
+      ids.forEach((id, i) => assert.equal(owedInParts.get(id) ?? 0, owed[i]!, `owed by ${id}`));
+
+      // Without repayments, it converts only when the debts follow from the nets alone.
+      const creditorCount = nets.filter(([, n]) => 0 < n).length;
+      const debtorCount = nets.filter(([, n]) => 0 > n).length;
+      const withoutRepayments = convertExpense(
+        splitwiseExpenseSchema.parse({ ...expense(spec), repayments: [] }),
+      );
+      if (1 < creditorCount && 1 < debtorCount) {
+        assert.ok('error' in withoutRepayments, 'ambiguous without repayments');
+      } else {
+        assert.ok('parts' in withoutRepayments);
+        assert.deepEqual(withoutRepayments.parts, converted);
+      }
     }
+  });
+
+  void it("keeps everyone's spending when several people paid (Sol's case)", () => {
+    // A paid 30 and owes 10, B paid 20 and owes 40, so B owes A 20.
+    const result = parts({
+      id: 6,
+      description: 'Dinner',
+      users: [
+        [1, 3000, 1000],
+        [2, 2000, 4000],
+      ],
+      repayments: [[2, 1, 2000]],
+    });
+    assert.deepEqual(
+      result.map((p) => ({ paidBy: p.paidBy, amount: p.amount, shares: p.shares })),
+      [
+        {
+          paidBy: 1,
+          amount: 3000,
+          shares: [
+            { userId: 1, amount: 2000 },
+            { userId: 2, amount: -2000 },
+          ],
+        },
+        { paidBy: 2, amount: 2000, shares: [{ userId: 2, amount: 0 }] },
+      ],
+    );
+    assert.equal(
+      result.reduce((sum, p) => sum + p.amount, 0),
+      5000,
+    );
+    const ledger = createLedger();
+    result.forEach((p) => addExpense(ledger, p));
+    assert.deepEqual(Object.fromEntries(ledger.pairs), { 'USD|1|2': 2000 });
+  });
+
+  void it('splits three uneven payers exactly, following repayments', () => {
+    // Cost 100.01: A paid 50.01, B 30, C 20; they owe 33.34, 33.33, 33.34.
+    // A is owed 16.67 (by C 13.34 and B 3.33), B paid 30 and owes 33.33, C owes 13.34.
+    const result = parts({
+      id: 7,
+      users: [
+        [1, 5001, 3334],
+        [2, 3000, 3333],
+        [3, 2000, 3334],
+      ],
+      repayments: [
+        [3, 1, 1334],
+        [2, 1, 333],
+      ],
+    });
+    assert.deepEqual(
+      result.map((p) => [p.paidBy, p.amount, p.shares]),
+      [
+        [
+          1,
+          5001,
+          [
+            { userId: 1, amount: 1667 },
+            { userId: 2, amount: -333 },
+            { userId: 3, amount: -1334 },
+          ],
+        ],
+        [2, 3000, [{ userId: 2, amount: 0 }]],
+        [3, 2000, [{ userId: 3, amount: 0 }]],
+      ],
+    );
   });
 });
 
@@ -394,5 +556,81 @@ void describe('buildImportPlan', () => {
     );
     assert.equal(plan.unreadable, 1);
     assert.match(plan.items[0]!.problem ?? '', /couldn't be read/);
+  });
+
+  void it('refuses a file that lists the same expense twice, before anything else', () => {
+    const one = expense({
+      id: 1,
+      users: [
+        [1, 200, 100],
+        [2, 0, 100],
+      ],
+    });
+    const file = buildExport({
+      me: person(1, 'Ada', 'ada@example.com'),
+      people: [person(2, 'Bo', 'bo@example.com')],
+      groups: [],
+      expenses: [one, one],
+    });
+    const parsed = exportFileSchema.safeParse(file);
+    assert.equal(parsed.success, false);
+    assert.match(JSON.stringify(parsed.error?.issues), /same Splitwise expense more than once/);
+
+    // The server checks each request again.
+    const request = {
+      version: 2,
+      currentUser: file.currentUser,
+      people: [],
+      item: { kind: 'friends', friends: file.friends },
+      expenses: [one, one],
+    };
+    assert.equal(importItemRequestSchema.safeParse(request).success, false);
+    assert.equal(importItemRequestSchema.safeParse({ ...request, expenses: [one] }).success, true);
+  });
+
+  void it("lists a friend whose balance no expense explains, as something that can't be imported", () => {
+    const ada = person(1, 'Ada', 'ada@example.com');
+    const bo = person(2, 'Bo', 'bo@example.com');
+    const file = buildExport({ me: ada, people: [bo], groups: [], expenses: [] });
+    file.friends[0]!.balance = [{ currency_code: 'USD', amount: '10.0' }];
+    const plan = buildImportPlan(exportFileSchema.parse(file));
+    assert.deepEqual(
+      plan.items.map((item) => [item.key, item.expenseCount, item.problem]),
+      [
+        [
+          'friends:2',
+          0,
+          'Splitwise reports a balance outside groups, but the file has no expenses that explain it.',
+        ],
+      ],
+    );
+  });
+
+  void it('flags groups that simplify debts', () => {
+    const [ada, bo, cy] = [1, 2, 3].map((id) => person(id, `P${id}`, `p${id}@example.com`)) as [
+      ReturnType<typeof person>,
+      ReturnType<typeof person>,
+      ReturnType<typeof person>,
+    ];
+    const plan = buildImportPlan(
+      exportFileSchema.parse(
+        buildExport({
+          me: ada,
+          people: [bo, cy],
+          groups: [
+            { id: 10, name: 'Simplified', memberIds: [1, 2, 3], simplify: true },
+            { id: 11, name: 'Plain', memberIds: [1, 2, 3] },
+          ],
+          expenses: [],
+        }),
+      ),
+    );
+    assert.deepEqual(
+      plan.items.map((item) => [item.label, item.simplified]),
+      [
+        ['Simplified', true],
+        ['Plain', false],
+      ],
+    );
   });
 });

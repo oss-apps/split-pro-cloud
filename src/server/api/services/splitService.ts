@@ -1,4 +1,4 @@
-import { SplitType, type Prisma, type User } from '@prisma/client';
+import { SplitType, SplitwiseImportMode, type Prisma, type User } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { nanoid } from 'nanoid';
 import { db } from '~/server/db';
@@ -7,6 +7,7 @@ import { toFixedNumber, toInteger } from '~/utils/numbers';
 import { InvalidExpenseError, assertGroupSettlement, toBalancedParticipants } from '~/utils/splits';
 import { captureSettlementAllocations, restoreSettlementAllocations } from './balanceProjection';
 import { runBalanceTransaction } from './balanceTransaction';
+import { claimSplitwisePairs } from './splitwiseImportLocks';
 import {
   sendExpensePushNotification,
   sendRecurringStatusPushNotification,
@@ -257,8 +258,61 @@ export const insertExpense = async (
 
 export type ImportedExpenseInput = ExpenseInput & {
   splitwiseExpenseId: string;
+  splitwiseScope: string;
   splitwisePart: number;
 };
+
+/** An expense being imported already exists in the same scope with different money. */
+export class ImportedExpenseMismatchError extends Error {}
+
+type SavedImportedExpense = {
+  amount: number;
+  currency: string;
+  paidBy: number;
+  splitType: SplitType;
+  splitwisePart: number | null;
+  deletedAt: Date | null;
+  expenseParticipants: { userId: number; amount: number }[];
+};
+
+/**
+ * Whether saved parts of a Splitwise expense move exactly the same money as the parts being
+ * imported: amount, currency, payer, settle up or not, and every non-zero share. People with a
+ * zero share don't change a balance, and the importer is added to parts with zero, so they are
+ * left out.
+ */
+export const isSameImportedExpense = (
+  saved: SavedImportedExpense[],
+  parts: {
+    amount: number;
+    currency: string;
+    paidBy: number;
+    isSettlement: boolean;
+    splitwisePart: number;
+    shares: { userId: number; amount: number }[];
+  }[],
+) =>
+  saved.length === parts.length &&
+  parts.every((part) => {
+    const row = saved.find((s) => s.splitwisePart === part.splitwisePart);
+    if (
+      !row ||
+      null !== row.deletedAt ||
+      row.amount !== part.amount ||
+      row.currency !== part.currency ||
+      row.paidBy !== part.paidBy ||
+      (SplitType.SETTLEMENT === row.splitType) !== part.isSettlement
+    ) {
+      return false;
+    }
+    const nonZero = (shares: { userId: number; amount: number }[]) =>
+      shares
+        .filter((share) => 0 !== share.amount)
+        .map((share) => `${share.userId}:${share.amount}`)
+        .sort()
+        .join(',');
+    return nonZero(row.expenseParticipants) === nonZero(part.shares);
+  });
 
 /** Checks an expense to import exactly like a manual add would, without saving anything. */
 export const assertValidImportedExpense = (groupId: number | null, input: ExpenseInput) => {
@@ -273,9 +327,11 @@ export const assertValidImportedExpense = (groupId: number | null, input: Expens
  * A personal settlement keeps Splitwise's meaning: it only changes the balance outside groups.
  * Unlike a settle up added in SplitPro, it doesn't clear group balances (no allocations).
  *
- * Expenses someone else imported in the meantime are skipped by the unique index rather than by
- * reading `Expense` first, which would make other balance transactions conflict. Returns the
- * expenses it added.
+ * Expenses already saved in the same scope (someone imported them in the meantime) are skipped by
+ * the unique index rather than by reading `Expense` first, which would make other balance
+ * transactions conflict. Only when something was skipped is it read, to check it moves the same
+ * money; if not, this throws `ImportedExpenseMismatchError` and nothing in the batch is saved.
+ * Returns the expenses it added and the Splitwise ids it skipped.
  */
 export const insertImportedExpenses = async (
   tx: Prisma.TransactionClient,
@@ -283,7 +339,7 @@ export const insertImportedExpenses = async (
   inputs: ImportedExpenseInput[],
 ) => {
   if (!inputs.length) {
-    return [];
+    return { added: [], skippedIds: [] };
   }
 
   const prepared = inputs.map((input) => ({
@@ -302,26 +358,67 @@ export const insertImportedExpenses = async (
       addedBy: input.currentUserId,
       expenseDate: input.expenseDate,
       splitwiseExpenseId: input.splitwiseExpenseId,
+      splitwiseScope: input.splitwiseScope,
       splitwisePart: input.splitwisePart,
     })),
     select: { id: true, splitwiseExpenseId: true, splitwisePart: true },
     skipDuplicates: true,
   });
-  const expenseIds = new Map(
-    expenses.map((expense) => [
-      `${expense.splitwiseExpenseId}:${expense.splitwisePart}`,
-      expense.id,
-    ]),
-  );
-  const added = prepared.filter(({ input }) =>
-    expenseIds.has(`${input.splitwiseExpenseId}:${input.splitwisePart}`),
-  );
+  const keyOf = (expense: { splitwiseExpenseId: string | null; splitwisePart: number | null }) =>
+    `${expense.splitwiseExpenseId}:${expense.splitwisePart}`;
+  const expenseIds = new Map(expenses.map((expense) => [keyOf(expense), expense.id]));
+  const added = prepared.filter(({ input }) => expenseIds.has(keyOf(input)));
   const addedIds = new Set(added.map(({ input }) => input.splitwiseExpenseId));
+  const skipped = prepared.filter(({ input }) => !addedIds.has(input.splitwiseExpenseId));
+
   // Parts of one Splitwise expense are always saved together, so they are skipped together too.
-  if (
-    added.length !== prepared.filter(({ input }) => addedIds.has(input.splitwiseExpenseId)).length
-  ) {
-    throw new Error('A Splitwise expense was imported at the same time with different parts');
+  // What was skipped must be the same money; otherwise two different versions were imported.
+  if (added.length + skipped.length !== prepared.length) {
+    throw new ImportedExpenseMismatchError(
+      'A Splitwise expense was imported at the same time with different parts.',
+    );
+  }
+  if (skipped.length) {
+    const saved = await tx.expense.findMany({
+      where: {
+        splitwiseExpenseId: {
+          in: [...new Set(skipped.map(({ input }) => input.splitwiseExpenseId))],
+        },
+        splitwiseScope: { in: [...new Set(skipped.map(({ input }) => input.splitwiseScope))] },
+      },
+      select: {
+        splitwiseExpenseId: true,
+        splitwiseScope: true,
+        splitwisePart: true,
+        amount: true,
+        currency: true,
+        paidBy: true,
+        splitType: true,
+        deletedAt: true,
+        expenseParticipants: { select: { userId: true, amount: true } },
+      },
+    });
+    const byExpense = new Map<string, typeof skipped>();
+    skipped.forEach((entry) => {
+      const key = `${entry.input.splitwiseScope}|${entry.input.splitwiseExpenseId}`;
+      byExpense.set(key, [...(byExpense.get(key) ?? []), entry]);
+    });
+    byExpense.forEach((entries, key) => {
+      const rows = saved.filter((row) => `${row.splitwiseScope}|${row.splitwiseExpenseId}` === key);
+      const parts = entries.map(({ input, participants }) => ({
+        amount: toInteger(input.amount),
+        currency: input.currency,
+        paidBy: input.paidBy,
+        isSettlement: SplitType.SETTLEMENT === input.splitType,
+        splitwisePart: input.splitwisePart,
+        shares: participants,
+      }));
+      if (!isSameImportedExpense(rows, parts)) {
+        throw new ImportedExpenseMismatchError(
+          `"${entries[0]!.input.name}" was imported at the same time with different amounts or people.`,
+        );
+      }
+    });
   }
 
   await tx.expenseParticipant.createMany({
@@ -348,7 +445,10 @@ export const insertImportedExpenses = async (
     await writeBalanceRows(tx, groupId, currency, [...rows.values()]);
   }
 
-  return expenses;
+  return {
+    added: expenses,
+    skippedIds: [...new Set(skipped.map(({ input }) => input.splitwiseExpenseId))],
+  };
 };
 
 const createExpense = async (
@@ -699,30 +799,16 @@ export async function getCompleteGroupDetails(userId: number) {
   return groups;
 }
 
-/** Whether expenses imported from Splitwise with their history involve both people. */
-const hasImportedHistory = async (userId: number, friendId: number) =>
-  !!(await db.expense.findFirst({
-    where: {
-      splitwiseExpenseId: { not: null },
-      AND: [
-        { expenseParticipants: { some: { userId } } },
-        { expenseParticipants: { some: { userId: friendId } } },
-      ],
-    },
-    select: { id: true },
-  }));
-
 /**
  * Imports a balance-only file: each friend's Splitwise balance is added as one amount. Returns
- * the friends skipped because history imported with expenses already makes up their balance.
+ * the friends skipped because their history was imported with expenses, which already make up
+ * their balance. The pair is claimed in the same transaction as the balance, so an import with
+ * history at the same time can't add it a second time.
  */
 export async function importUserBalanceFromSplitWise(
   currentUserId: number,
   splitWiseUsers: SplitwiseUser[],
 ) {
-  const operations = [];
-  const skipped: string[] = [];
-
   const users = await createUsersFromSplitwise(splitWiseUsers);
 
   const userMap = users.reduce(
@@ -736,37 +822,51 @@ export async function importUserBalanceFromSplitWise(
     {} as Record<string, User>,
   );
 
-  for (const user of splitWiseUsers) {
-    const dbUser = userMap[user.email];
-    if (!dbUser) {
-      continue;
-    }
+  const friends = splitWiseUsers
+    .map((user) => ({ user, dbUser: userMap[user.email] }))
+    .filter(
+      (entry): entry is { user: SplitwiseUser; dbUser: User } =>
+        !!entry.dbUser && entry.dbUser.id !== currentUserId,
+    )
+    .sort((a, b) => a.dbUser.id - b.dbUser.id);
 
-    // Adding the balance on top would count it twice.
-    if (await hasImportedHistory(currentUserId, dbUser.id)) {
-      skipped.push(dbUser.name ?? dbUser.email ?? user.email);
-      continue;
-    }
+  return runBalanceTransaction(async (tx) => {
+    const skipped: string[] = [];
+    const withBalance = friends.filter(({ user }) =>
+      user.balance.some((balance) => 0 !== toInteger(parseFloat(balance.amount))),
+    );
+    const historyPairs = await claimSplitwisePairs(
+      tx,
+      withBalance.map(({ dbUser }) => [currentUserId, dbUser.id]),
+      SplitwiseImportMode.BALANCE,
+    );
+    const withHistory = new Set(historyPairs.flat());
 
-    for (const balance of user.balance) {
-      const amount = toInteger(parseFloat(balance.amount));
-      const currency = balance.currency_code;
-      const existingBalance = await db.balance.findUnique({
-        where: {
-          userId_currency_friendId: {
-            userId: currentUserId,
-            currency,
-            friendId: dbUser.id,
-          },
-        },
-      });
-
-      if (existingBalance?.importedFromSplitwise) {
+    for (const { user, dbUser } of withBalance) {
+      // Adding the balance on top would count it twice.
+      if (withHistory.has(dbUser.id)) {
+        skipped.push(dbUser.name ?? dbUser.email ?? user.email);
         continue;
       }
 
-      operations.push(
-        db.balance.upsert({
+      for (const balance of user.balance) {
+        const amount = toInteger(parseFloat(balance.amount));
+        const currency = balance.currency_code;
+        const existingBalance = await tx.balance.findUnique({
+          where: {
+            userId_currency_friendId: {
+              userId: currentUserId,
+              currency,
+              friendId: dbUser.id,
+            },
+          },
+        });
+
+        if (existingBalance?.importedFromSplitwise) {
+          continue;
+        }
+
+        await tx.balance.upsert({
           where: {
             userId_currency_friendId: {
               userId: currentUserId,
@@ -787,11 +887,9 @@ export async function importUserBalanceFromSplitWise(
             amount,
             importedFromSplitwise: true,
           },
-        }),
-      );
+        });
 
-      operations.push(
-        db.balance.upsert({
+        await tx.balance.upsert({
           where: {
             userId_currency_friendId: {
               userId: dbUser.id,
@@ -812,13 +910,12 @@ export async function importUserBalanceFromSplitWise(
             amount: -amount,
             importedFromSplitwise: true,
           },
-        }),
-      );
+        });
+      }
     }
-  }
 
-  await db.$transaction(operations);
-  return skipped;
+    return skipped;
+  });
 }
 
 async function createUsersFromSplitwise(users: Array<SplitwiseUser>) {

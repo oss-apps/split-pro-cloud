@@ -42,7 +42,7 @@ const FAQS: FaqItem[] = [
   {
     question: 'Can I move my groups over from Splitwise?',
     answer:
-      'Yes. SplitPro imports your groups and friends with their past expenses, from the file our free Splitwise exporter downloads. Balances are checked against Splitwise before anything is saved. Our blog has a step-by-step guide.',
+      "Yes. SplitPro imports your groups and friends with their past expenses, from the file our free Splitwise exporter downloads. Before anything is saved, the expenses are checked against the balances in the file. In groups where Splitwise simplifies debts, everyone's total matches but who owes whom can differ. Our blog has a step-by-step guide.",
   },
   {
     question: 'Can SplitPro add repeating costs like rent automatically?',

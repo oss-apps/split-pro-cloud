@@ -17,9 +17,11 @@ SplitPro's importer reads the file from our free [Splitwise exporter](https://ex
 - **Your expenses with friends outside groups**, including ones shared with several friends.
 - **Payments**, as settle ups.
 
-Deleted expenses are skipped, and so are comments, receipts and repeat settings. An expense several people paid for becomes one expense per person who is owed money, so everyone's balance stays exact to the cent.
+Deleted expenses are skipped, and so are comments, receipts and repeat settings. An expense several people paid for becomes one expense per person who paid, for what they paid, so totals and everyone's balance stay exact to the cent. If Splitwise doesn't say who owes whom in such an expense, its group or friends aren't imported rather than guessed.
 
-Before saving a group, SplitPro adds up its expenses and compares the result with the balances Splitwise reports in the same file. If they don't match, that group is left out and the summary at the end says why. The same goes for friends.
+Before saving a group, SplitPro adds up its expenses and compares the result with the balances listed in the same file. If they don't match, that group is left out and the summary at the end says why. The same goes for friends.
+
+Many Splitwise groups **simplify debts**: Splitwise shows fewer payments, for example "Ada pays Cy" instead of "Ada pays Bo, Bo pays Cy". SplitPro doesn't simplify. It shows who owes whom from the expenses themselves. So in those groups everyone's total is the same as in Splitwise, but the amount between two people can be different. The import list marks these groups.
 
 Each friend and group member is added by their email address. When they sign in to SplitPro with the same email, they see the same balances and history you do. Someone without an email address in Splitwise can't be matched, so a group or friend with them in it isn't imported.
 
@@ -47,7 +49,7 @@ Splitwise Pro also offers a **JSON backup** of your account. Its format isn't do
 4. Untick anything you don't want to bring over, then tap **Import**.
 5. When it's done, a summary lists what came over and anything that didn't, with the reason.
 
-Your balances page now shows the same amounts as Splitwise did. Check two or three of them against Splitwise before you tell everyone you're done.
+Each person's total in a group now matches Splitwise, and so does your balance with each friend outside groups. In groups that simplify debts, who owes whom can differ, as explained above, so your balance with one friend may too. Check two or three groups against Splitwise before you tell everyone you're done.
 
 If you imported with an older version of the exporter, your balances came over without history. SplitPro won't add a group's history on top of those balances, because that would count them twice; the summary tells you which ones.
 
