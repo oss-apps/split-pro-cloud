@@ -9,3 +9,6 @@ export const TWITTER_URL = 'https://twitter.com/KM_Koushik_';
 export const AUTHOR_URL = 'https://koushik.dev';
 
 export const QUICK_SPLIT_PATH = '/split';
+
+export const UMAMI_SCRIPT_URL = 'https://umami-production-d4b8.up.railway.app/script.js';
+export const UMAMI_WEBSITE_ID = '03b9ce4c-7a18-4a26-8439-6a4453cde189';

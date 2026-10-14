@@ -12,6 +12,8 @@ import {
   QUICK_SPLIT_PATH,
   SPONSOR_URL,
   TWITTER_URL,
+  UMAMI_SCRIPT_URL,
+  UMAMI_WEBSITE_ID,
 } from './constants';
 
 const NAV_LINKS = [
@@ -25,7 +27,12 @@ export const SiteLayout: React.FC<{ children: React.ReactNode }> = ({ children }
     <div className="min-h-screen bg-background text-foreground">
       {process.env.NODE_ENV === 'production' ? (
         <Head>
-          <script async defer src="https://scripts.simpleanalyticscdn.com/latest.js"></script>
+          <script
+            defer
+            src={UMAMI_SCRIPT_URL}
+            data-website-id={UMAMI_WEBSITE_ID}
+            data-domains="splitpro.app"
+          ></script>
         </Head>
       ) : null}
       <SiteHeader />
