@@ -32,6 +32,14 @@ const config = {
     defaultLocale: 'en',
   },
   transpilePackages: ['geist'],
+  // Analytics runs on our own origin. Umami derives its collect endpoint from the directory the
+  // script was loaded from, so /stats/script.js fixes the second path.
+  async rewrites() {
+    return [
+      { source: '/stats/script.js', destination: '/api/stats/script' },
+      { source: '/stats/api/send', destination: '/api/stats/send' },
+    ];
+  },
   images: {
     // Images are static assets or user-uploaded receipts; never run them through the optimizer
     unoptimized: true,

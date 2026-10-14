@@ -14,6 +14,7 @@ import superjson from 'superjson';
 import { z, ZodError } from 'zod';
 
 import { getServerAuthSession } from '~/server/auth';
+import { getClientIp } from '~/server/clientIp';
 import { db } from '~/server/db';
 
 /**
@@ -45,13 +46,6 @@ const createInnerTRPCContext = (opts: CreateContextOptions) => {
     ip: opts.ip ?? 'unknown',
     db,
   };
-};
-
-// splitpro.app sits behind Cloudflare, which sets cf-connecting-ip; fall back to the proxy chain.
-const getClientIp = (req: CreateNextContextOptions['req']) => {
-  const header = req.headers['cf-connecting-ip'] ?? req.headers['x-forwarded-for'];
-  const value = Array.isArray(header) ? header[0] : header;
-  return value?.split(',')[0]?.trim() ?? req.socket.remoteAddress ?? 'unknown';
 };
 
 /**
