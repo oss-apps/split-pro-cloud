@@ -10,7 +10,7 @@ Settle Up is a group expense app for Android, iPhone and the web, with a free ve
 
 Settle Up handles more complex cases out of the box: several payers on one expense, weights, incomes, offline use and live exchange rates, and it minimizes the transfers needed to settle. Receipt photos, categories, recurring transactions, Excel export and charts are Premium. In SplitPro, receipt photos, categories and recurring expenses are free, but there is no offline mode, no charts and no currency conversion.
 
-_Last checked October 14, 2026. SplitPro is our app, so every claim about Settle Up links to its own pages under [Sources](#sources)._
+_Last checked October 14, 2026, against Settle Up's own website and app store listings. SplitPro is our app._
 
 ## Side by side
 
@@ -69,12 +69,6 @@ Settle Up supports all currencies with real-time exchange rates. SplitPro suppor
 ### Can friends see balances without installing an app?
 
 In both. Settle Up lets friends view a group in the browser from a shared link. SplitPro runs in the browser: friends sign in with the email you added them with, and quick split shares a link that needs no account.
-
-## Sources
-
-- [Settle Up on Google Play](https://play.google.com/store/apps/details?id=cz.destil.settleup)
-- [Settle Up on the App Store](https://apps.apple.com/us/app/settle-up-group-expenses/id737534985)
-- [Settle Up Premium](https://settleup.app/premium)
 
 Apps change their plans and features. If something here is out of date, please [tell us](https://github.com/oss-apps/split-pro-cloud/issues) and we will fix it.
 

@@ -10,7 +10,7 @@ Both apps track shared expenses with friends and in groups, and both split equal
 
 Splitwise has been around much longer and does more. It has native iPhone and Android apps, offline entry, several payers on one expense and simplify debts, plus Pro features such as receipt scanning, currency conversion and charts.
 
-_Last checked October 14, 2026. SplitPro is our app, so every claim about Splitwise links to its own pages under [Sources](#sources)._
+_Last checked October 14, 2026, against Splitwise's own website and app store listings. SplitPro is our app._
 
 ## Side by side
 
@@ -68,12 +68,6 @@ SplitPro runs in your browser, so there is nothing to download. On your phone yo
 ### Does SplitPro simplify debts like Splitwise?
 
 Not in groups yet. In a SplitPro group you settle up with each member, or with a friend across one currency. SplitPro’s quick split, which needs no account, does suggest the fewest payments to settle everyone.
-
-## Sources
-
-- [Splitwise help center: What is Splitwise Pro?](https://kb.splitwise.com/pro/what-is-splitwise-pro)
-- [Splitwise Pro](https://www.splitwise.com/pro)
-- [Splitwise on the App Store](https://apps.apple.com/us/app/splitwise/id458023433)
 
 Apps change their plans and features. If something here is out of date, please [tell us](https://github.com/oss-apps/split-pro-cloud/issues) and we will fix it.
 

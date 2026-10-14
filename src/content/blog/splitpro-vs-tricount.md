@@ -10,7 +10,7 @@ Tricount and SplitPro are both free with no daily limit on expenses. Tricount, o
 
 The main difference is how they are organized. Tricount keeps one shared list per trip or household, in iPhone and Android apps that also work offline. SplitPro gives you one account that ties together all your groups and one-to-one balances with friends, and runs in the browser.
 
-_Last checked October 14, 2026. SplitPro is our app, so every claim about Tricount links to its own pages under [Sources](#sources)._
+_Last checked October 14, 2026, against Tricount's own website and app store listings. SplitPro is our app._
 
 ## Side by side
 
@@ -72,11 +72,6 @@ Tricount works offline and can show the trip total in one currency, which helps 
 ### Can I move from Tricount to SplitPro?
 
 SplitPro has no Tricount importer. The simplest way is to settle up in Tricount, then create the group in SplitPro and add new expenses there.
-
-## Sources
-
-- [tricount home page](https://www.tricount.com/)
-- [tricount features](https://tricount.com/features)
 
 Apps change their plans and features. If something here is out of date, please [tell us](https://github.com/oss-apps/split-pro-cloud/issues) and we will fix it.
 
