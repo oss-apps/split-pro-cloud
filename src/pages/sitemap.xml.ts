@@ -1,4 +1,5 @@
 import { type GetServerSideProps } from 'next';
+import { COMPARE_PATH, COMPARISONS } from '~/components/Compare/content';
 import { QUICK_SPLIT_PATH, SITE_URL } from '~/components/Site/constants';
 import { getAllPosts } from '~/lib/blog';
 
@@ -6,6 +7,7 @@ const STATIC_PAGES = [
   { path: '/', priority: '1.0' },
   { path: QUICK_SPLIT_PATH, priority: '0.9' },
   { path: '/blog', priority: '0.8' },
+  { path: COMPARE_PATH, priority: '0.7' },
   { path: '/privacy', priority: '0.3' },
   { path: '/terms', priority: '0.3' },
 ] as const;
@@ -17,6 +19,11 @@ export const getServerSideProps: GetServerSideProps = async ({ res }) => {
       loc: `${SITE_URL}/blog/${post.slug}`,
       priority: '0.7',
       lastmod: post.updated ?? post.date,
+    })),
+    ...COMPARISONS.map((comparison) => ({
+      loc: `${SITE_URL}${COMPARE_PATH}/${comparison.slug}`,
+      priority: '0.7',
+      lastmod: comparison.reviewed,
     })),
   ];
 
