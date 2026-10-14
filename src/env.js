@@ -57,6 +57,13 @@ export const env = createEnv({
     RECURRING_RUNNER_DISABLED: z.boolean(),
     /** Seconds between recurring expense ticks. Only for local demos, defaults to 5 minutes. */
     RECURRING_RUNNER_INTERVAL_SECONDS: z.coerce.number().int().min(5).optional(),
+    /**
+     * Umami origin the /stats proxy talks to, server to server. Deliberately Railway's own
+     * domain rather than umami.kdawg.dev: that one is proxied by Cloudflare, which would stamp
+     * every forwarded hit with `cf-ipcountry` of our server and Umami prefers that header over
+     * its GeoIP lookup, putting every visitor in one country.
+     */
+    UMAMI_UPSTREAM_URL: z.string().url().default('https://umami-production-d4b8.up.railway.app'),
   },
 
   /**
@@ -106,6 +113,7 @@ export const env = createEnv({
     ADSENSE_DEMO: process.env.ADSENSE_DEMO === 'true',
     RECURRING_RUNNER_DISABLED: process.env.RECURRING_RUNNER_DISABLED === 'true',
     RECURRING_RUNNER_INTERVAL_SECONDS: process.env.RECURRING_RUNNER_INTERVAL_SECONDS,
+    UMAMI_UPSTREAM_URL: process.env.UMAMI_UPSTREAM_URL,
   },
   /**
    * Run `build` or `dev` with `SKIP_ENV_VALIDATION` to skip env validation. This is especially

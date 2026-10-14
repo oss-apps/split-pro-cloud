@@ -10,5 +10,6 @@ export const AUTHOR_URL = 'https://koushik.dev';
 
 export const QUICK_SPLIT_PATH = '/split';
 
-export const UMAMI_SCRIPT_URL = 'https://umami.kdawg.dev/script.js';
+// Same-origin on purpose; see the /stats rewrites in next.config.js.
+export const UMAMI_SCRIPT_URL = '/stats/script.js';
 export const UMAMI_WEBSITE_ID = '03b9ce4c-7a18-4a26-8439-6a4453cde189';

@@ -8,25 +8,8 @@ import {
   deleteVerificationTokens,
   normalizeEmailIdentifier,
 } from '~/server/auth';
+import { getClientIp } from '~/server/clientIp';
 import { consumeRateLimits } from '~/server/rateLimit';
-
-function getClientIp(req: NextApiRequest) {
-  const cfIp = req.headers['cf-connecting-ip'];
-  if ('string' === typeof cfIp && cfIp) {
-    return cfIp.trim();
-  }
-
-  const forwardedFor = req.headers['x-forwarded-for'];
-  const firstForwarded = (Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor)
-    ?.split(',')[0]
-    ?.trim();
-
-  if (firstForwarded) {
-    return firstForwarded;
-  }
-
-  return req.socket.remoteAddress ?? 'unknown';
-}
 
 function tryNormalizeEmail(email: unknown) {
   if ('string' !== typeof email) {
