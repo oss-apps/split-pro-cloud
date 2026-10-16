@@ -24,6 +24,11 @@ import { DeleteFriend } from '~/components/Friend/DeleteFriend';
 import { Export } from '~/components/Friend/Export';
 import { DateColumn, MonthHeader } from '~/components/Expense/ExpenseListDate';
 import { RepeatIcon } from '~/components/Expense/RepeatIcon';
+import {
+  ExpenseSearch,
+  NoMatchingExpenses,
+  useExpenseSearch,
+} from '~/components/Expense/ExpenseSearch';
 import { isNewMonth } from '~/utils/dates';
 
 const FriendPage: NextPageWithUser = ({ user }) => {
@@ -48,6 +53,10 @@ const FriendPage: NextPageWithUser = ({ user }) => {
 
   // The export keeps every expense; the list skips those where neither owes the other anything.
   const listedExpenses = expenses.data?.filter((e) => hasShareWithFriend(e, user.id, _friendId));
+  const expenseSearch = useExpenseSearch(listedExpenses, (e) => [
+    e.paidBy === user.id ? 'You' : friendQuery.data?.name,
+    e.group?.name,
+  ]);
 
   const youLent = balances.data?.filter((b) => b.amount > 0);
   const youOwe = balances.data?.filter((b) => b.amount < 0);
@@ -161,7 +170,20 @@ const FriendPage: NextPageWithUser = ({ user }) => {
             </div>
             <Separator className="px-4" />
             <div className="mx-4 mt-4 flex  flex-col gap-3">
-              {listedExpenses?.map((e, index, expenseList) => {
+              {listedExpenses?.length ? (
+                <ExpenseSearch
+                  filter={expenseSearch.filter}
+                  onChange={expenseSearch.setFilter}
+                  options={expenseSearch.options}
+                  className="px-2"
+                />
+              ) : null}
+              {expenseSearch.isFiltering && !expenseSearch.filtered?.length ? (
+                <NoMatchingExpenses
+                  onClear={() => expenseSearch.setFilter({ query: '', category: null })}
+                />
+              ) : null}
+              {expenseSearch.filtered?.map((e, index, expenseList) => {
                 const youPaid = e.paidBy === user.id;
                 const yourShare = getNetShareLabel(getNetWithFriend(e, user.id, _friendId));
                 const isSettlement = e.splitType === SplitType.SETTLEMENT;
