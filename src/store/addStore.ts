@@ -844,7 +844,7 @@ export const getEditFormState = (expense: ExpenseToEdit) => {
 export const isCurrentForm = (generation: number) =>
   generation === useAddExpenseStore.getState().formGeneration;
 
-const gcd = (a: number, b: number): number => (0 === b ? a : gcd(b, a % b));
+const MAX_WHOLE_SHARE = 100;
 
 /**
  * Rebuilds the split inputs from participant amounts, e.g. when editing an expense or switching
@@ -889,17 +889,24 @@ export function calculateSplitShareBasedOnAmount(
         return pick(owed.map(() => 0));
       }
 
-      // Percentages in hundredths, with the rounding remainder on the largest share so they add
-      // up to exactly 100%.
-      const hundredths = owed.map((owedCents) => Math.round((owedCents / totalCents) * 10_000));
-      const remainder = 10_000 - hundredths.reduce((total, value) => total + value, 0);
-      const largest = hundredths.indexOf(Math.max(...hundredths));
-      if (-1 !== largest && Math.abs(remainder) <= participants.length) {
-        hundredths[largest] = (hundredths[largest] ?? 0) + remainder;
-      }
+      // Percentages with `decimals` decimals, with the rounding remainder on the largest share so
+      // they add up to exactly 100%.
+      const toPercentages = (decimals: number) => {
+        const scale = 10 ** decimals;
+        const units = owed.map((owedCents) => Math.round((owedCents / totalCents) * 100 * scale));
+        const remainder = 100 * scale - units.reduce((total, value) => total + value, 0);
+        const largest = units.indexOf(Math.max(...units));
+        if (-1 !== largest && Math.abs(remainder) <= participants.length) {
+          units[largest] = (units[largest] ?? 0) + remainder;
+        }
+        return units.map((value) => value / scale);
+      };
 
+      // Whole percentages first, e.g. 43% rather than 42.96% when both give the same cents.
       return pick(
-        hundredths.map((value) => value / 100),
+        toPercentages(0),
+        toPercentages(1),
+        toPercentages(2),
         owed.map((owedCents) => (owedCents / totalCents) * 100),
       );
     }
@@ -912,13 +919,16 @@ export function calculateSplitShareBasedOnAmount(
         return pick(owed.map(() => 0));
       }
 
-      // Whole numbers when the shares have a small common ratio, e.g. 30.00 and 70.00 give 3 and 7.
-      const divisor = owed.reduce((result, owedCents) => gcd(result, Math.abs(owedCents)), 0);
-      const wholeShares = owed.map((owedCents) => owedCents / divisor);
+      // The smallest whole numbers that give the same cents, e.g. 2 and 3 rather than 1 and 1.5,
+      // even when a leftover cent hides the exact ratio (31.17 and 46.76 of 77.93). Each candidate
+      // gives the smallest share one more, while every share stays at most 100.
+      const wholeShares = Array.from({ length: MAX_WHOLE_SHARE }, (_, index) =>
+        owed.map((owedCents) => Math.round((owedCents * (index + 1)) / minOwed)),
+      ).filter((shares) => shares.every((share) => MAX_WHOLE_SHARE >= Math.abs(share)));
 
       return pick(
+        ...wholeShares,
         owed.map((owedCents) => Math.round((owedCents / minOwed) * 100) / 100),
-        ...(wholeShares.every((share) => 100 >= Math.abs(share)) ? [wholeShares] : []),
         owed.map((owedCents) => owedCents / minOwed),
       );
     }

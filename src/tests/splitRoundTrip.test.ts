@@ -161,6 +161,76 @@ void describe('split inputs rebuilt from amounts', () => {
     });
   });
 
+  void it('reopens a stored split with the smallest whole shares and whole percentages (#727)', () => {
+    [
+      { amount: 77.93, splitType: SplitType.SHARE, entered: [2, 3], shown: [2, 3] },
+      { amount: 100.01, splitType: SplitType.SHARE, entered: [2, 3], shown: [2, 3] },
+      { amount: 100, splitType: SplitType.SHARE, entered: [4, 6], shown: [2, 3] },
+      { amount: -77.93, splitType: SplitType.SHARE, entered: [3, 2], shown: [3, 2] },
+      { amount: 120.02, splitType: SplitType.SHARE, entered: [2, 1, 1], shown: [2, 1, 1] },
+      { amount: 77.93, splitType: SplitType.SHARE, entered: [0, 2, 3], shown: [0, 2, 3] },
+      { amount: 77.93, splitType: SplitType.SHARE, entered: [1, 1.5], shown: [2, 3] },
+      // No whole shares up to 100 give these cents, so the decimal share stays.
+      { amount: 779.3, splitType: SplitType.SHARE, entered: [1, 1.37], shown: [1, 1.37] },
+      { amount: 7.03, splitType: SplitType.PERCENTAGE, entered: [43, 57], shown: [43, 57] },
+      {
+        amount: 12.34,
+        splitType: SplitType.PERCENTAGE,
+        entered: [25, 50, 25],
+        shown: [25, 50, 25],
+      },
+      {
+        amount: 77.93,
+        splitType: SplitType.PERCENTAGE,
+        entered: [37.5, 62.5],
+        shown: [37.5, 62.5],
+      },
+      {
+        amount: 300.01,
+        splitType: SplitType.PERCENTAGE,
+        entered: [33.33, 33.33, 33.34],
+        shown: [33.33, 33.33, 33.34],
+      },
+    ].forEach(({ amount, splitType, entered, shown }) => {
+      const users = [alice, bob, carol].slice(0, entered.length);
+      let { participants } = calculateParticipantSplit(
+        amount,
+        users.map((user, index) => ({ ...user, splitShare: entered[index] })),
+        splitType,
+        alice,
+      );
+      const cents = toCents(participants);
+
+      // Each save stores only the cents, so opening and saving again must not drift.
+      Array.from({ length: 3 }).forEach(() => {
+        const form = getEditFormState({
+          amount: toInteger(amount),
+          splitType,
+          category: 'general',
+          currency: 'USD',
+          name: 'Reopened',
+          expenseDate: new Date(),
+          fileKey: null,
+          group: null,
+          paidByUser: alice,
+          expenseParticipants: participants.map((participant) => ({
+            amount: toInteger(participant.amount ?? 0),
+            user: participant,
+          })),
+        });
+        const label = `${amount} ${splitType} ${entered.join(':')}`;
+
+        assert.deepEqual(
+          form.participants.map((participant) => participant.splitShare),
+          shown,
+          label,
+        );
+        ({ participants } = calculateParticipantSplit(amount, form.participants, splitType, alice));
+        assert.deepEqual(toCents(participants), cents, label);
+      });
+    });
+  });
+
   void it('converts 1,000.00 split equally three ways to percentages without losing cents', () => {
     [1000, -1000].forEach((amount) => {
       const equal = calculateParticipantSplit(
