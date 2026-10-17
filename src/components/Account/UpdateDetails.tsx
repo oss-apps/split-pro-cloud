@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { AppDrawer } from '../ui/drawer';
 import { ChevronRight, MessageSquare, Pencil } from 'lucide-react';
 import { api } from '~/utils/api';
@@ -9,16 +9,25 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { Form, FormControl, FormField, FormItem, FormMessage } from '../ui/form';
 import { Input } from '../ui/input';
 import { toast } from 'sonner';
+import { type TFunction } from 'i18next';
+import { useTranslation } from 'react-i18next';
 
-const detailsSchema = z.object({
-  name: z.string({ required_error: 'Name is required' }).min(1, { message: 'Name is required' }),
-});
+const getDetailsSchema = (t: TFunction) =>
+  z.object({
+    name: z
+      .string({ required_error: t('errors.name_required') })
+      .min(1, { message: t('errors.name_required') }),
+  });
+
+type DetailsValues = z.infer<ReturnType<typeof getDetailsSchema>>;
 
 export const UpdateDetails: React.FC<{ defaultName: string }> = ({ defaultName }) => {
+  const { t } = useTranslation();
+  const detailsSchema = useMemo(() => getDetailsSchema(t), [t]);
   const updateDetailsMutation = api.user.updateUserDetail.useMutation();
   const [updateDetailsOpen, setUpdateDetailsOpen] = useState(false);
 
-  const detailForm = useForm<z.infer<typeof detailsSchema>>({
+  const detailForm = useForm<DetailsValues>({
     resolver: zodResolver(detailsSchema),
     defaultValues: {
       name: defaultName,
@@ -27,13 +36,13 @@ export const UpdateDetails: React.FC<{ defaultName: string }> = ({ defaultName }
 
   const utils = api.useUtils();
 
-  async function onGroupSubmit(values: z.infer<typeof detailsSchema>) {
+  async function onGroupSubmit(values: DetailsValues) {
     try {
       await updateDetailsMutation.mutateAsync({ name: values.name });
-      toast.success('Updated details', { duration: 1500 });
+      toast.success(t('account.messages.submit_success'), { duration: 1500 });
       utils.user.me.refetch().catch(console.error);
     } catch (error) {
-      toast.error('Error in updating details');
+      toast.error(t('account.messages.submit_error'));
 
       console.error(error);
     }
@@ -47,10 +56,10 @@ export const UpdateDetails: React.FC<{ defaultName: string }> = ({ defaultName }
       open={updateDetailsOpen}
       onClose={() => setUpdateDetailsOpen(false)}
       onOpenChange={(open) => setUpdateDetailsOpen(open)}
-      leftAction="Close"
-      title="Edit details"
+      leftAction={t('actions.close')}
+      title={t('account.edit_name.title')}
       className="h-[80vh]"
-      actionTitle="Save"
+      actionTitle={t('actions.save')}
       actionOnClick={async () => {
         await detailForm.handleSubmit(onGroupSubmit)();
       }}
@@ -67,7 +76,11 @@ export const UpdateDetails: React.FC<{ defaultName: string }> = ({ defaultName }
               render={({ field }) => (
                 <FormItem className="w-full">
                   <FormControl>
-                    <Input className="text-lg" placeholder="Enter your name" {...field} />
+                    <Input
+                      className="text-lg"
+                      placeholder={t('account.edit_name.placeholder')}
+                      {...field}
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>

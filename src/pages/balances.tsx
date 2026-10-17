@@ -17,14 +17,17 @@ import { NotificationModal } from '~/components/NotificationModal';
 import { GetServerSideProps } from 'next';
 import { Fragment } from 'react';
 import { AdSlot, isFeedAdPosition } from '~/components/Ads/AdSlot';
+import { useTranslation } from 'react-i18next';
 
 const BalancePage: NextPageWithUser = () => {
+  const { t } = useTranslation();
+
   function shareWithFriends() {
     if (navigator.share) {
       navigator
         .share({
           title: 'SplitPro',
-          text: "Check out SplitPro. It's an open source free alternative for Splitwise",
+          text: t('ui.share_text'),
           url: 'https://splitpro.app',
         })
         .then(() => console.log('Successful share'))
@@ -38,11 +41,11 @@ const BalancePage: NextPageWithUser = () => {
   return (
     <>
       <Head>
-        <title>Outstanding balances</title>
+        <title>{t('ui.outstanding_balances')}</title>
         <link rel="icon" href="/favicon.ico" />
       </Head>
       <MainLayout
-        title="Balances"
+        title={t('navigation.balances')}
         actions={
           typeof window !== 'undefined' && !!window.navigator?.share ? (
             <Button variant="ghost" onClick={shareWithFriends}>
@@ -62,7 +65,7 @@ const BalancePage: NextPageWithUser = () => {
                 <div className="mt-2 px-1">
                   <div className="flex items-center justify-center gap-2 text-center">
                     {/* <ArrowLeftCircleIcon className=" h-6 w-6 rotate-45 transform text-orange-700" /> */}
-                    <p className="text-sm">You owe</p>
+                    <p className="text-sm">{t('ui.expense.statements.you_owe')}</p>
                   </div>
                 </div>
                 <div className="mb-2 mt-4 flex flex-wrap justify-center gap-1">
@@ -83,7 +86,7 @@ const BalancePage: NextPageWithUser = () => {
               <div className="w-1/2 rounded-2xl border  px-2 py-2 ">
                 <div className="mt-2 flex flex-col justify-center bg-opacity-40 px-1">
                   <div className="flex items-center justify-center gap-2">
-                    <p className="text-sm">You get</p>
+                    <p className="text-sm">{t('ui.expense.statements.you_lent')}</p>
                   </div>
                 </div>
                 <div className="mb-2 mt-4 flex flex-wrap justify-center gap-1">
@@ -134,7 +137,7 @@ const BalancePage: NextPageWithUser = () => {
                 <Link href="/add">
                   <Button className="w-[250px]">
                     <PlusIcon className="mr-2 h-5 w-5 text-black" />
-                    Add Expense
+                    {t('actions.add_expense')}
                   </Button>
                 </Link>
               </div>
@@ -154,6 +157,7 @@ const FriendBalance: React.FC<{
   id: number;
   hasMore?: boolean;
 }> = ({ friend, amount, isPositive, currency, id, hasMore }) => {
+  const { t } = useTranslation();
   return (
     <Link className="flex items-center justify-between" href={`/balances/${id}`}>
       <div className="flex items-center gap-3">
@@ -162,7 +166,7 @@ const FriendBalance: React.FC<{
       </div>
       {amount === 0 ? (
         <div>
-          <p className="text-xs">Settled up</p>
+          <p className="text-xs">{t('ui.settled_up')}</p>
         </div>
       ) : (
         <div>
@@ -172,7 +176,7 @@ const FriendBalance: React.FC<{
               isPositive ? 'text-emerald-500' : 'text-orange-600',
             )}
           >
-            {isPositive ? 'you get' : 'you owe'}
+            {isPositive ? t('ui.expense.statements.you_lent') : t('ui.expense.statements.you_owe')}
           </div>
           <div className={`${isPositive ? 'text-emerald-500' : 'text-orange-600'} flex text-right`}>
             {currency} {toUIString(amount)}

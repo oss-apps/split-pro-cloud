@@ -24,8 +24,11 @@ import { env } from '~/env';
 import { SubscribeNotification } from '~/components/Account/SubscribeNotification';
 import { useState } from 'react';
 import { LoadingSpinner } from '~/components/ui/spinner';
+import { LanguagePicker } from '~/components/Account/LanguagePicker';
+import { useTranslation } from 'react-i18next';
 
 const AccountPage: NextPageWithUser = ({ user }) => {
+  const { t } = useTranslation();
   const userQuery = api.user.me.useQuery();
   const downloadQuery = api.user.downloadData.useMutation();
 
@@ -47,10 +50,13 @@ const AccountPage: NextPageWithUser = ({ user }) => {
   return (
     <>
       <Head>
-        <title>Account</title>
+        <title>{t('account.title')}</title>
         <link rel="icon" href="/favicon.ico" />
       </Head>
-      <MainLayout title="Account" header={<div className="text-3xl font-semibold">Account</div>}>
+      <MainLayout
+        title={t('account.title')}
+        header={<div className="text-3xl font-semibold">{t('account.title')}</div>}
+      >
         <div className="mt-4 px-4">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
@@ -91,7 +97,7 @@ const AccountPage: NextPageWithUser = ({ user }) => {
                       </clipPath>
                     </defs>
                   </svg>
-                  Follow us on X
+                  {t('account.follow_on_x')}
                 </div>
                 <ChevronRight className="h-6 w-6 text-gray-500" />
               </Button>
@@ -103,7 +109,7 @@ const AccountPage: NextPageWithUser = ({ user }) => {
               >
                 <div className="flex items-center gap-4">
                   <Github className="h-5 w-5 text-gray-200" />
-                  Star us on Github
+                  {t('account.star_on_github')}
                 </div>
                 <ChevronRight className="h-6 w-6 text-gray-500" />
               </Button>
@@ -115,13 +121,14 @@ const AccountPage: NextPageWithUser = ({ user }) => {
               >
                 <div className="flex items-center gap-4">
                   <HeartHandshakeIcon className="h-5 w-5 text-pink-600" />
-                  Sponsor us
+                  {t('account.support_us')}
                 </div>
                 <ChevronRight className="h-6 w-6 text-gray-500" />
               </Button>
             </Link>
             <SubmitFeedback />
             <SubscribeNotification />
+            <LanguagePicker />
             <Link href="https://www.producthunt.com/products/splitpro/reviews/new" target="_blank">
               <Button
                 variant="ghost"
@@ -129,7 +136,7 @@ const AccountPage: NextPageWithUser = ({ user }) => {
               >
                 <div className="flex items-center gap-4">
                   <Star className="h-5 w-5 text-yellow-400" />
-                  Write a review
+                  {t('account.write_review')}
                 </div>
                 <ChevronRight className="h-6 w-6 text-gray-500" />
               </Button>
@@ -139,38 +146,38 @@ const AccountPage: NextPageWithUser = ({ user }) => {
                 <div className="flex w-full justify-between px-0 py-2 text-[16px] font-medium text-gray-300 hover:text-foreground/80">
                   <div className="flex items-center gap-4">
                     <Download className="h-5 w-5 text-blue-500" />
-                    Download App
+                    {t('account.download_app')}
                   </div>
                   <ChevronRight className="h-6x w-6 text-gray-500" />
                 </div>
               }
-              leftAction="Close"
-              title="Download App"
+              leftAction={t('actions.close')}
+              title={t('account.download_app_details.title')}
               className="h-[70vh]"
               shouldCloseOnAction
             >
               <div className="flex flex-col gap-8">
-                <p>You can download SplitPro as a PWA to your home screen</p>
+                <p>{t('account.download_app_details.download_as_pwa')}</p>
 
                 <p>
-                  If you are using iOS, checkout this{' '}
+                  {t('account.download_app_details.using_ios')}{' '}
                   <a
                     className="text-cyan-500 underline"
                     href="https://youtube.com/shorts/MQHeLOjr350"
                     target="_blank"
                   >
-                    video
+                    {t('account.download_app_details.video')}
                   </a>
                 </p>
 
                 <p>
-                  If you are using Android, checkout this{' '}
+                  {t('account.download_app_details.using_android')}{' '}
                   <a
                     className="text-cyan-500 underline"
                     href="https://youtube.com/shorts/04n7oKGzgOs"
                     target="_blank"
                   >
-                    Video
+                    {t('account.download_app_details.video')}
                   </a>
                 </p>
               </div>
@@ -183,7 +190,7 @@ const AccountPage: NextPageWithUser = ({ user }) => {
             >
               <div className="flex items-center gap-4">
                 <FileDown className="h-5 w-5 text-teal-500" />
-                Download splitpro data
+                {t('account.download_splitpro_data')}
               </div>
               {downloading ? (
                 <LoadingSpinner />
@@ -198,7 +205,7 @@ const AccountPage: NextPageWithUser = ({ user }) => {
               >
                 <div className="flex items-center gap-4">
                   <DownloadCloud className="h-5 w-5 text-violet-500" />
-                  Import from Splitwise
+                  {t('account.import_from_splitwise')}
                 </div>
                 <ChevronRight className="h-6 w-6 text-gray-500" />
               </Button>
@@ -211,7 +218,7 @@ const AccountPage: NextPageWithUser = ({ user }) => {
               className="text-orange-600 hover:text-orange-600/90 "
               onClick={() => signOut()}
             >
-              Logout
+              {t('account.logout')}
             </Button>
           </div>
         </div>
