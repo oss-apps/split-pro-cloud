@@ -14,6 +14,7 @@ import { LoadingSpinner } from '~/components/ui/spinner';
 import { useEffect, useState } from 'react';
 import { useAddExpenseStore } from '~/store/addStore';
 import { useAppStore } from '~/store/appStore';
+import { useStoredLanguage } from '~/utils/i18n';
 
 const poppins = Poppins({ weight: ['200', '300', '400', '500', '600', '700'], subsets: ['latin'] });
 
@@ -96,6 +97,7 @@ const MyApp: AppType<{ session: Session | null }> = ({
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Auth: React.FC<{ Page: NextPageWithUser; pageProps: any }> = ({ Page, pageProps }) => {
   const { status, data } = useSession({ required: true });
+  const languageReady = useStoredLanguage();
   const [showSpinner, setShowSpinner] = useState(false);
 
   const { setPreferredCurrency } = useAddExpenseStore((s) => s.actions);
@@ -122,7 +124,7 @@ const Auth: React.FC<{ Page: NextPageWithUser; pageProps: any }> = ({ Page, page
     }
   }, [status, data?.user, setPreferredCurrency]);
 
-  if (status === 'loading') {
+  if (status === 'loading' || !languageReady) {
     return (
       <div className="flex h-full w-full items-center justify-center">
         {showSpinner ? <LoadingSpinner className="text-primary" /> : null}

@@ -15,6 +15,7 @@ import { LoadingSpinner } from '~/components/ui/spinner';
 import { RepeatIcon } from '~/components/Expense/RepeatIcon';
 import { Fragment } from 'react';
 import { AdSlot, isFeedAdPosition } from '~/components/Ads/AdSlot';
+import { useTranslation } from 'react-i18next';
 
 function getPaymentString(
   user: User,
@@ -44,16 +45,17 @@ function getPaymentString(
 }
 
 const ActivityPage: NextPageWithUser = ({ user }) => {
+  const { t } = useTranslation();
   const expensesQuery = api.user.getAllExpenses.useQuery();
   const showProgress = useEnableAfter(350);
 
   return (
     <>
       <Head>
-        <title>Activity</title>
+        <title>{t('navigation.activity')}</title>
         <link rel="icon" href="/favicon.ico" />
       </Head>
-      <MainLayout title="Activity">
+      <MainLayout title={t('navigation.activity')}>
         <div className=" h-full px-4">
           <div className="flex flex-col gap-4">
             {expensesQuery.isLoading ? (
@@ -65,7 +67,7 @@ const ActivityPage: NextPageWithUser = ({ user }) => {
             ) : (
               <>
                 {!expensesQuery.data?.length ? (
-                  <div className="mt-[30vh] text-center text-gray-400">No activities yet</div>
+                  <div className="mt-[30vh] text-center text-gray-400">{t('ui.no_activity')}</div>
                 ) : null}
                 {expensesQuery.data?.map((e, index, expenses) => (
                   <Fragment key={e.expenseId}>

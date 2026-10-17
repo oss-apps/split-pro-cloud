@@ -16,6 +16,8 @@ const withPwa = pwa({
   dest: 'public',
   // Next 15 emits this build-only manifest; it isn't served, so precaching it breaks SW install
   buildExcludes: [/dynamic-css-manifest\.json$/],
+  // Translations are fetched on demand, so most users never download them
+  publicExcludes: ['!noprecache/**/*', '!locales/**/*'],
   // disable: process.env.NODE_ENV === 'development',
 });
 
