@@ -105,6 +105,7 @@ const Home: NextPage<{ feedbackEmail: string; providers: ClientSafeProvider[] }>
   const [emailError, setEmailError] = useState<string>('');
   const router = useRouter();
   const queryError = 'string' === typeof router.query.error ? router.query.error : '';
+  const accountDeleted = '1' === router.query.deleted;
 
   const emailForm = useForm<z.infer<typeof emailSchema>>({
     resolver: zodResolver(emailSchema),
@@ -154,6 +155,11 @@ const Home: NextPage<{ feedbackEmail: string; providers: ClientSafeProvider[] }>
           <div className="mb-10 flex items-center gap-4">
             <p className="text-3xl text-primary">SplitPro</p>
           </div>
+          {accountDeleted ? (
+            <p className="-mt-4 mb-8 w-[300px] text-center text-sm text-gray-400" role="status">
+              Your account was deleted.
+            </p>
+          ) : null}
           {providers
             .filter((provider) => provider.id !== 'email')
             .map((provider) => (

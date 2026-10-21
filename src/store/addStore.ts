@@ -151,13 +151,20 @@ export const matchesEditSnapshot = (
   );
 };
 
-/** The participants to save: the stored ones while the expense is unchanged, else the form's. */
+/**
+ * The participants to save: the stored ones while the expense is unchanged, else the form's.
+ * Someone who deleted their account is only saved with a share or as the payer: a row with nothing
+ * would only record them in a new expense, and keep a repeating one from going on.
+ */
 export const getParticipantsToSave = (
   state: Pick<
     AddExpenseState,
     'editSnapshot' | 'amount' | 'currency' | 'paidBy' | 'splitType' | 'participants'
   >,
-) => (matchesEditSnapshot(state) ? state.editSnapshot.participants : state.participants);
+) =>
+  (matchesEditSnapshot(state) ? state.editSnapshot.participants : state.participants).filter(
+    (p) => !p.deletedAt || 0 !== toInteger(p.amount ?? 0) || p.id === state.paidBy?.id,
+  );
 
 /** Shows the stored cents again when a change returns the form to the expense as it was opened. */
 const withEditSnapshot = <T extends Partial<AddExpenseState>>(state: AddExpenseState, next: T) => {
@@ -435,6 +442,12 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
           s.pendingInviteSplit,
         );
         const split = s.splitTouched ? manualSplit : getGroupDefaultSplit(group);
+        // Members who deleted their account start out of the split, unless it was ticked by hand
+        const leftOutIds = participants
+          .filter(
+            (p) => p.deletedAt && !(s.splitTouched && undefined !== manualSplit?.shares[p.id]),
+          )
+          .map((p) => p.id);
         if (!split) {
           return {
             group,
@@ -443,7 +456,7 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
             pendingInviteSplit,
             ...splitWithParticipants(
               state,
-              participants.map((p) => ({ ...p, splitShare: 1 })),
+              participants.map((p) => ({ ...p, splitShare: leftOutIds.includes(p.id) ? 0 : 1 })),
               SplitType.EQUAL,
             ),
           };
@@ -452,6 +465,7 @@ export const useAddExpenseStore = create<AddExpenseState>()((set) => ({
         const resolved = resolveDefaultSplit(
           split,
           participants.map((p) => p.id),
+          leftOutIds,
         );
         return {
           group,
