@@ -40,6 +40,15 @@ const AccountLayout = () => {
           title: t('account.feedback'),
         }}
       />
+      <Stack.Screen
+        name="delete-account"
+        options={{
+          ...groupedScreenOptions,
+          ...opaqueHeaderOptions,
+          presentation: 'modal',
+          title: t('account.delete_account'),
+        }}
+      />
     </Stack>
   );
 };

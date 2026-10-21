@@ -26,6 +26,7 @@ const createUser = (id: number): User => ({
   emailVerified: null,
   image: null,
   currency: 'USD',
+  deletedAt: null,
 });
 
 const users = [createUser(1), createUser(2), createUser(3)];

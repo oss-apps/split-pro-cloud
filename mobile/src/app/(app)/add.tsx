@@ -81,6 +81,7 @@ const AddExpense = () => {
       id: me.id,
       currency: me.currency,
       emailVerified: null,
+      deletedAt: null,
       name: me.name ?? null,
       email: me.email ?? null,
       image: me.image ?? null,

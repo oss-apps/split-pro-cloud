@@ -62,6 +62,27 @@ export const signInWithApple = async (): Promise<SignInResult | null> => {
   return signInWithAppleToken(credential.identityToken, credential.fullName);
 };
 
+/**
+ * A fresh authorization code from Sign in with Apple, which the server exchanges to revoke the
+ * user's Apple sign-in when they delete their account. Resolves `null` when the user cancels.
+ */
+export const getAppleAuthorizationCode = async (): Promise<string | null> => {
+  try {
+    const credential = await AppleAuthentication.signInAsync({ requestedScopes: [] });
+
+    if (!credential.authorizationCode) {
+      throw new Error('Sign in with Apple returned no authorization code');
+    }
+
+    return credential.authorizationCode;
+  } catch (error) {
+    if (isCancelled(error)) {
+      return null;
+    }
+    throw error;
+  }
+};
+
 const sha256 = (data: Uint8Array<ArrayBuffer>) =>
   Crypto.digest(Crypto.CryptoDigestAlgorithm.SHA256, data);
 

@@ -21,6 +21,8 @@ interface AuthState {
   signOut: () => Promise<void>;
   /** Forgets the session without calling the server, e.g. after a 401. */
   clearSession: () => Promise<void>;
+  /** After deleting the account, which already ended its sessions and push tokens on the server. */
+  forgetDeletedAccount: () => Promise<void>;
 }
 
 const parseUser = (raw: string | null): SessionUser | null => {
@@ -70,6 +72,11 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     }
 
     await clearSession();
+  },
+
+  forgetDeletedAccount: async () => {
+    await forgetRegisteredPushToken().catch(console.warn);
+    await get().clearSession();
   },
 
   clearSession: async () => {

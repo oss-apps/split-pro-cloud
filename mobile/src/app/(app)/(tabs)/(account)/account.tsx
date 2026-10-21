@@ -212,6 +212,16 @@ const Account = () => {
           onPress={confirmSignOut}
           accessibilityLabel={t('account.sign_out')}
         />
+        <ListRow
+          title={
+            <Text color="destructive" align="center">
+              {t('account.delete_account')}
+            </Text>
+          }
+          disabled={signingOut}
+          onPress={() => router.push('/delete-account')}
+          accessibilityLabel={t('account.delete_account')}
+        />
       </Section>
     </ScrollView>
   );

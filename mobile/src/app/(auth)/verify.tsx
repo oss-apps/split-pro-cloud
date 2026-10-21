@@ -1,46 +1,14 @@
 import { router, useLocalSearchParams } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { StyleSheet, View } from 'react-native';
 
 import { Button, CodeInput, Icon, Screen, Text, icons, toast } from '@/components/ui';
 import { AuthApiError, sendEmailCode, verifyEmailCode } from '@/lib/authApi';
+import { formatDuration, useSecondsLeft } from '@/lib/countdown';
 import { EMAIL_CODE_CHARACTER, EMAIL_CODE_LENGTH } from '@/lib/socialAuth';
 import { useAuthStore } from '@/store/authStore';
 import { colors, spacing } from '@/theme/tokens';
-
-/** Whole seconds left until `until` (a timestamp), ticking every second; 0 once it has passed. */
-const useSecondsLeft = (until: number | null) => {
-  const [now, setNow] = useState(Date.now);
-
-  useEffect(() => {
-    if (null === until) {
-      return;
-    }
-
-    const tick = () => {
-      const current = Date.now();
-      setNow(current);
-
-      if (current >= until) {
-        clearInterval(interval);
-      }
-    };
-    // Refresh straight away, `now` is stale from the last tick
-    const timeout = setTimeout(tick, 0);
-    const interval = setInterval(tick, 1000);
-
-    return () => {
-      clearTimeout(timeout);
-      clearInterval(interval);
-    };
-  }, [until]);
-
-  return null === until ? 0 : Math.max(0, Math.ceil((until - now) / 1000));
-};
-
-const formatDuration = (seconds: number) =>
-  `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 
 const lockedUntil = (error: unknown) =>
   error instanceof AuthApiError && 429 === error.status && error.retryAfterSeconds
