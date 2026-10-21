@@ -1,7 +1,13 @@
 import { PrismaAdapter } from '@next-auth/prisma-adapter';
 import { randomInt } from 'crypto';
 import { type GetServerSidePropsContext } from 'next';
-import { getServerSession, type DefaultSession, type NextAuthOptions } from 'next-auth';
+import {
+  getServerSession,
+  type DefaultSession,
+  type NextAuthOptions,
+  type Session,
+  type User,
+} from 'next-auth';
 import { Adapter, AdapterUser } from 'next-auth/adapters';
 import DiscordProvider from 'next-auth/providers/discord';
 import GoogleProvider from 'next-auth/providers/google';
@@ -59,6 +65,68 @@ export function normalizeEmailIdentifier(identifier: string) {
 export async function deleteVerificationTokens(identifier: string) {
   await db.verificationToken.deleteMany({ where: { identifier } });
 }
+
+export const generateEmailToken = () =>
+  Array.from(
+    { length: EMAIL_TOKEN_LENGTH },
+    () => EMAIL_TOKEN_ALPHABET[randomInt(EMAIL_TOKEN_ALPHABET.length)],
+  ).join('');
+
+const BLOCKED_SIGNUP_EMAIL_DOMAINS = [
+  // Yahoo domains
+  'yahoo.com',
+  'yahoo.co.uk',
+  'yahoo.co.in',
+  'yahoo.ca',
+  'yahoo.com.au',
+  'yahoo.fr',
+  'yahoo.de',
+  'yahoo.es',
+  'yahoo.it',
+  'yahoo.co.jp',
+  'ymail.com',
+  'rocketmail.com',
+  'yahoo.in',
+  'yahoo.com.br',
+  'att.net',
+  'aol.com',
+  // Hotmail/Outlook domains
+  'hotmail.com',
+  'hotmail.co.uk',
+  'hotmail.fr',
+  'hotmail.de',
+  'hotmail.it',
+  'hotmail.es',
+  'hotmail.ca',
+  'outlook.com',
+  'outlook.in',
+  'live.com',
+  'live.co.uk',
+  'msn.com',
+  'windowslive.com',
+];
+
+export const EMAIL_DOMAIN_BLOCKED_MESSAGE =
+  'This email domain is not supported for signup. Please use Google login instead.';
+
+/**
+ * Throws for new signups from blocked email domains. Existing users can always sign in.
+ */
+export const assertEmailSignInAllowed = async (email: string) => {
+  const existingUser = await db.user.findUnique({
+    where: { email: email.toLowerCase() },
+  });
+
+  if (existingUser) {
+    return;
+  }
+
+  const emailDomain = email.split('@')[1]?.toLowerCase() ?? '';
+
+  if (BLOCKED_SIGNUP_EMAIL_DOMAINS.includes(emailDomain)) {
+    throw new Error(EMAIL_DOMAIN_BLOCKED_MESSAGE);
+  }
+};
 
 /**
  * Module augmentation for `next-auth` types. Allows us to add custom properties to the `session`
@@ -147,6 +215,20 @@ const SplitProPrismaAdapter = (...args: Parameters<typeof PrismaAdapter>): Adapt
   };
 };
 
+export const authAdapter = SplitProPrismaAdapter(db);
+
+/**
+ * The session the app sees, for both cookie sessions and native app bearer sessions.
+ */
+export const buildSession = (session: DefaultSession, user: User): Session => ({
+  ...session,
+  user: {
+    ...session.user,
+    id: user.id,
+    currency: user.currency,
+  },
+});
+
 /**
  * Options for NextAuth.js used to configure adapters, providers, callbacks, etc.
  *
@@ -158,16 +240,10 @@ export const authOptions: NextAuthOptions = {
     verifyRequest: '/auth/verify-request',
   },
   callbacks: {
-    session: ({ session, user }) => ({
-      ...session,
-      user: {
-        ...session.user,
-        id: user.id,
-        currency: user.currency,
-      },
-    }),
+    // `user` is typed as an AdapterUser with a string id, but our ids are numbers
+    session: ({ session, user }) => buildSession(session, user as unknown as User),
   },
-  adapter: SplitProPrismaAdapter(db),
+  adapter: authAdapter,
   providers: getProviders(),
   events: {
     createUser: async ({ user }) => {
@@ -250,55 +326,7 @@ function getProviders() {
         maxAge: EMAIL_TOKEN_MAX_AGE_SECONDS,
         normalizeIdentifier: normalizeEmailIdentifier,
         async sendVerificationRequest({ identifier: email, url, token }) {
-          // Check if user already exists - allow existing users to sign in
-          const existingUser = await db.user.findUnique({
-            where: { email: email.toLowerCase() },
-          });
-
-          // Only block certain email domains for NEW signups, not existing users
-          if (!existingUser) {
-            const emailDomain = email.split('@')[1]?.toLowerCase() ?? '';
-
-            const blockedEmailDomains = [
-              // Yahoo domains
-              'yahoo.com',
-              'yahoo.co.uk',
-              'yahoo.co.in',
-              'yahoo.ca',
-              'yahoo.com.au',
-              'yahoo.fr',
-              'yahoo.de',
-              'yahoo.es',
-              'yahoo.it',
-              'yahoo.co.jp',
-              'ymail.com',
-              'rocketmail.com',
-              'yahoo.in',
-              'yahoo.com.br',
-              'att.net',
-              'aol.com',
-              // Hotmail/Outlook domains
-              'hotmail.com',
-              'hotmail.co.uk',
-              'hotmail.fr',
-              'hotmail.de',
-              'hotmail.it',
-              'hotmail.es',
-              'hotmail.ca',
-              'outlook.com',
-              'outlook.in',
-              'live.com',
-              'live.co.uk',
-              'msn.com',
-              'windowslive.com',
-            ];
-
-            if (blockedEmailDomains.includes(emailDomain)) {
-              throw new Error(
-                'This email domain is not supported for signup. Please use Google login instead.',
-              );
-            }
-          }
+          await assertEmailSignInAllowed(email);
 
           const result = await sendSignUpEmail(email, token, url);
           if (!result) {
@@ -306,10 +334,7 @@ function getProviders() {
           }
         },
         async generateVerificationToken() {
-          return Array.from(
-            { length: EMAIL_TOKEN_LENGTH },
-            () => EMAIL_TOKEN_ALPHABET[randomInt(EMAIL_TOKEN_ALPHABET.length)],
-          ).join('');
+          return generateEmailToken();
         },
       }),
     );

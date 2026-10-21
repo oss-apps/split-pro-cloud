@@ -16,6 +16,8 @@ import { z, ZodError } from 'zod';
 import { getServerAuthSession } from '~/server/auth';
 import { getClientIp } from '~/server/clientIp';
 import { db } from '~/server/db';
+import { findMobileSession } from '~/server/mobileAuth';
+import { getBearerToken, hasBearerAuthorization } from '~/server/mobileAuthTokens';
 
 /**
  * 1. CONTEXT
@@ -27,6 +29,8 @@ import { db } from '~/server/db';
 
 interface CreateContextOptions {
   session: Session | null;
+  /** The id of the app's Session row, when the request came with a bearer token. */
+  mobileSessionId?: string;
   ip?: string;
 }
 
@@ -40,9 +44,12 @@ interface CreateContextOptions {
  *
  * @see https://create.t3.gg/en/usage/trpc#-serverapitrpcts
  */
-const createInnerTRPCContext = (opts: CreateContextOptions) => {
+const createInnerTRPCContext = (
+  opts: CreateContextOptions,
+): Omit<CreateContextOptions, 'ip'> & { ip: string; db: typeof db } => {
   return {
     session: opts.session,
+    mobileSessionId: opts.mobileSessionId,
     ip: opts.ip ?? 'unknown',
     db,
   };
@@ -57,11 +64,21 @@ const createInnerTRPCContext = (opts: CreateContextOptions) => {
 export const createTRPCContext = async (opts: CreateNextContextOptions) => {
   const { req, res } = opts;
 
-  // Get the session from the server using the getServerSession wrapper function
-  const session = await getServerAuthSession({ req, res });
+  // Bearer token for the native app, used exclusively when sent; cookie session for the web
+  const { authorization } = req.headers;
+
+  if (hasBearerAuthorization(authorization)) {
+    const mobileSession = await findMobileSession(getBearerToken(authorization));
+
+    return createInnerTRPCContext({
+      session: mobileSession?.session ?? null,
+      mobileSessionId: mobileSession?.id,
+      ip: getClientIp(req),
+    });
+  }
 
   return createInnerTRPCContext({
-    session,
+    session: await getServerAuthSession({ req, res }),
     ip: getClientIp(req),
   });
 };

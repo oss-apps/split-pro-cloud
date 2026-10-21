@@ -23,6 +23,7 @@ import { getDocumentUploadUrl } from '~/server/storage';
 import { FILE_SIZE_LIMIT } from '~/lib/constants';
 import { sendFeedbackEmail, sendInviteEmail } from '~/server/mailer';
 import { pushNotification } from '~/server/notification';
+import { DEVICE_PLATFORMS, isValidExpoPushToken } from '~/utils/expoPush';
 import { toFixedNumber, toUIString } from '~/utils/numbers';
 import { SplitwiseGroupSchema, SplitwiseUserSchema } from '~/types';
 import { env } from '~/env';
@@ -494,6 +495,41 @@ export const userRouter = createTRPCRouter({
       });
     }),
 
+  /**
+   * Saves the native app's Expo push token, taking it over if another account had it. It's tied to
+   * the app session that sent it, so it goes away when that session ends.
+   */
+  registerPushToken: protectedProcedure
+    .input(
+      z.object({
+        token: z.string().max(255).refine(isValidExpoPushToken, 'Invalid Expo push token'),
+        platform: z.enum(DEVICE_PLATFORMS),
+        deviceName: z.string().trim().max(100).nullish(),
+      }),
+    )
+    .mutation(async ({ input, ctx }) => {
+      const device = {
+        userId: ctx.session.user.id,
+        sessionId: ctx.mobileSessionId ?? null,
+        platform: input.platform,
+        deviceName: input.deviceName ?? null,
+      };
+      await db.devicePushToken.upsert({
+        where: { token: input.token },
+        create: { token: input.token, ...device },
+        update: device,
+      });
+    }),
+
+  /** Stops notifications to this device, e.g. before signing out of the app. */
+  unregisterPushToken: protectedProcedure
+    .input(z.object({ token: z.string().max(255) }))
+    .mutation(async ({ input, ctx }) => {
+      await db.devicePushToken.deleteMany({
+        where: { token: input.token, userId: ctx.session.user.id },
+      });
+    }),
+
   deleteFriend: protectedProcedure
     .input(z.object({ friendId: z.number() }))
     .mutation(async ({ input, ctx }) => {
@@ -570,6 +606,12 @@ export const userRouter = createTRPCRouter({
   getWebPushPublicKey: protectedProcedure.query(async ({ ctx }) => {
     return env.WEB_PUSH_PUBLIC_KEY;
   }),
+
+  /** What the native app needs from the server config, which the web reads in getServerSideProps. */
+  getAppConfig: protectedProcedure.query(() => ({
+    invitesEnabled: env.ENABLE_SENDING_INVITES,
+    storagePublicUrl: env.R2_PUBLIC_URL ? env.R2_PUBLIC_URL : null,
+  })),
 
   getAdConfig: protectedProcedure.query(() => {
     if (env.ADSENSE_DEMO && 'production' !== env.NODE_ENV) {
