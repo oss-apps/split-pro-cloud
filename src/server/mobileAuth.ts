@@ -397,6 +397,8 @@ const verifyAppleIdentityToken = async (identityToken: string, audience: string[
     const { payload } = await jwtVerify(identityToken, appleJwks, {
       issuer: APPLE_ISSUER,
       audience,
+      algorithms: ['RS256'],
+      requiredClaims: ['exp', 'sub'],
     });
     return payload;
   } catch (error) {
