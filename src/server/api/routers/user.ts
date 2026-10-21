@@ -31,6 +31,11 @@ import { runBalanceTransaction } from '../services/balanceTransaction';
 import { getBalanceBreakdownWithFriend } from '../services/balanceBreakdown';
 import { sendRecurringStatusPushNotification } from '../services/notificationService';
 import { pauseRulesWith, recurrenceInputSchema } from '../services/recurringService';
+import {
+  deleteAccount,
+  getAccountDeletionInfo,
+  requestAccountDeletionCode,
+} from '../services/accountDeletion';
 
 export const userRouter = createTRPCRouter({
   me: protectedProcedure.query(async ({ ctx }) => {
@@ -120,11 +125,13 @@ export const userRouter = createTRPCRouter({
 
     const friendsIds = [...new Set([...balanceWithFriends, ...friendships].map((f) => f.friendId))];
 
+    // Someone who deleted their account can't be added to anything new
     const friends = await db.user.findMany({
       where: {
         id: {
           in: friendsIds,
         },
+        deletedAt: null,
       },
     });
 
@@ -602,6 +609,29 @@ export const userRouter = createTRPCRouter({
       await importUserBalanceFromSplitWise(ctx.session.user.id, input.usersWithBalance);
       await importGroupFromSplitwise(ctx.session.user.id, input.groups);
     }),
+
+  /** What deleting the account changes: balances that stay with friends, groups handed over. */
+  getDeleteAccountInfo: protectedProcedure.query(({ ctx }) =>
+    getAccountDeletionInfo(ctx.session.user.id),
+  ),
+
+  /** Emails the one-time code `deleteAccount` needs. */
+  requestDeleteAccountCode: protectedProcedure.mutation(({ ctx }) =>
+    requestAccountDeletionCode(ctx.session.user.id),
+  ),
+
+  /**
+   * Deletes the account: name, email and sign-ins go, shared expenses stay for the others. Accounts
+   * linked to Apple send a fresh authorization code, so their Apple sign-in can be revoked.
+   */
+  deleteAccount: protectedProcedure
+    .input(
+      z.object({
+        code: z.string().trim().min(1).max(32),
+        appleAuthorizationCode: z.string().min(1).max(1024).optional(),
+      }),
+    )
+    .mutation(({ ctx, input }) => deleteAccount(ctx.session.user.id, input)),
 
   getWebPushPublicKey: protectedProcedure.query(async ({ ctx }) => {
     return env.WEB_PUSH_PUBLIC_KEY;

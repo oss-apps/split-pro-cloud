@@ -20,6 +20,7 @@ const createUser = (id: number): User => ({
   name: `User ${id}`,
   email: `user-${id}@example.com`,
   emailVerified: null,
+  deletedAt: null,
   image: null,
   currency: 'USD',
 });

@@ -238,6 +238,7 @@ void describe('repeat in the add form', () => {
     name: 'Me',
     email: 'me@example.com',
     emailVerified: null,
+    deletedAt: null,
     image: null,
     currency: 'USD',
   };

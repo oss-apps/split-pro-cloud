@@ -46,6 +46,14 @@ export const env = createEnv({
      * production. Apple sign-in is off when unset.
      */
     APPLE_BUNDLE_ID: z.string().optional(),
+    /**
+     * A Sign in with Apple key, to revoke a user's Apple sign-in when they delete their account.
+     * The private key is the .p8 file's contents; literal `\n` are read as newlines. Revoking is
+     * skipped when any of these is unset.
+     */
+    APPLE_TEAM_ID: z.string().optional(),
+    APPLE_KEY_ID: z.string().optional(),
+    APPLE_PRIVATE_KEY: z.string().optional(),
     R2_ACCESS_KEY: z.string().optional(),
     R2_SECRET_KEY: z.string().optional(),
     R2_BUCKET: z.string().optional(),
@@ -107,6 +115,9 @@ export const env = createEnv({
     AUTHENTIK_SECRET: process.env.AUTHENTIK_SECRET,
     AUTHENTIK_ISSUER: process.env.AUTHENTIK_ISSUER,
     APPLE_BUNDLE_ID: process.env.APPLE_BUNDLE_ID,
+    APPLE_TEAM_ID: process.env.APPLE_TEAM_ID,
+    APPLE_KEY_ID: process.env.APPLE_KEY_ID,
+    APPLE_PRIVATE_KEY: process.env.APPLE_PRIVATE_KEY,
     R2_ACCESS_KEY: process.env.R2_ACCESS_KEY,
     R2_SECRET_KEY: process.env.R2_SECRET_KEY,
     R2_BUCKET: process.env.R2_BUCKET,

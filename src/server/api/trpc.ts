@@ -18,6 +18,7 @@ import { getClientIp } from '~/server/clientIp';
 import { db } from '~/server/db';
 import { findMobileSession } from '~/server/mobileAuth';
 import { getBearerToken, hasBearerAuthorization } from '~/server/mobileAuthTokens';
+import { RateLimitedError } from '~/server/rateLimit';
 
 /**
  * 1. CONTEXT
@@ -99,6 +100,8 @@ const t = initTRPC.context<typeof createTRPCContext>().create({
       data: {
         ...shape.data,
         zodError: error.cause instanceof ZodError ? error.cause.flatten() : null,
+        retryAfterSeconds:
+          error.cause instanceof RateLimitedError ? error.cause.retryAfterSeconds : null,
       },
     };
   },

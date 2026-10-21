@@ -976,6 +976,7 @@ export const inviteParticipant = async (
     emailVerified: new Date(),
     image: null,
     currency: 'USD',
+    deletedAt: null,
   });
 
   try {

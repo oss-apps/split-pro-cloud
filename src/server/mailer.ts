@@ -51,6 +51,36 @@ export async function sendSignUpEmail(email: string, token: string, url: string)
   return await sendMail(email, subject, text, html);
 }
 
+export async function sendAccountDeletionCodeEmail(
+  email: string,
+  token: string,
+  expiresInMinutes: number,
+) {
+  if (env.NODE_ENV === 'development') {
+    console.log('Account deletion code : ', email, token);
+    return true;
+  }
+
+  const subject = 'Confirm account deletion';
+  const text = `Hey,\n\nUse this code to confirm deleting your SplitPro account: ${token}\n\nThe code expires in ${expiresInMinutes} minutes.\n\nIf you didn't ask to delete your account, you can ignore this email and your account stays as it is.\n\nThanks,\nSplitPro Team`;
+  const html = `<p>Hey,</p><p>Use this code to confirm deleting your SplitPro account: <b>${token}</b></p><p>The code expires in ${expiresInMinutes} minutes.</p><p>If you didn't ask to delete your account, you can ignore this email and your account stays as it is.</p><br /><p>Thanks,<br/>SplitPro Team</p>`;
+
+  return await sendMail(email, subject, text, html);
+}
+
+export async function sendAccountDeletedEmail(email: string) {
+  if (env.NODE_ENV === 'development') {
+    console.log('Account deleted email : ', email);
+    return true;
+  }
+
+  const subject = 'Your SplitPro account was deleted';
+  const text = `Hey,\n\nYour SplitPro account was deleted. Your name and email address were removed. Expenses you shared stay with the people you shared them with.\n\nYou're welcome to sign up again any time.\n\nThanks,\nSplitPro Team`;
+  const html = `<p>Hey,</p><p>Your SplitPro account was deleted. Your name and email address were removed. Expenses you shared stay with the people you shared them with.</p><p>You're welcome to sign up again any time.</p><br /><p>Thanks,<br/>SplitPro Team</p>`;
+
+  return await sendMail(email, subject, text, html);
+}
+
 export async function sendInviteEmail(email: string, name: string) {
   if (!env.ENABLE_SENDING_INVITES) {
     throw new Error('Sending invites is not enabled');

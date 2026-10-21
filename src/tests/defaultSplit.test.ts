@@ -32,6 +32,7 @@ const user = (id: number, name: string): User => ({
   name,
   email: `${name.toLowerCase()}@example.com`,
   emailVerified: null,
+  deletedAt: null,
   image: null,
   currency: 'INR',
 });
