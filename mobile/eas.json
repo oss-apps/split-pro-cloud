@@ -1,0 +1,36 @@
+{
+  "cli": {
+    "version": ">= 25.0.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "base": {
+      "node": "22.20.0",
+      "pnpm": "10.32.1",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://splitpro.app"
+      }
+    },
+    "simulator": {
+      "extends": "base",
+      "distribution": "internal",
+      "ios": {
+        "simulator": true
+      }
+    },
+    "preview": {
+      "extends": "base",
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      }
+    },
+    "production": {
+      "extends": "base",
+      "autoIncrement": true
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}
