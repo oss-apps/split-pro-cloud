@@ -162,11 +162,20 @@ export class DeletedAccountError extends Error {
  * Runs `write` while the account is locked against deletion, which locks it FOR UPDATE before it
  * removes sessions and sign-in methods. So a sign-in that looked the user up just before the
  * deletion either commits first, and the deletion removes what it wrote, or waits and is refused.
+ * Writes to the User row itself lock it FOR UPDATE up front: two FOR SHARE holders upgrading to
+ * write the same row deadlock.
  */
-const writeForLiveUser = <T>(userId: number, write: (tx: Prisma.TransactionClient) => Promise<T>) =>
+const writeForLiveUser = <T>(
+  userId: number,
+  write: (tx: Prisma.TransactionClient) => Promise<T>,
+  { updatesUser = false } = {},
+) =>
   db.$transaction(async (tx) => {
-    const live = await tx.$queryRaw<Array<{ id: number }>>`
-      SELECT id FROM "User" WHERE id = ${userId} AND "deletedAt" IS NULL FOR SHARE`;
+    const live = updatesUser
+      ? await tx.$queryRaw<Array<{ id: number }>>`
+          SELECT id FROM "User" WHERE id = ${userId} AND "deletedAt" IS NULL FOR UPDATE`
+      : await tx.$queryRaw<Array<{ id: number }>>`
+          SELECT id FROM "User" WHERE id = ${userId} AND "deletedAt" IS NULL FOR SHARE`;
 
     if (0 === live.length) {
       throw new DeletedAccountError();
@@ -200,9 +209,9 @@ const SplitProPrismaAdapter = (...args: Parameters<typeof PrismaAdapter>): Adapt
       return null;
     },
     updateUser: ({ id, ...data }) =>
-      writeForLiveUser(Number(id), (tx) =>
-        tx.user.update({ where: { id: Number(id) }, data }),
-      ) as unknown as Promise<AdapterUser>,
+      writeForLiveUser(Number(id), (tx) => tx.user.update({ where: { id: Number(id) }, data }), {
+        updatesUser: true,
+      }) as unknown as Promise<AdapterUser>,
     linkAccount: (account: AdapterAccount) =>
       writeForLiveUser(Number(account.userId), (tx) =>
         tx.account.create({ data: { ...account, userId: Number(account.userId) } }),

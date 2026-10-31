@@ -699,3 +699,24 @@ void test(
     }
   },
 );
+
+void test(
+  'account deletion: concurrent sign-in updates to the same account never deadlock',
+  { skip: !databaseUrl },
+  async () => {
+    const t = await setup();
+    const grace = await t.createUser('Grace');
+    try {
+      await Promise.all(
+        Array.from({ length: 8 }, () =>
+          t.authAdapter.updateUser!({ id: String(grace.id), emailVerified: new Date() }),
+        ),
+      );
+      const updated = await t.db.user.findUnique({ where: { id: grace.id } });
+      assert.ok(updated?.emailVerified);
+    } finally {
+      await t.db.user.deleteMany({ where: { id: grace.id } });
+      await t.db.$disconnect();
+    }
+  },
+);
