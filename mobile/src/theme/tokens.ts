@@ -166,8 +166,13 @@ const isDark = 'dark' === Appearance.getColorScheme();
 /**
  * iOS colors update live. Android and web resolve for the scheme at launch: Android keeps the
  * activity across a dark-mode switch, so styles made with StyleSheet.create keep their colors
- * until the next launch.
+ * until the next launch. Android pins the app to that scheme, so the status bar, native views and
+ * `useColorScheme` don't switch on their own and leave light text on a light screen.
  */
+if ('android' === Platform.OS) {
+  Appearance.setColorScheme(isDark ? 'dark' : 'light');
+}
+
 export const colors: Colors = Platform.select({
   // Functions, so only this platform's colors are built: DynamicColorIOS throws off iOS.
   ios: () => iosColors(),
