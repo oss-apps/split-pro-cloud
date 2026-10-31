@@ -1,4 +1,5 @@
 import { PrismaAdapter } from '@next-auth/prisma-adapter';
+import { type Prisma } from '@prisma/client';
 import { randomInt } from 'crypto';
 import { type GetServerSidePropsContext } from 'next';
 import {
@@ -8,7 +9,7 @@ import {
   type Session,
   type User,
 } from 'next-auth';
-import { Adapter, AdapterUser } from 'next-auth/adapters';
+import { Adapter, AdapterAccount, AdapterSession, AdapterUser } from 'next-auth/adapters';
 import DiscordProvider from 'next-auth/providers/discord';
 import GoogleProvider from 'next-auth/providers/google';
 import EmailProvider from 'next-auth/providers/email';
@@ -150,11 +151,66 @@ declare module 'next-auth' {
   }
 }
 
+/** Thrown when signing in would give a session to, or link a sign-in to, a deleted account. */
+export class DeletedAccountError extends Error {
+  constructor() {
+    super('This account has been deleted');
+  }
+}
+
+/**
+ * Runs `write` while the account is locked against deletion, which locks it FOR UPDATE before it
+ * removes sessions and sign-in methods. So a sign-in that looked the user up just before the
+ * deletion either commits first, and the deletion removes what it wrote, or waits and is refused.
+ */
+const writeForLiveUser = <T>(userId: number, write: (tx: Prisma.TransactionClient) => Promise<T>) =>
+  db.$transaction(async (tx) => {
+    const live = await tx.$queryRaw<Array<{ id: number }>>`
+      SELECT id FROM "User" WHERE id = ${userId} AND "deletedAt" IS NULL FOR SHARE`;
+
+    if (0 === live.length) {
+      throw new DeletedAccountError();
+    }
+
+    return write(tx);
+  });
+
+// Adapter users are our User rows, typed without our columns
+const isDeleted = (user: AdapterUser) =>
+  !!(user as AdapterUser & { deletedAt: Date | null }).deletedAt;
+const liveUser = (user: AdapterUser | null) => (user && isDeleted(user) ? null : user);
+
 const SplitProPrismaAdapter = (...args: Parameters<typeof PrismaAdapter>): Adapter => {
   const prismaAdapter = PrismaAdapter(...args);
 
   return {
     ...prismaAdapter,
+    // A deleted account keeps its row for what others share with it, but can never sign in again
+    getUser: async (id) => liveUser(await prismaAdapter.getUser!(id)),
+    getUserByEmail: async (email) => liveUser(await prismaAdapter.getUserByEmail!(email)),
+    getUserByAccount: async (account) => liveUser(await prismaAdapter.getUserByAccount!(account)),
+    getSessionAndUser: async (sessionToken) => {
+      const userAndSession = await prismaAdapter.getSessionAndUser!(sessionToken);
+
+      if (!userAndSession || !isDeleted(userAndSession.user)) {
+        return userAndSession;
+      }
+
+      await db.session.deleteMany({ where: { sessionToken } });
+      return null;
+    },
+    updateUser: ({ id, ...data }) =>
+      writeForLiveUser(Number(id), (tx) =>
+        tx.user.update({ where: { id: Number(id) }, data }),
+      ) as unknown as Promise<AdapterUser>,
+    linkAccount: (account: AdapterAccount) =>
+      writeForLiveUser(Number(account.userId), (tx) =>
+        tx.account.create({ data: { ...account, userId: Number(account.userId) } }),
+      ),
+    createSession: (session) =>
+      writeForLiveUser(Number(session.userId), (tx) =>
+        tx.session.create({ data: { ...session, userId: Number(session.userId) } }),
+      ) as unknown as Promise<AdapterSession>,
     createUser: async (user: Omit<AdapterUser, 'id'>): Promise<AdapterUser> => {
       // next-auth types this via the optional @auth/core peer, which resolves to `any` without it
       const prismaCreateUser = prismaAdapter.createUser as

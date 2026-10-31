@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 import { test } from 'node:test';
 import { UnsecuredJWT } from 'jose';
+import { type AdapterAccount } from 'next-auth/adapters';
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 
@@ -16,9 +17,9 @@ const setup = async () => {
     { SplitType },
     { db },
     { env },
-    { authAdapter, generateEmailToken },
+    { DeletedAccountError, authAdapter, authOptions, generateEmailToken },
     mobileAuth,
-    { hashVerificationToken },
+    { generateOpaqueToken, hashVerificationToken },
     { appRouter },
     accountDeletion,
     { resetRateLimit },
@@ -90,6 +91,10 @@ const setup = async () => {
     ...accountDeletion,
     hashVerificationToken,
     generateEmailToken,
+    generateOpaqueToken,
+    DeletedAccountError,
+    authAdapter,
+    authOptions,
     resetRateLimit,
     emailOf,
     createUser,
@@ -484,6 +489,115 @@ void test(
     } finally {
       globalThis.fetch = originalFetch;
       await t.db.group.deleteMany({ where: { id: { in: groupIds } } });
+      await t.db.user.deleteMany({ where: { id: { in: userIds } } });
+      await t.db.$disconnect();
+    }
+  },
+);
+
+void test(
+  'account deletion: a deleted account gets no session, whenever the sign-in started',
+  { skip: !databaseUrl },
+  async () => {
+    const t = await setup();
+    const frank = await t.createUser('Frank');
+    const userIds = [frank.id];
+    const { events } = t.authOptions;
+    const isDeletedAccount = (error: unknown) => {
+      assert.ok(error instanceof t.DeletedAccountError, String(error));
+      return true;
+    };
+
+    try {
+      // The deletion commits after the sign-in found the account, before it creates the session
+      const code = await t.requestCode(frank);
+      t.authOptions.events = {
+        ...events,
+        signIn: async () => {
+          await t.callerFor(frank).user.deleteAccount({ code });
+        },
+      };
+      await assert.rejects(t.signInWithEmail(frank.email!), isDeletedAccount);
+      t.authOptions.events = events;
+      assert.ok((await t.db.user.findUniqueOrThrow({ where: { id: frank.id } })).deletedAt);
+      assert.equal(await t.db.session.count({ where: { userId: frank.id } }), 0);
+
+      // Which the app's sign-in routes answer as a 401
+      const response = { status: 0, body: undefined as unknown };
+      const res = {
+        setHeader: () => res,
+        status: (status: number) => {
+          response.status = status;
+          return res;
+        },
+        json: (body: unknown) => {
+          response.body = body;
+          return res;
+        },
+      };
+      await t.mobileAuthRoute('GET', () => Promise.reject(new t.DeletedAccountError()))(
+        { method: 'GET', headers: {} } as never,
+        res as never,
+      );
+      assert.deepEqual(response, { status: 401, body: { error: 'This account has been deleted' } });
+
+      // Google and Apple sign-ins found it the same way: they can't link to it or sign in to it
+      const sessionToken = t.generateOpaqueToken();
+      await assert.rejects(
+        Promise.resolve(
+          t.authAdapter.createSession!({
+            sessionToken,
+            userId: String(frank.id),
+            expires: new Date(Date.now() + 60_000),
+          }),
+        ),
+        isDeletedAccount,
+      );
+      const google = {
+        userId: String(frank.id),
+        type: 'oauth' as const,
+        provider: 'google',
+        providerAccountId: `g-${frank.id}`,
+      };
+      // Typed via next-auth's optional @auth/core peer, which resolves to `any` without it
+      const linkAccount = t.authAdapter.linkAccount as (
+        account: AdapterAccount,
+      ) => Promise<unknown>;
+      await assert.rejects(linkAccount(google), isDeletedAccount);
+      await assert.rejects(
+        Promise.resolve(
+          t.authAdapter.updateUser!({ id: String(frank.id), emailVerified: new Date() }),
+        ),
+        isDeletedAccount,
+      );
+      assert.equal(await t.db.account.count({ where: { userId: frank.id } }), 0);
+
+      // Nor is it found by a sign-in method or session somehow left behind, which are removed
+      await t.db.account.create({ data: { ...google, userId: frank.id } });
+      assert.equal(
+        await t.authAdapter.getUserByAccount!({
+          provider: 'google',
+          providerAccountId: `g-${frank.id}`,
+        }),
+        null,
+      );
+      assert.equal(await t.authAdapter.getUser!(frank.id as unknown as string), null);
+      const [appSession, webSession] = await Promise.all(
+        [0, 1].map(() =>
+          t.db.session.create({
+            data: {
+              sessionToken: t.generateOpaqueToken(),
+              userId: frank.id,
+              expires: new Date(Date.now() + 60_000),
+            },
+          }),
+        ),
+      );
+      assert.equal(await t.getMobileSession(appSession!.sessionToken), null);
+      assert.equal(await t.authAdapter.getSessionAndUser!(webSession!.sessionToken), null);
+      assert.equal(await t.db.session.count({ where: { userId: frank.id } }), 0);
+    } finally {
+      t.authOptions.events = events;
       await t.db.user.deleteMany({ where: { id: { in: userIds } } });
       await t.db.$disconnect();
     }

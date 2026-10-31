@@ -8,6 +8,7 @@ import { z } from 'zod';
 
 import { env } from '~/env';
 import {
+  DeletedAccountError,
   EMAIL_AUTH_LIMITS,
   EMAIL_TOKEN_MAX_AGE_SECONDS,
   assertEmailSignInAllowed,
@@ -183,7 +184,8 @@ const completeSignIn = async (user: DbUser, account: Account, isNewUser: boolean
 
 /**
  * The app session for a bearer token, with the id of its Session row (push tokens are linked to
- * it). An expired session is deleted, which also removes the push tokens it registered.
+ * it). An expired session, or one of a deleted account, is deleted, which also removes the push
+ * tokens it registered.
  */
 export const findMobileSession = async (
   sessionToken: string | null,
@@ -198,7 +200,7 @@ export const findMobileSession = async (
     return null;
   }
 
-  if (session.expires.getTime() < Date.now()) {
+  if (session.expires.getTime() < Date.now() || session.user.deletedAt) {
     await db.session.deleteMany({ where: { sessionToken } });
     return null;
   }
@@ -597,7 +599,11 @@ export const mobileAuthRoute =
 
     try {
       await handler(req, res);
-    } catch (error) {
+    } catch (caught) {
+      // Signing in to an account deleted meanwhile, refused by the adapter
+      const error =
+        caught instanceof DeletedAccountError ? new MobileAuthError(401, caught.message) : caught;
+
       if (!(error instanceof MobileAuthError)) {
         console.error('Mobile auth error', error);
         res.status(500).json({ error: 'Something went wrong' });
