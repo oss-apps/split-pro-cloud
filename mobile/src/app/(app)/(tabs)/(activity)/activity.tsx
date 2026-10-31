@@ -1,8 +1,9 @@
 import { isSameDay, isToday, isYesterday } from 'date-fns';
-import { Stack } from 'expo-router';
-import React, { useCallback, useMemo, useState } from 'react';
+import { Stack, useFocusEffect } from 'expo-router';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { RefreshControl, SectionList, StyleSheet, View } from 'react-native';
+import { BackHandler, Platform, RefreshControl, SectionList, StyleSheet, View } from 'react-native';
+import { type SearchBarCommands } from 'react-native-screens';
 
 import { formatShortDate } from '~/utils/dates';
 
@@ -46,7 +47,30 @@ const Activity = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
   const [isSearching, setIsSearching] = useState(false);
+  const searchBar = useRef<SearchBarCommands>(null);
   const query = search.trim().toLocaleLowerCase();
+
+  const endSearch = useCallback(() => {
+    setSearch('');
+    setIsSearching(false);
+  }, []);
+
+  // Android: the back button closes the search first. The search bar's own back handling doesn't
+  // run inside the native tabs, so back would switch to the first tab with the search still open.
+  useFocusEffect(
+    useCallback(() => {
+      if (!isSearching || 'android' !== Platform.OS) {
+        return;
+      }
+
+      const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+        searchBar.current?.cancelSearch();
+        endSearch();
+        return true;
+      });
+      return () => subscription.remove();
+    }, [endSearch, isSearching]),
+  );
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -149,13 +173,13 @@ const Activity = () => {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       />
       <Stack.SearchBar
+        ref={searchBar}
         placeholder={t('activity.search_placeholder')}
         onChangeText={(event) => setSearch(event.nativeEvent.text)}
         onFocus={() => setIsSearching(true)}
-        onCancelButtonPress={() => {
-          setSearch('');
-          setIsSearching(false);
-        }}
+        // iOS: Cancel; Android: the search view's ✕ on an empty query, or back.
+        onCancelButtonPress={endSearch}
+        onClose={endSearch}
       />
       <AddExpenseAction />
     </>
