@@ -163,28 +163,31 @@ export type ResolvedSplit = {
 /**
  * Fits a stored split to who takes part now. Someone it doesn't know joins an equal split or gets
  * 1 share. Percentages can't take anyone new without changing the others, so if they don't add
- * up to 100% among the participants, everyone is split equally.
+ * up to 100% among the participants, everyone is split equally. `leftOutIds` (members who deleted
+ * their account) get nothing, whatever the split has for them.
  */
 export const resolveDefaultSplit = (
   split: DefaultSplit,
   participantIds: number[],
+  leftOutIds: number[] = [],
 ): ResolvedSplit => {
+  const isLeftOut = (id: number) => leftOutIds.includes(id);
   const equally: ResolvedSplit = {
     splitType: SplitType.EQUAL,
-    shares: participantIds.map(() => 1),
+    shares: participantIds.map((id) => (isLeftOut(id) ? 0 : 1)),
     addedIds: [],
     outdated: true,
   };
-  const known = (id: number) => undefined !== split.shares[id];
+  const known = (id: number) => isLeftOut(id) || undefined !== split.shares[id];
 
   if (SplitType.PERCENTAGE === split.splitType) {
-    const shares = participantIds.map((id) => split.shares[id] ?? 0);
+    const shares = participantIds.map((id) => (isLeftOut(id) ? 0 : split.shares[id] ?? 0));
     return participantIds.every(known) && 10_000 === sumHundredths(shares)
       ? { splitType: split.splitType, shares, addedIds: [], outdated: false }
       : equally;
   }
 
-  const shares = participantIds.map((id) => split.shares[id] ?? 1);
+  const shares = participantIds.map((id) => (isLeftOut(id) ? 0 : split.shares[id] ?? 1));
   if (0 === sumHundredths(shares)) {
     return equally;
   }

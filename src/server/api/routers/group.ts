@@ -353,6 +353,12 @@ export const groupRouter = createTRPCRouter({
       const userIds = [...new Set(input.userIds)];
       await assertKnownUsers(ctx.session.user.id, userIds);
 
+      if (
+        0 < (await ctx.db.user.count({ where: { id: { in: userIds }, deletedAt: { not: null } } }))
+      ) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: "That account doesn't exist anymore" });
+      }
+
       const groupUsers = await ctx.db.groupUser.createMany({
         data: userIds.map((userId) => ({
           groupId: input.groupId,

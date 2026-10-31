@@ -55,3 +55,6 @@ prisma/seed.ts
 
 creds
 package-lock.json
+
+# React Native app, built separately
+mobile

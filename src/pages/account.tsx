@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { signOut } from 'next-auth/react';
 import { AppDrawer } from '~/components/ui/drawer';
+import { DeleteAccount } from '~/components/Account/DeleteAccount';
 import { SubmitFeedback } from '~/components/Account/SubmitFeedback';
 import { UpdateDetails } from '~/components/Account/UpdateDetails';
 import { api } from '~/utils/api';
@@ -205,7 +206,7 @@ const AccountPage: NextPageWithUser = ({ user }) => {
             </Link>
           </div>
 
-          <div className="mt-2 flex justify-center">
+          <div className="mt-2 flex flex-col items-center gap-4 pb-8">
             <Button
               variant="ghost"
               className="text-orange-600 hover:text-orange-600/90 "
@@ -213,6 +214,7 @@ const AccountPage: NextPageWithUser = ({ user }) => {
             >
               Logout
             </Button>
+            <DeleteAccount />
           </div>
         </div>
       </MainLayout>

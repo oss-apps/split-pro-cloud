@@ -20,6 +20,7 @@ const me: User = {
   name: 'Me',
   email: 'me@example.com',
   emailVerified: null,
+  deletedAt: null,
   image: null,
   currency: 'INR',
 };

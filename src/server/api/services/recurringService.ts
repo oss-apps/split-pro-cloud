@@ -135,6 +135,7 @@ export async function setRuleTemplate(
 /**
  * Why the rule can't go on because someone it recorded has no account anymore, if so. Their rows
  * are gone from the expense with their account, so only the recorded ids still show they were in.
+ * A deleted account that was anonymised still has its rows, but counts as gone too.
  */
 const getAccountGoneProblem = async (
   tx: Prisma.TransactionClient,
@@ -144,7 +145,9 @@ const getAccountGoneProblem = async (
     ...new Set([...rule.templateUserIds, ...(rule.createdById ? [rule.createdById] : [])]),
   ];
   const existing = new Set(
-    (await tx.user.findMany({ where: { id: { in: ids } }, select: { id: true } })).map((u) => u.id),
+    (
+      await tx.user.findMany({ where: { id: { in: ids }, deletedAt: null }, select: { id: true } })
+    ).map((u) => u.id),
   );
   if (null === rule.createdById || !existing.has(rule.createdById)) {
     return { status: RecurringStatus.STOPPED, reason: CREATOR_GONE_REASON };
@@ -254,7 +257,7 @@ export async function checkRule(
   // Everyone recorded must still have an account and their row in the expense, also with a zero
   // share. Each saved expense adds up to zero and has the payer's own row.
   const userIds = rule.templateUserIds;
-  const existing = await tx.user.count({ where: { id: { in: userIds } } });
+  const existing = await tx.user.count({ where: { id: { in: userIds }, deletedAt: null } });
   const total = template.expenseParticipants.reduce((sum, p) => sum + p.amount, 0);
   if (
     existing !== userIds.length ||
@@ -553,18 +556,39 @@ export async function prepareAccountDeletion(tx: Prisma.TransactionClient, userI
 }
 
 /**
+ * Locks what removing or anonymising the account touches and stops or pauses its rules, in the
+ * transaction that does it. `otherUserIds` are accounts the removal needs to stay as they are
+ * until it commits (e.g. who its groups pass to); they are locked against their own removal.
+ * Returns the paused rules, whose creators should be told.
+ */
+export async function lockAndPrepareAccountRemoval(
+  tx: Prisma.TransactionClient,
+  userId: number,
+  otherUserIds: number[] = [],
+) {
+  // Every rule it can reach, then the account, then their rules again. An edit adding them to a
+  // rule either committed before the account was locked, and the second look finds it, or can't
+  // add them.
+  await lockRulesOfAccount(tx, userId);
+  // The accounts in id order, so two removals that each need the other's account wait for each
+  // other instead of deadlocking
+  const userIds = [...new Set([userId, ...otherUserIds])].sort((a, b) => a - b);
+  for (const id of userIds) {
+    await (id === userId
+      ? tx.$queryRaw`SELECT id FROM "User" WHERE id = ${id} FOR UPDATE`
+      : tx.$queryRaw`SELECT id FROM "User" WHERE id = ${id} FOR SHARE`);
+  }
+  return prepareAccountDeletion(tx, userId);
+}
+
+/**
  * Removes an account, pausing or stopping its recurring expenses first. Returns the paused rules
  * and the ones deleted with the groups they owned, whose creators should be told once committed.
  */
 export async function deleteUserAccount(userId: number) {
   // Retried on a conflict like any balance change, as it deletes expenses and balances too.
   return runBalanceTransaction(async (tx) => {
-    // Every rule it can reach, then the account, then their rules again. An edit adding them to a
-    // rule either committed before the account was locked, and the second look finds it, or can't
-    // add them.
-    await lockRulesOfAccount(tx, userId);
-    await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
-    const pausedIds = await prepareAccountDeletion(tx, userId);
+    const pausedIds = await lockAndPrepareAccountRemoval(tx, userId);
     const groups = await tx.group.findMany({
       where: { userId },
       select: {

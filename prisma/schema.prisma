@@ -35,11 +35,12 @@ model Account {
 }
 
 model Session {
-    id           String   @id @default(cuid())
-    sessionToken String   @unique
-    userId       Int
-    expires      DateTime
-    user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+    id               String            @id @default(cuid())
+    sessionToken     String            @unique
+    userId           Int
+    expires          DateTime
+    user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+    devicePushTokens DevicePushToken[]
 }
 
 model User {
@@ -49,6 +50,9 @@ model User {
     emailVerified       DateTime?
     image               String?
     currency            String               @default("USD")
+    /// Set when the person deleted their account. The row stays, without their name or email, so
+    /// expenses and balances they share with others stay intact.
+    deletedAt           DateTime?
     accounts            Account[]
     sessions            Session[]
     groups              Group[]              @relation("GroupCreatedBy")
@@ -67,6 +71,7 @@ model User {
     friendships         Friendship[]         @relation("UserFriendships")
     friendOf            Friendship[]         @relation("FriendFriendships")
     recurringExpenses   RecurringExpense[]
+    devicePushTokens    DevicePushToken[]
 }
 
 model VerificationToken {
@@ -307,6 +312,25 @@ model ExpenseNote {
 model PushNotification {
     userId       Int    @id
     subscription String
+}
+
+/// Expo push tokens of the native app, one per installation.
+model DevicePushToken {
+    id         Int      @id @default(autoincrement())
+    userId     Int
+    token      String   @unique
+    /// `ios` or `android`
+    platform   String
+    deviceName String?
+    /// The app session that registered it, so the token goes when that session ends
+    sessionId  String?
+    createdAt  DateTime @default(now())
+    updatedAt  DateTime @updatedAt
+    user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+    session    Session? @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+    @@index([userId])
+    @@index([sessionId])
 }
 
 model RateLimit {

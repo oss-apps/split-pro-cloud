@@ -52,6 +52,7 @@ const AddPage: NextPageWithUser<{
     setCurrentUser({
       ...user,
       emailVerified: null,
+      deletedAt: null,
       name: user.name ?? null,
       email: user.email ?? null,
       image: user.image ?? null,

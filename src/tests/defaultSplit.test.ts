@@ -32,6 +32,7 @@ const user = (id: number, name: string): User => ({
   name,
   email: `${name.toLowerCase()}@example.com`,
   emailVerified: null,
+  deletedAt: null,
   image: null,
   currency: 'INR',
 });
@@ -105,6 +106,17 @@ void describe('resolveDefaultSplit', () => {
     assert.deepEqual(
       resolveDefaultSplit({ splitType: 'EQUAL', shares: { 1: 1, 2: 0 } }, [1, 2, 3]).shares,
       [1, 0, 1],
+    );
+  });
+
+  void it('gives nothing to those left out, whatever the split has for them', () => {
+    assert.deepEqual(
+      resolveDefaultSplit({ splitType: 'SHARE', shares: { 1: 2, 2: 1 } }, [1, 2, 3], [2, 3]),
+      { splitType: 'SHARE', shares: [2, 0, 0], addedIds: [], outdated: false },
+    );
+    assert.deepEqual(
+      resolveDefaultSplit({ splitType: 'PERCENTAGE', shares: { 1: 50, 2: 50 } }, [1, 2, 3], [2]),
+      { splitType: 'EQUAL', shares: [1, 0, 1], addedIds: [], outdated: true },
     );
   });
 
@@ -335,6 +347,181 @@ void describe('group default split in the add flow', () => {
     state().actions.selectGroup(sixtyForty, [me, alex, sam]);
     removeGroup();
     assert.equal(state().defaultSplitHint, undefined);
+  });
+});
+
+void describe('group members who deleted their account', () => {
+  const gone = { ...user(4, 'Deleted user'), email: null, deletedAt: new Date(2026, 9, 1) };
+  const saved = () => getParticipantsToSave(state()).map((p) => [p.id, p.amount]);
+  const tick = (id: number) => {
+    const participant = state().participants.find((p) => p.id === id);
+    state().actions.addOrUpdateParticipant({ ...participant!, splitShare: 1 });
+  };
+
+  void it('leaves them out of the split, but in the form, without a default', () => {
+    start();
+    state().actions.selectGroup(group(), [me, alex, gone]);
+    state().actions.setAmount(100);
+
+    assert.equal(state().splitType, SplitType.EQUAL);
+    assert.deepEqual(amounts(), [
+      [1, 50],
+      [2, -50],
+      [4, 0],
+    ]);
+    assert.deepEqual(saved(), [
+      [1, 50],
+      [2, -50],
+    ]);
+  });
+
+  void it('leaves them out of an equal or share default that still has them', () => {
+    for (const splitType of [SplitType.EQUAL, SplitType.SHARE]) {
+      start();
+      state().actions.selectGroup(group({ splitType, shares: { 1: 1, 2: 1, 4: 2 } }), [
+        me,
+        alex,
+        gone,
+      ]);
+      state().actions.setAmount(100);
+
+      assert.equal(state().splitType, splitType);
+      assert.deepEqual(amounts(), [
+        [1, 50],
+        [2, -50],
+        [4, 0],
+      ]);
+      assert.deepEqual(state().defaultSplitHint?.addedIds, []);
+    }
+  });
+
+  void it('splits a percentage default that gave them a part equally among the others', () => {
+    start();
+    state().actions.selectGroup(
+      group({ splitType: SplitType.PERCENTAGE, shares: { 1: 50, 2: 25, 4: 25 } }),
+      [me, alex, gone],
+    );
+    state().actions.setAmount(100);
+
+    assert.equal(state().splitType, SplitType.EQUAL);
+    assert.deepEqual(amounts(), [
+      [1, 50],
+      [2, -50],
+      [4, 0],
+    ]);
+    assert.equal(state().defaultSplitHint?.outdated, true);
+  });
+
+  void it('keeps a percentage default that gave them nothing', () => {
+    start();
+    state().actions.selectGroup(
+      group({ splitType: SplitType.PERCENTAGE, shares: { 1: 60, 2: 40, 4: 0 } }),
+      [me, alex, gone],
+    );
+    state().actions.setAmount(100);
+
+    assert.equal(state().splitType, SplitType.PERCENTAGE);
+    assert.deepEqual(saved(), [
+      [1, 40],
+      [2, -40],
+    ]);
+  });
+
+  void it('includes them once ticked by hand, also when the group is selected again', () => {
+    start();
+    state().actions.selectGroup(group(), [me, alex, gone]);
+    state().actions.setAmount(90);
+    tick(4);
+
+    const expected = [
+      [1, 60],
+      [2, -30],
+      [4, -30],
+    ];
+    assert.deepEqual(saved(), expected);
+
+    removeGroup();
+    state().actions.selectGroup(group(), [me, alex, gone]);
+    assert.deepEqual(saved(), expected);
+  });
+
+  void it('keeps them in an edit of an expense they have a share in', () => {
+    start();
+    useAddExpenseStore.setState(
+      getEditFormState({
+        amount: 1000,
+        splitType: SplitType.EQUAL,
+        category: 'general',
+        currency: 'EUR',
+        name: 'Dinner',
+        expenseDate: new Date(2026, 8, 30),
+        fileKey: null,
+        group: group(),
+        paidByUser: me,
+        expenseParticipants: [
+          { amount: 500, user: me },
+          { amount: -500, user: gone },
+        ],
+      }),
+    );
+
+    assert.deepEqual(saved(), [
+      [1, 5],
+      [4, -5],
+    ]);
+    state().actions.setAmount(20);
+    assert.deepEqual(saved(), [
+      [1, 10],
+      [4, -10],
+    ]);
+  });
+
+  void it('keeps their row in an edit of an expense they have no share in', () => {
+    start();
+    useAddExpenseStore.setState(
+      getEditFormState({
+        amount: 1000,
+        splitType: SplitType.EQUAL,
+        category: 'general',
+        currency: 'EUR',
+        name: 'Dinner',
+        expenseDate: new Date(2026, 8, 30),
+        fileKey: null,
+        group: group(),
+        paidByUser: me,
+        expenseParticipants: [
+          { amount: 500, user: me },
+          { amount: -500, user: alex },
+          { amount: 0, user: gone },
+        ],
+      }),
+    );
+
+    // Saved as stored, so the server sees nothing but a rename
+    assert.deepEqual(saved(), [
+      [1, 5],
+      [2, -5],
+      [4, 0],
+    ]);
+    state().actions.setAmount(20);
+    assert.deepEqual(saved(), [
+      [1, 10],
+      [2, -10],
+      [4, 0],
+    ]);
+  });
+
+  void it('keeps them when they paid', () => {
+    start();
+    state().actions.selectGroup(group(), [me, alex, gone]);
+    state().actions.setAmount(100);
+    state().actions.setPaidBy(gone);
+
+    assert.deepEqual(saved(), [
+      [1, -50],
+      [2, -50],
+      [4, 100],
+    ]);
   });
 });
 

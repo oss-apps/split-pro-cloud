@@ -39,6 +39,21 @@ export const env = createEnv({
     AUTHENTIK_ID: z.string().optional(),
     AUTHENTIK_SECRET: z.string().optional(),
     AUTHENTIK_ISSUER: z.string().optional(),
+    /**
+     * Audience for Sign in with Apple identity tokens from the native app: the app's own bundle id.
+     * Comma separated to also accept Expo Go's `host.exp.Exponent` locally, which is ignored unless
+     * NODE_ENV is development: any Expo Go project can get tokens for it, so never rely on it in
+     * production. Apple sign-in is off when unset.
+     */
+    APPLE_BUNDLE_ID: z.string().optional(),
+    /**
+     * A Sign in with Apple key, to revoke a user's Apple sign-in when they delete their account.
+     * The private key is the .p8 file's contents; literal `\n` are read as newlines. Revoking is
+     * skipped when any of these is unset.
+     */
+    APPLE_TEAM_ID: z.string().optional(),
+    APPLE_KEY_ID: z.string().optional(),
+    APPLE_PRIVATE_KEY: z.string().optional(),
     R2_ACCESS_KEY: z.string().optional(),
     R2_SECRET_KEY: z.string().optional(),
     R2_BUCKET: z.string().optional(),
@@ -47,6 +62,8 @@ export const env = createEnv({
     WEB_PUSH_EMAIL: z.string().optional(),
     WEB_PUSH_PRIVATE_KEY: z.string().optional(),
     WEB_PUSH_PUBLIC_KEY: z.string().optional(),
+    /** Access token for Expo's enhanced push security, needed once it's turned on for the project. */
+    EXPO_ACCESS_TOKEN: z.string().optional(),
     FEEDBACK_EMAIL: z.string().optional(),
     DISCORD_WEBHOOK_URL: z.string().optional(),
     ADSENSE_CLIENT: z.string().startsWith('ca-pub-').optional(),
@@ -97,6 +114,10 @@ export const env = createEnv({
     AUTHENTIK_ID: process.env.AUTHENTIK_ID,
     AUTHENTIK_SECRET: process.env.AUTHENTIK_SECRET,
     AUTHENTIK_ISSUER: process.env.AUTHENTIK_ISSUER,
+    APPLE_BUNDLE_ID: process.env.APPLE_BUNDLE_ID,
+    APPLE_TEAM_ID: process.env.APPLE_TEAM_ID,
+    APPLE_KEY_ID: process.env.APPLE_KEY_ID,
+    APPLE_PRIVATE_KEY: process.env.APPLE_PRIVATE_KEY,
     R2_ACCESS_KEY: process.env.R2_ACCESS_KEY,
     R2_SECRET_KEY: process.env.R2_SECRET_KEY,
     R2_BUCKET: process.env.R2_BUCKET,
@@ -105,6 +126,7 @@ export const env = createEnv({
     WEB_PUSH_EMAIL: process.env.WEB_PUSH_EMAIL,
     WEB_PUSH_PRIVATE_KEY: process.env.WEB_PUSH_PRIVATE_KEY,
     WEB_PUSH_PUBLIC_KEY: process.env.WEB_PUSH_PUBLIC_KEY,
+    EXPO_ACCESS_TOKEN: process.env.EXPO_ACCESS_TOKEN,
     FEEDBACK_EMAIL: process.env.FEEDBACK_EMAIL,
     DISCORD_WEBHOOK_URL: process.env.DISCORD_WEBHOOK_URL,
     ADSENSE_CLIENT: process.env.ADSENSE_CLIENT,

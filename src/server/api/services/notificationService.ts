@@ -1,7 +1,23 @@
 import { SplitType } from '@prisma/client';
 import { db } from '~/server/db';
+import { getDevicePushTokens, sendExpoPushNotifications } from '~/server/expoPush';
 import { pushNotification } from '~/server/notification';
+import { type NativePushData, getExpensePushUrl } from '~/utils/expoPush';
 import { toFixedNumber } from '~/utils/numbers';
+
+/** Every notification goes out here, to the users' web subscriptions and native app devices. */
+const sendToUsers = async (userIds: number[], pushData: NativePushData) => {
+  const [subscriptions, deviceTokens] = await Promise.all([
+    db.pushNotification.findMany({ where: { userId: { in: userIds } } }),
+    getDevicePushTokens(userIds),
+  ]);
+  const webPushData = { title: pushData.title, message: pushData.message };
+
+  await Promise.all([
+    ...subscriptions.map((s) => pushNotification(s.subscription, webPushData)),
+    sendExpoPushNotifications(deviceTokens, pushData),
+  ]);
+};
 
 export async function sendExpensePushNotification(expenseId: string) {
   const expense = await db.expense.findUnique({
@@ -9,6 +25,8 @@ export async function sendExpensePushNotification(expenseId: string) {
       id: expenseId,
     },
     select: {
+      id: true,
+      groupId: true,
       paidBy: true,
       amount: true,
       currency: true,
@@ -56,14 +74,6 @@ export async function sendExpensePushNotification(expenseId: string) {
     ? expense.expenseParticipants.map((p) => p.userId).filter((e) => e !== expense.deletedBy)
     : expense.expenseParticipants.map((p) => p.userId).filter((e) => e !== expense.addedBy);
 
-  const subscriptions = await db.pushNotification.findMany({
-    where: {
-      userId: {
-        in: participants,
-      },
-    },
-  });
-
   const pushData = expense.deletedBy
     ? {
         title: `${expense.deletedByUser?.name ?? expense.deletedByUser?.email}`,
@@ -84,9 +94,7 @@ export async function sendExpensePushNotification(expenseId: string) {
             message: `${expense.paidByUser.name ?? expense.paidByUser.email} paid  ${expense.currency} ${toFixedNumber(expense.amount)} for ${expense.name}`,
           };
 
-  const pushNotifications = subscriptions.map((s) => pushNotification(s.subscription, pushData));
-
-  await Promise.all(pushNotifications);
+  await sendToUsers(participants, { ...pushData, url: getExpensePushUrl(expense) });
 }
 
 /** Tells the other members of a group that its default split was changed or removed. */
@@ -108,28 +116,15 @@ export async function sendDefaultSplitPushNotification(
   }
 
   const user = group.groupUsers.find((groupUser) => groupUser.userId === changedBy)?.user;
-  const subscriptions = await db.pushNotification.findMany({
-    where: {
-      userId: {
-        in: group.groupUsers
-          .map((groupUser) => groupUser.userId)
-          .filter((userId) => userId !== changedBy),
-      },
+  await sendToUsers(
+    group.groupUsers.map((groupUser) => groupUser.userId).filter((userId) => userId !== changedBy),
+    {
+      title: group.name,
+      message: `${user?.name ?? user?.email ?? 'A member'} ${isSet ? 'changed' : 'removed'} the default split`,
+      url: `/groups/${groupId}`,
     },
-  });
-
-  const pushData = {
-    title: group.name,
-    message: `${user?.name ?? user?.email ?? 'A member'} ${isSet ? 'changed' : 'removed'} the default split`,
-  };
-
-  await Promise.all(subscriptions.map((s) => pushNotification(s.subscription, pushData)));
+  );
 }
-
-const sendToUser = async (userId: number, pushData: { title: string; message: string }) => {
-  const subscriptions = await db.pushNotification.findMany({ where: { userId } });
-  await Promise.all(subscriptions.map((s) => pushNotification(s.subscription, pushData)));
-};
 
 /** Tells the creator of a recurring expense that it was paused or stopped, and why. */
 export async function sendRecurringStatusPushNotification(recurringId: number) {
@@ -137,9 +132,14 @@ export async function sendRecurringStatusPushNotification(recurringId: number) {
     where: { id: recurringId },
     select: {
       createdById: true,
+      groupId: true,
       status: true,
       statusReason: true,
-      occurrences: { orderBy: { occurrenceDate: 'desc' }, take: 1, select: { name: true } },
+      occurrences: {
+        orderBy: { occurrenceDate: 'desc' },
+        take: 1,
+        select: { id: true, name: true },
+      },
     },
   });
 
@@ -148,9 +148,15 @@ export async function sendRecurringStatusPushNotification(recurringId: number) {
     return;
   }
 
-  await sendToUser(rule.createdById, {
-    title: `${rule.occurrences[0]?.name ?? 'A recurring expense'} ${'PAUSED' === rule.status ? 'paused' : 'stopped'}`,
+  const latest = rule.occurrences[0];
+  await sendToUsers([rule.createdById], {
+    title: `${latest?.name ?? 'A recurring expense'} ${'PAUSED' === rule.status ? 'paused' : 'stopped'}`,
     message: rule.statusReason ?? '',
+    url: latest
+      ? `/expenses/${latest.id}`
+      : null === rule.groupId
+        ? '/activity'
+        : `/groups/${rule.groupId}`,
   });
 }
 
@@ -161,9 +167,10 @@ export async function sendRecurringGroupDeletedPushNotification(
 ) {
   await Promise.all(
     rules.map((rule) =>
-      sendToUser(rule.createdById, {
+      sendToUsers([rule.createdById], {
         title: `${rule.name} stopped`,
         message: `The group ${groupName} was deleted`,
+        url: '/groups',
       }),
     ),
   );

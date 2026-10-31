@@ -13,6 +13,17 @@ export type RateLimitResult = {
 };
 
 /**
+ * The cause of a tRPC TOO_MANY_REQUESTS error, so the client gets `retryAfterSeconds` in the error
+ * data.
+ */
+export class RateLimitedError extends Error {
+  constructor(public retryAfterSeconds: number) {
+    const minutes = Math.max(1, Math.ceil(retryAfterSeconds / 60));
+    super(`Too many attempts. Try again in ${minutes} minute${1 === minutes ? '' : 's'}.`);
+  }
+}
+
+/**
  * Counts one hit for `key` under `rule` and reports whether it is still within the limit.
  * Fixed windows, stored in Postgres so they survive restarts and deploys.
  */

@@ -23,6 +23,7 @@ import { getDocumentUploadUrl } from '~/server/storage';
 import { FILE_SIZE_LIMIT } from '~/lib/constants';
 import { sendFeedbackEmail, sendInviteEmail } from '~/server/mailer';
 import { pushNotification } from '~/server/notification';
+import { DEVICE_PLATFORMS, isValidExpoPushToken } from '~/utils/expoPush';
 import { toFixedNumber, toUIString } from '~/utils/numbers';
 import { SplitwiseGroupSchema, SplitwiseUserSchema } from '~/types';
 import { env } from '~/env';
@@ -30,6 +31,11 @@ import { runBalanceTransaction } from '../services/balanceTransaction';
 import { getBalanceBreakdownWithFriend } from '../services/balanceBreakdown';
 import { sendRecurringStatusPushNotification } from '../services/notificationService';
 import { pauseRulesWith, recurrenceInputSchema } from '../services/recurringService';
+import {
+  deleteAccount,
+  getAccountDeletionInfo,
+  requestAccountDeletionCode,
+} from '../services/accountDeletion';
 
 export const userRouter = createTRPCRouter({
   me: protectedProcedure.query(async ({ ctx }) => {
@@ -119,11 +125,13 @@ export const userRouter = createTRPCRouter({
 
     const friendsIds = [...new Set([...balanceWithFriends, ...friendships].map((f) => f.friendId))];
 
+    // Someone who deleted their account can't be added to anything new
     const friends = await db.user.findMany({
       where: {
         id: {
           in: friendsIds,
         },
+        deletedAt: null,
       },
     });
 
@@ -494,6 +502,41 @@ export const userRouter = createTRPCRouter({
       });
     }),
 
+  /**
+   * Saves the native app's Expo push token, taking it over if another account had it. It's tied to
+   * the app session that sent it, so it goes away when that session ends.
+   */
+  registerPushToken: protectedProcedure
+    .input(
+      z.object({
+        token: z.string().max(255).refine(isValidExpoPushToken, 'Invalid Expo push token'),
+        platform: z.enum(DEVICE_PLATFORMS),
+        deviceName: z.string().trim().max(100).nullish(),
+      }),
+    )
+    .mutation(async ({ input, ctx }) => {
+      const device = {
+        userId: ctx.session.user.id,
+        sessionId: ctx.mobileSessionId ?? null,
+        platform: input.platform,
+        deviceName: input.deviceName ?? null,
+      };
+      await db.devicePushToken.upsert({
+        where: { token: input.token },
+        create: { token: input.token, ...device },
+        update: device,
+      });
+    }),
+
+  /** Stops notifications to this device, e.g. before signing out of the app. */
+  unregisterPushToken: protectedProcedure
+    .input(z.object({ token: z.string().max(255) }))
+    .mutation(async ({ input, ctx }) => {
+      await db.devicePushToken.deleteMany({
+        where: { token: input.token, userId: ctx.session.user.id },
+      });
+    }),
+
   deleteFriend: protectedProcedure
     .input(z.object({ friendId: z.number() }))
     .mutation(async ({ input, ctx }) => {
@@ -567,9 +610,38 @@ export const userRouter = createTRPCRouter({
       await importGroupFromSplitwise(ctx.session.user.id, input.groups);
     }),
 
+  /** What deleting the account changes: balances that stay with friends, groups handed over. */
+  getDeleteAccountInfo: protectedProcedure.query(({ ctx }) =>
+    getAccountDeletionInfo(ctx.session.user.id),
+  ),
+
+  /** Emails the one-time code `deleteAccount` needs. */
+  requestDeleteAccountCode: protectedProcedure.mutation(({ ctx }) =>
+    requestAccountDeletionCode(ctx.session.user.id),
+  ),
+
+  /**
+   * Deletes the account: name, email and sign-ins go, shared expenses stay for the others. Accounts
+   * linked to Apple send a fresh authorization code, so their Apple sign-in can be revoked.
+   */
+  deleteAccount: protectedProcedure
+    .input(
+      z.object({
+        code: z.string().trim().min(1).max(32),
+        appleAuthorizationCode: z.string().min(1).max(1024).optional(),
+      }),
+    )
+    .mutation(({ ctx, input }) => deleteAccount(ctx.session.user.id, input)),
+
   getWebPushPublicKey: protectedProcedure.query(async ({ ctx }) => {
     return env.WEB_PUSH_PUBLIC_KEY;
   }),
+
+  /** What the native app needs from the server config, which the web reads in getServerSideProps. */
+  getAppConfig: protectedProcedure.query(() => ({
+    invitesEnabled: env.ENABLE_SENDING_INVITES,
+    storagePublicUrl: env.R2_PUBLIC_URL ? env.R2_PUBLIC_URL : null,
+  })),
 
   getAdConfig: protectedProcedure.query(() => {
     if (env.ADSENSE_DEMO && 'production' !== env.NODE_ENV) {

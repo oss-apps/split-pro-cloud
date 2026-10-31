@@ -1,8 +1,15 @@
 import { PrismaAdapter } from '@next-auth/prisma-adapter';
+import { type Prisma } from '@prisma/client';
 import { randomInt } from 'crypto';
 import { type GetServerSidePropsContext } from 'next';
-import { getServerSession, type DefaultSession, type NextAuthOptions } from 'next-auth';
-import { Adapter, AdapterUser } from 'next-auth/adapters';
+import {
+  getServerSession,
+  type DefaultSession,
+  type NextAuthOptions,
+  type Session,
+  type User,
+} from 'next-auth';
+import { Adapter, AdapterAccount, AdapterSession, AdapterUser } from 'next-auth/adapters';
 import DiscordProvider from 'next-auth/providers/discord';
 import GoogleProvider from 'next-auth/providers/google';
 import EmailProvider from 'next-auth/providers/email';
@@ -60,6 +67,68 @@ export async function deleteVerificationTokens(identifier: string) {
   await db.verificationToken.deleteMany({ where: { identifier } });
 }
 
+export const generateEmailToken = () =>
+  Array.from(
+    { length: EMAIL_TOKEN_LENGTH },
+    () => EMAIL_TOKEN_ALPHABET[randomInt(EMAIL_TOKEN_ALPHABET.length)],
+  ).join('');
+
+const BLOCKED_SIGNUP_EMAIL_DOMAINS = [
+  // Yahoo domains
+  'yahoo.com',
+  'yahoo.co.uk',
+  'yahoo.co.in',
+  'yahoo.ca',
+  'yahoo.com.au',
+  'yahoo.fr',
+  'yahoo.de',
+  'yahoo.es',
+  'yahoo.it',
+  'yahoo.co.jp',
+  'ymail.com',
+  'rocketmail.com',
+  'yahoo.in',
+  'yahoo.com.br',
+  'att.net',
+  'aol.com',
+  // Hotmail/Outlook domains
+  'hotmail.com',
+  'hotmail.co.uk',
+  'hotmail.fr',
+  'hotmail.de',
+  'hotmail.it',
+  'hotmail.es',
+  'hotmail.ca',
+  'outlook.com',
+  'outlook.in',
+  'live.com',
+  'live.co.uk',
+  'msn.com',
+  'windowslive.com',
+];
+
+export const EMAIL_DOMAIN_BLOCKED_MESSAGE =
+  'This email domain is not supported for signup. Please use Google login instead.';
+
+/**
+ * Throws for new signups from blocked email domains. Existing users can always sign in.
+ */
+export const assertEmailSignInAllowed = async (email: string) => {
+  const existingUser = await db.user.findUnique({
+    where: { email: email.toLowerCase() },
+  });
+
+  if (existingUser) {
+    return;
+  }
+
+  const emailDomain = email.split('@')[1]?.toLowerCase() ?? '';
+
+  if (BLOCKED_SIGNUP_EMAIL_DOMAINS.includes(emailDomain)) {
+    throw new Error(EMAIL_DOMAIN_BLOCKED_MESSAGE);
+  }
+};
+
 /**
  * Module augmentation for `next-auth` types. Allows us to add custom properties to the `session`
  * object and keep type safety.
@@ -82,11 +151,75 @@ declare module 'next-auth' {
   }
 }
 
+/** Thrown when signing in would give a session to, or link a sign-in to, a deleted account. */
+export class DeletedAccountError extends Error {
+  constructor() {
+    super('This account has been deleted');
+  }
+}
+
+/**
+ * Runs `write` while the account is locked against deletion, which locks it FOR UPDATE before it
+ * removes sessions and sign-in methods. So a sign-in that looked the user up just before the
+ * deletion either commits first, and the deletion removes what it wrote, or waits and is refused.
+ * Writes to the User row itself lock it FOR UPDATE up front: two FOR SHARE holders upgrading to
+ * write the same row deadlock.
+ */
+const writeForLiveUser = <T>(
+  userId: number,
+  write: (tx: Prisma.TransactionClient) => Promise<T>,
+  { updatesUser = false } = {},
+) =>
+  db.$transaction(async (tx) => {
+    const live = updatesUser
+      ? await tx.$queryRaw<Array<{ id: number }>>`
+          SELECT id FROM "User" WHERE id = ${userId} AND "deletedAt" IS NULL FOR UPDATE`
+      : await tx.$queryRaw<Array<{ id: number }>>`
+          SELECT id FROM "User" WHERE id = ${userId} AND "deletedAt" IS NULL FOR SHARE`;
+
+    if (0 === live.length) {
+      throw new DeletedAccountError();
+    }
+
+    return write(tx);
+  });
+
+// Adapter users are our User rows, typed without our columns
+const isDeleted = (user: AdapterUser) =>
+  !!(user as AdapterUser & { deletedAt: Date | null }).deletedAt;
+const liveUser = (user: AdapterUser | null) => (user && isDeleted(user) ? null : user);
+
 const SplitProPrismaAdapter = (...args: Parameters<typeof PrismaAdapter>): Adapter => {
   const prismaAdapter = PrismaAdapter(...args);
 
   return {
     ...prismaAdapter,
+    // A deleted account keeps its row for what others share with it, but can never sign in again
+    getUser: async (id) => liveUser(await prismaAdapter.getUser!(id)),
+    getUserByEmail: async (email) => liveUser(await prismaAdapter.getUserByEmail!(email)),
+    getUserByAccount: async (account) => liveUser(await prismaAdapter.getUserByAccount!(account)),
+    getSessionAndUser: async (sessionToken) => {
+      const userAndSession = await prismaAdapter.getSessionAndUser!(sessionToken);
+
+      if (!userAndSession || !isDeleted(userAndSession.user)) {
+        return userAndSession;
+      }
+
+      await db.session.deleteMany({ where: { sessionToken } });
+      return null;
+    },
+    updateUser: ({ id, ...data }) =>
+      writeForLiveUser(Number(id), (tx) => tx.user.update({ where: { id: Number(id) }, data }), {
+        updatesUser: true,
+      }) as unknown as Promise<AdapterUser>,
+    linkAccount: (account: AdapterAccount) =>
+      writeForLiveUser(Number(account.userId), (tx) =>
+        tx.account.create({ data: { ...account, userId: Number(account.userId) } }),
+      ),
+    createSession: (session) =>
+      writeForLiveUser(Number(session.userId), (tx) =>
+        tx.session.create({ data: { ...session, userId: Number(session.userId) } }),
+      ) as unknown as Promise<AdapterSession>,
     createUser: async (user: Omit<AdapterUser, 'id'>): Promise<AdapterUser> => {
       // next-auth types this via the optional @auth/core peer, which resolves to `any` without it
       const prismaCreateUser = prismaAdapter.createUser as
@@ -147,6 +280,20 @@ const SplitProPrismaAdapter = (...args: Parameters<typeof PrismaAdapter>): Adapt
   };
 };
 
+export const authAdapter = SplitProPrismaAdapter(db);
+
+/**
+ * The session the app sees, for both cookie sessions and native app bearer sessions.
+ */
+export const buildSession = (session: DefaultSession, user: User): Session => ({
+  ...session,
+  user: {
+    ...session.user,
+    id: user.id,
+    currency: user.currency,
+  },
+});
+
 /**
  * Options for NextAuth.js used to configure adapters, providers, callbacks, etc.
  *
@@ -158,16 +305,10 @@ export const authOptions: NextAuthOptions = {
     verifyRequest: '/auth/verify-request',
   },
   callbacks: {
-    session: ({ session, user }) => ({
-      ...session,
-      user: {
-        ...session.user,
-        id: user.id,
-        currency: user.currency,
-      },
-    }),
+    // `user` is typed as an AdapterUser with a string id, but our ids are numbers
+    session: ({ session, user }) => buildSession(session, user as unknown as User),
   },
-  adapter: SplitProPrismaAdapter(db),
+  adapter: authAdapter,
   providers: getProviders(),
   events: {
     createUser: async ({ user }) => {
@@ -250,55 +391,7 @@ function getProviders() {
         maxAge: EMAIL_TOKEN_MAX_AGE_SECONDS,
         normalizeIdentifier: normalizeEmailIdentifier,
         async sendVerificationRequest({ identifier: email, url, token }) {
-          // Check if user already exists - allow existing users to sign in
-          const existingUser = await db.user.findUnique({
-            where: { email: email.toLowerCase() },
-          });
-
-          // Only block certain email domains for NEW signups, not existing users
-          if (!existingUser) {
-            const emailDomain = email.split('@')[1]?.toLowerCase() ?? '';
-
-            const blockedEmailDomains = [
-              // Yahoo domains
-              'yahoo.com',
-              'yahoo.co.uk',
-              'yahoo.co.in',
-              'yahoo.ca',
-              'yahoo.com.au',
-              'yahoo.fr',
-              'yahoo.de',
-              'yahoo.es',
-              'yahoo.it',
-              'yahoo.co.jp',
-              'ymail.com',
-              'rocketmail.com',
-              'yahoo.in',
-              'yahoo.com.br',
-              'att.net',
-              'aol.com',
-              // Hotmail/Outlook domains
-              'hotmail.com',
-              'hotmail.co.uk',
-              'hotmail.fr',
-              'hotmail.de',
-              'hotmail.it',
-              'hotmail.es',
-              'hotmail.ca',
-              'outlook.com',
-              'outlook.in',
-              'live.com',
-              'live.co.uk',
-              'msn.com',
-              'windowslive.com',
-            ];
-
-            if (blockedEmailDomains.includes(emailDomain)) {
-              throw new Error(
-                'This email domain is not supported for signup. Please use Google login instead.',
-              );
-            }
-          }
+          await assertEmailSignInAllowed(email);
 
           const result = await sendSignUpEmail(email, token, url);
           if (!result) {
@@ -306,10 +399,7 @@ function getProviders() {
           }
         },
         async generateVerificationToken() {
-          return Array.from(
-            { length: EMAIL_TOKEN_LENGTH },
-            () => EMAIL_TOKEN_ALPHABET[randomInt(EMAIL_TOKEN_ALPHABET.length)],
-          ).join('');
+          return generateEmailToken();
         },
       }),
     );
