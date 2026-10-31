@@ -254,22 +254,52 @@ const revokeAppleSignIn = async (userId: number, authorizationCode: string | und
 };
 
 /**
+ * Who the groups the account owns would pass to, as things stand: locked with the account, before
+ * anything else, so two members deleting at once lock each other's accounts in the same order.
+ */
+const findNextOwners = async (tx: Prisma.TransactionClient, userId: number) =>
+  (
+    await tx.group.findMany({
+      where: { userId },
+      select: {
+        groupUsers: {
+          where: { userId: { not: userId }, user: { deletedAt: null } },
+          orderBy: { userId: 'asc' },
+          take: 1,
+          select: { userId: true },
+        },
+      },
+    })
+  ).flatMap((group) => group.groupUsers.map((member) => member.userId));
+
+/**
+ * The member who has been around longest (lowest id) and still has an account, locked with their
+ * membership so neither goes before the handover commits. One being deleted meanwhile is waited
+ * for, then passed over.
+ */
+const lockNextOwner = async (tx: Prisma.TransactionClient, groupId: number, userId: number) => {
+  const [nextOwner] = await tx.$queryRaw<Array<{ userId: number }>>`
+    SELECT gu."userId" FROM "GroupUser" gu JOIN "User" u ON u.id = gu."userId"
+    WHERE gu."groupId" = ${groupId} AND gu."userId" <> ${userId} AND u."deletedAt" IS NULL
+    ORDER BY gu."userId" LIMIT 1 FOR SHARE`;
+  return nextOwner?.userId;
+};
+
+/**
  * Groups the account created pass to the member who has been around longest (lowest id). A group
  * nobody else is in any more goes, like deleting it would, if it's settled. Returns the deleted
  * groups with their recurring expenses, whose creators should be told.
  */
 const handOverGroups = async (tx: Prisma.TransactionClient, userId: number) => {
+  // Read once the account is locked, so this includes any a member deleted meanwhile passed to it,
+  // and no more can be. Locked, so none is deleted meanwhile either.
+  const groupIds = await tx.$queryRaw<Array<{ id: number }>>`
+    SELECT id FROM "Group" WHERE "userId" = ${userId} ORDER BY id FOR NO KEY UPDATE`;
   const groups = await tx.group.findMany({
-    where: { userId },
+    where: { id: { in: groupIds.map((group) => group.id) } },
     select: {
       id: true,
       name: true,
-      groupUsers: {
-        where: { userId: { not: userId }, user: { deletedAt: null } },
-        orderBy: { userId: 'asc' },
-        take: 1,
-        select: { userId: true },
-      },
       groupBalances: { where: { amount: { not: 0 } }, take: 1, select: { amount: true } },
       recurringExpenses: {
         where: { status: { not: RecurringStatus.STOPPED }, createdById: { not: userId } },
@@ -284,10 +314,10 @@ const handOverGroups = async (tx: Prisma.TransactionClient, userId: number) => {
   const deleted: typeof groups = [];
 
   for (const group of groups) {
-    const nextOwner = group.groupUsers[0];
+    const nextOwnerId = await lockNextOwner(tx, group.id, userId);
 
-    if (nextOwner) {
-      await tx.group.update({ where: { id: group.id }, data: { userId: nextOwner.userId } });
+    if (undefined !== nextOwnerId) {
+      await tx.group.update({ where: { id: group.id }, data: { userId: nextOwnerId } });
     } else if (0 === group.groupBalances.length) {
       await tx.group.delete({ where: { id: group.id } });
       deleted.push(group);
@@ -323,7 +353,11 @@ const anonymiseAccount = async (
   userId: number,
   email: string | null,
 ) => {
-  const pausedIds = await lockAndPrepareAccountRemoval(tx, userId);
+  const pausedIds = await lockAndPrepareAccountRemoval(
+    tx,
+    userId,
+    await findNextOwners(tx, userId),
+  );
   const deletedGroups = await handOverGroups(tx, userId);
   await leaveSettledGroups(tx, userId);
 

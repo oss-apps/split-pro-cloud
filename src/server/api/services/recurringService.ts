@@ -557,14 +557,27 @@ export async function prepareAccountDeletion(tx: Prisma.TransactionClient, userI
 
 /**
  * Locks what removing or anonymising the account touches and stops or pauses its rules, in the
- * transaction that does it. Returns the paused rules, whose creators should be told.
+ * transaction that does it. `otherUserIds` are accounts the removal needs to stay as they are
+ * until it commits (e.g. who its groups pass to); they are locked against their own removal.
+ * Returns the paused rules, whose creators should be told.
  */
-export async function lockAndPrepareAccountRemoval(tx: Prisma.TransactionClient, userId: number) {
+export async function lockAndPrepareAccountRemoval(
+  tx: Prisma.TransactionClient,
+  userId: number,
+  otherUserIds: number[] = [],
+) {
   // Every rule it can reach, then the account, then their rules again. An edit adding them to a
   // rule either committed before the account was locked, and the second look finds it, or can't
   // add them.
   await lockRulesOfAccount(tx, userId);
-  await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
+  // The accounts in id order, so two removals that each need the other's account wait for each
+  // other instead of deadlocking
+  const userIds = [...new Set([userId, ...otherUserIds])].sort((a, b) => a - b);
+  for (const id of userIds) {
+    await (id === userId
+      ? tx.$queryRaw`SELECT id FROM "User" WHERE id = ${id} FOR UPDATE`
+      : tx.$queryRaw`SELECT id FROM "User" WHERE id = ${id} FOR SHARE`);
+  }
   return prepareAccountDeletion(tx, userId);
 }
 

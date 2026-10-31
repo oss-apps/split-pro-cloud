@@ -603,3 +603,99 @@ void test(
     }
   },
 );
+
+/** Waits until some transaction is waiting for a row lock. */
+const waitForLockWait = async (db: {
+  $queryRaw: (query: TemplateStringsArray) => Promise<unknown>;
+}) => {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const [row] = (await db.$queryRaw`
+      SELECT count(*)::int AS waiting FROM pg_locks WHERE NOT granted`) as Array<{
+      waiting: number;
+    }>;
+    if (0 < (row?.waiting ?? 0)) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.fail('Nothing waited for a lock');
+};
+
+void test(
+  'account deletion: a group never passes to a member deleted at the same time',
+  { skip: !databaseUrl },
+  async () => {
+    const t = await setup();
+    const [alice, bob, carol] = [
+      await t.createUser('Alice'),
+      await t.createUser('Bob'),
+      await t.createUser('Carol'),
+    ];
+    const userIds = [alice.id, bob.id, carol.id];
+    const groupIds: number[] = [];
+
+    const createGroup = async (name: string, ownerId: number, memberIds: number[]) => {
+      const group = await t.db.group.create({
+        data: { name, publicId: `${name.toLowerCase()}-race-${alice.id}`, userId: ownerId },
+      });
+      await t.db.groupUser.createMany({
+        data: memberIds.map((userId) => ({ groupId: group.id, userId })),
+      });
+      groupIds.push(group.id);
+      return group;
+    };
+    const ownerOf = async (groupId: number) =>
+      (await t.db.group.findUnique({ where: { id: groupId } }))?.userId ?? null;
+
+    try {
+      // Bob, next in line for Alice's trip, is being deleted while Alice deletes her account
+      const trip = await createGroup('Trip', alice.id, [alice.id, bob.id, carol.id]);
+      const code = await t.requestCode(alice);
+      let release = () => undefined as void;
+      const released = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let bobLocked = () => undefined as void;
+      const isBobLocked = new Promise<void>((resolve) => {
+        bobLocked = resolve;
+      });
+      const deletingBob = t.db.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${bob.id} FOR UPDATE`;
+          bobLocked();
+          await released;
+          await tx.user.update({ where: { id: bob.id }, data: { deletedAt: new Date() } });
+        },
+        { timeout: 20_000 },
+      );
+      await isBobLocked;
+      const deletingAlice = t.callerFor(alice).user.deleteAccount({ code });
+      await waitForLockWait(t.db);
+      release();
+      await deletingBob;
+      await deletingAlice;
+
+      // It goes to Carol, who is still around
+      assert.equal(await ownerOf(trip.id), carol.id);
+
+      // Two members whose groups would pass to each other, deleting at once, don't deadlock
+      const [dave, erin] = [await t.createUser('Dave'), await t.createUser('Erin')];
+      userIds.push(dave.id, erin.id);
+      const daves = await createGroup('Daves', dave.id, [dave.id, erin.id, carol.id]);
+      const erins = await createGroup('Erins', erin.id, [erin.id, dave.id]);
+      const [daveCode, erinCode] = [await t.requestCode(dave), await t.requestCode(erin)];
+      await Promise.all([
+        t.callerFor(dave).user.deleteAccount({ code: daveCode }),
+        t.callerFor(erin).user.deleteAccount({ code: erinCode }),
+      ]);
+      assert.equal(await ownerOf(daves.id), carol.id);
+      // Erin's group had nobody left and nothing to settle
+      assert.equal(await ownerOf(erins.id), null);
+    } finally {
+      await t.db.group.deleteMany({ where: { id: { in: groupIds } } });
+      await t.db.user.deleteMany({ where: { id: { in: userIds } } });
+      await t.db.$disconnect();
+    }
+  },
+);
