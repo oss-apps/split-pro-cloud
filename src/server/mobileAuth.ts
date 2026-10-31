@@ -436,7 +436,13 @@ export const signInWithApple = async (
   }
 
   const account: Account = { providerAccountId: payload.sub, type: 'oauth', provider: 'apple' };
-  const linkedUser = toDbUser(await adapter.getUserByAccount(account));
+  // Only the unique key: the Prisma adapter passes this object straight into `where`.
+  const linkedUser = toDbUser(
+    await adapter.getUserByAccount({
+      provider: account.provider,
+      providerAccountId: account.providerAccountId,
+    }),
+  );
 
   if (linkedUser) {
     return completeSignIn(linkedUser, account, false);
