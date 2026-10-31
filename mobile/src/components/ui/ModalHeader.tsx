@@ -1,7 +1,7 @@
-import { Stack } from 'expo-router';
-import React from 'react';
+import { Stack, useFocusEffect } from 'expo-router';
+import React, { useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Platform } from 'react-native';
+import { BackHandler, Platform } from 'react-native';
 
 import { isLiquidGlassEra } from '@/theme/tokens';
 
@@ -47,6 +47,22 @@ export const ModalHeader: React.FC<ModalHeaderProps> = ({
   confirm,
 }) => {
   const { t } = useTranslation();
+
+  // Android's back button goes to the previous step too, instead of closing the whole modal.
+  useFocusEffect(
+    useCallback(() => {
+      if (!onBack || 'android' !== Platform.OS) {
+        return;
+      }
+
+      const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+        onBack();
+        return true;
+      });
+      return () => subscription.remove();
+    }, [onBack]),
+  );
+
   const left: HeaderAction | undefined = onBack
     ? { label: t('common.back'), icon: icons.chevronLeft, onPress: onBack }
     : onCancel

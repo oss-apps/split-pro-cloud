@@ -1,6 +1,7 @@
-import { Stack } from 'expo-router';
+import { type NativeStackNavigationOptions, Stack } from 'expo-router';
 import React from 'react';
 import { useTranslation } from 'react-i18next';
+import { Platform } from 'react-native';
 
 import { useOpenPendingLink } from '@/providers/usePendingLink';
 import { usePushNotifications } from '@/providers/usePushNotifications';
@@ -69,9 +70,16 @@ const AppLayout = () => {
       <Stack.Screen
         name="settle-up"
         options={{
-          presentation: 'formSheet',
-          sheetAllowedDetents: [0.6, 1],
-          sheetGrabberVisible: true,
+          // Android's form sheet is a bare bottom sheet without the native header that holds
+          // Close and Save, so it's a full-screen dialog there like the other flows.
+          ...Platform.select<NativeStackNavigationOptions>({
+            ios: {
+              presentation: 'formSheet',
+              sheetAllowedDetents: [0.6, 1],
+              sheetGrabberVisible: true,
+            },
+            default: { presentation: 'modal' },
+          }),
           title: t('screens.settle_up'),
           ...groupedScreenOptions,
         }}
