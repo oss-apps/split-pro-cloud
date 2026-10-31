@@ -13,6 +13,7 @@ import {
   hasBearerAuthorization,
   hashVerificationToken,
   isJsonContentType,
+  isOwnNavigation,
   isValidChallenge,
   isValidHandoffCode,
   parseAppleAudiences,
@@ -270,5 +271,30 @@ void describe('formatAppleFullName', () => {
     assert.equal(formatAppleFullName(undefined), null);
     assert.equal(formatAppleFullName({ givenName: null, familyName: null }), null);
     assert.equal(formatAppleFullName(' '), null);
+  });
+});
+
+void describe('isOwnNavigation', () => {
+  const origin = 'https://splitpro.app';
+
+  void it('allows what the browser opened itself or one of our pages linked to', () => {
+    assert.equal(isOwnNavigation('none', undefined, origin), true);
+    assert.equal(isOwnNavigation('same-origin', `${origin}/auth/signin`, origin), true);
+  });
+
+  void it('refuses links and forms from other sites, whatever the Referer says', () => {
+    assert.equal(isOwnNavigation('cross-site', undefined, origin), false);
+    assert.equal(isOwnNavigation('same-site', 'https://evil.splitpro.app/', origin), false);
+    assert.equal(isOwnNavigation('cross-site', `${origin}/`, origin), false);
+    assert.equal(isOwnNavigation('unknown', undefined, origin), false);
+    assert.equal(isOwnNavigation(['none', 'none'], undefined, origin), false);
+  });
+
+  void it('allows browsers without Fetch Metadata unless the Referer is another site', () => {
+    assert.equal(isOwnNavigation(undefined, undefined, origin), true);
+    assert.equal(isOwnNavigation(undefined, `${origin}/balances`, origin), true);
+    assert.equal(isOwnNavigation(undefined, 'https://evil.example/', origin), false);
+    assert.equal(isOwnNavigation(undefined, 'https://splitpro.app.evil.example/', origin), false);
+    assert.equal(isOwnNavigation(undefined, 'not a url', origin), false);
   });
 });
