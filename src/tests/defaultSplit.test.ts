@@ -476,6 +476,41 @@ void describe('group members who deleted their account', () => {
     ]);
   });
 
+  void it('keeps their row in an edit of an expense they have no share in', () => {
+    start();
+    useAddExpenseStore.setState(
+      getEditFormState({
+        amount: 1000,
+        splitType: SplitType.EQUAL,
+        category: 'general',
+        currency: 'EUR',
+        name: 'Dinner',
+        expenseDate: new Date(2026, 8, 30),
+        fileKey: null,
+        group: group(),
+        paidByUser: me,
+        expenseParticipants: [
+          { amount: 500, user: me },
+          { amount: -500, user: alex },
+          { amount: 0, user: gone },
+        ],
+      }),
+    );
+
+    // Saved as stored, so the server sees nothing but a rename
+    assert.deepEqual(saved(), [
+      [1, 5],
+      [2, -5],
+      [4, 0],
+    ]);
+    state().actions.setAmount(20);
+    assert.deepEqual(saved(), [
+      [1, 10],
+      [2, -10],
+      [4, 0],
+    ]);
+  });
+
   void it('keeps them when they paid', () => {
     start();
     state().actions.selectGroup(group(), [me, alex, gone]);

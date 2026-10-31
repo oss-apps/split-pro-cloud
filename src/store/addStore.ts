@@ -153,18 +153,35 @@ export const matchesEditSnapshot = (
 
 /**
  * The participants to save: the stored ones while the expense is unchanged, else the form's.
- * Someone who deleted their account is only saved with a share or as the payer: a row with nothing
- * would only record them in a new expense, and keep a repeating one from going on.
+ * A new expense saves someone who deleted their account only with a share or as the payer: a row
+ * with nothing would only record them in it, and keep a repeating one from going on. An edit keeps
+ * the rows it has, so saving it unchanged leaves the expense as it was.
  */
 export const getParticipantsToSave = (
   state: Pick<
     AddExpenseState,
-    'editSnapshot' | 'amount' | 'currency' | 'paidBy' | 'splitType' | 'participants'
+    | 'editSnapshot'
+    | 'loadedRecurrence'
+    | 'amount'
+    | 'currency'
+    | 'paidBy'
+    | 'splitType'
+    | 'participants'
   >,
-) =>
-  (matchesEditSnapshot(state) ? state.editSnapshot.participants : state.participants).filter(
+) => {
+  if (matchesEditSnapshot(state)) {
+    return state.editSnapshot.participants;
+  }
+
+  // Only an expense opened for editing has it, as null when it doesn't repeat
+  if (undefined !== state.loadedRecurrence) {
+    return state.participants;
+  }
+
+  return state.participants.filter(
     (p) => !p.deletedAt || 0 !== toInteger(p.amount ?? 0) || p.id === state.paidBy?.id,
   );
+};
 
 /** Shows the stored cents again when a change returns the form to the expense as it was opened. */
 const withEditSnapshot = <T extends Partial<AddExpenseState>>(state: AddExpenseState, next: T) => {

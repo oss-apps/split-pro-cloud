@@ -349,3 +349,92 @@ void test(
     }
   },
 );
+
+void test(
+  'renaming an expense with a deleted account at no share keeps their row and the balances',
+  { skip: !databaseUrl },
+  async () => {
+    const { db, store, createUsers, callerFor, snapshotBalances, getRows, cleanUp, getSaveInput } =
+      await setup();
+    const users = await createUsers(['Alice', 'Bob', 'Carol', 'Dave']);
+    const [alice, bob, carol, dave] = users;
+    assert.ok(alice && bob && carol && dave);
+    const userIds = users.map((user) => user.id);
+    const caller = callerFor(alice);
+
+    const load = async (expenseId: string) => {
+      store.useAddExpenseStore.getState().actions.resetState();
+      store.useAddExpenseStore.setState({
+        ...store.getEditFormState(await caller.user.getExpenseDetails({ expenseId })),
+        currentUser: alice,
+      });
+    };
+    const createExpense = async (name: string, currency: string, shares: [number, number][]) => {
+      const expense = await db.expense.create({
+        data: {
+          name,
+          category: 'general',
+          currency,
+          amount: 1000,
+          paidBy: alice.id,
+          addedBy: alice.id,
+          expenseDate: new Date(),
+          splitType: 'EXACT',
+          expenseParticipants: {
+            create: shares.map(([userId, amount]) => ({ userId, amount })),
+          },
+        },
+      });
+      await db.balance.createMany({
+        data: shares
+          .filter(([userId, amount]) => userId !== alice.id && 0 !== amount)
+          .flatMap(([userId, amount]) => [
+            { userId, friendId: alice.id, currency, amount },
+            { userId: alice.id, friendId: userId, currency, amount: -amount },
+          ]),
+      });
+      return expense;
+    };
+
+    try {
+      // Dave was in both with nothing to pay, then deleted his account
+      const current = await createExpense('Current', 'USD', [
+        [alice.id, 500],
+        [bob.id, -500],
+        [dave.id, 0],
+      ]);
+      // An old client's rounding put 4 cents too many on the payer: fine across four rows, more
+      // than today's validation allows across the three left without Dave's
+      const legacy = await createExpense('Legacy', 'EUR', [
+        [alice.id, 670],
+        [bob.id, -333],
+        [carol.id, -333],
+        [dave.id, 0],
+      ]);
+      await db.user.update({
+        where: { id: dave.id },
+        data: { name: 'Deleted user', email: null, deletedAt: new Date() },
+      });
+      const before = await snapshotBalances(userIds);
+
+      for (const expense of [current, legacy]) {
+        const rows = await getRows(expense.id);
+        await load(expense.id);
+        await caller.user.addOrEditExpense({
+          ...getSaveInput(),
+          expenseId: expense.id,
+          name: 'Renamed',
+        });
+
+        assert.deepEqual(await getRows(expense.id), rows, expense.name);
+        assert.equal(
+          (await db.expense.findUniqueOrThrow({ where: { id: expense.id } })).name,
+          'Renamed',
+        );
+      }
+      assert.deepEqual(await snapshotBalances(userIds), before);
+    } finally {
+      await cleanUp(userIds, []);
+    }
+  },
+);
