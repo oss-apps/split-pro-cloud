@@ -62,10 +62,7 @@ void test(
       assert.ok(first.token);
       const created = await db.user.findUnique({ where: { email: newEmail } });
       assert.equal(created?.name, 'Ada Lovelace');
-      assert.equal(
-        await db.account.count({ where: { provider: 'apple', userId: created!.id } }),
-        1,
-      );
+      assert.equal(await db.account.count({ where: { provider: 'apple', userId: created.id } }), 1);
 
       // Signing in again finds it through the linked Apple account
       const again = await signInWithApple(
