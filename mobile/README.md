@@ -18,7 +18,8 @@ effect), so build a development client with `npx expo run:ios` / `npx expo run:a
 can't run it.
 
 Point it at a local server with `EXPO_PUBLIC_API_URL=http://<your-lan-ip>:3000 pnpm start`. The
-default is `https://splitpro.app`.
+default is `https://splitpro.app`. The Android emulator reaches the Mac's `localhost` as
+`10.0.2.2`. Android builds need JDK 17 and the Android SDK (`JAVA_HOME`, `ANDROID_HOME`).
 
 Checks: `pnpm typecheck`, `pnpm lint`, `pnpm format:check`, `pnpm test`.
 
@@ -41,7 +42,8 @@ src/
     (app)/new.tsx         old /new link, redirects to /add
     (app)/balances/[friendId].tsx, groups/[groupId].tsx, expenses/[expenseId].tsx
     (app)/add.tsx         add/edit expense modal
-    (app)/settle-up.tsx   settle-up form sheet
+    (app)/settle-up.tsx   settle-up form sheet (full-screen dialog on Android)
+    (app)/edit-profile.tsx, feedback.tsx, delete-account.tsx   the Account tab's modals
   components/ui/          primitives, see "Native UI conventions"
   i18n/                   i18next setup + locales/en.json
   lib/
@@ -187,8 +189,11 @@ Android), `layout.rowMinHeight` (44 iOS / 56 Android), `layout.rowAvatar`, `layo
   edit profile, feedback, settle up) use `<ModalHeader onCancel confirm={{ label, onPress }} />`:
   glass ✕ / tinted ✓ on iOS 26, "Cancel" / bold "Done"-style text before iOS 26, ✕ and a text button
   (Material full-screen dialog) on Android. `onBack` swaps Cancel for a back chevron for a later
-  step (settle up's amount step). `presentation: 'modal'` for flows, `'formSheet'` +
-  `sheetAllowedDetents` for quick tasks with a few fields.
+  step (settle up's amount step); Android's back button does the same. `presentation: 'modal'`
+  for flows, `'formSheet'` + `sheetAllowedDetents` for quick tasks with a few fields. Android's
+  form sheet is a bottom sheet without a native header, so a form sheet whose buttons live in the
+  header is a `'modal'` there (settle up). Declare modal routes in `(app)/_layout.tsx`, not in a
+  tab's stack: on Android a modal only covers its own stack, so the tab bar would stay visible.
 - **Sheets with a confirm button** (`Sheet` content, e.g. the split editor) use `SheetHeader`, drawn
   to match `ModalHeader`. Sheets with `size="medium" | "large"` don't pad the bottom; give the list a
   bottom content inset of `useSafeAreaInsets().bottom` so it scrolls to the sheet's edge.
@@ -271,6 +276,12 @@ taps or navigation.
   and arrows fail on the dark popover, and no single cyan passes both. Left as the system draws it.
 - Changing the simulator's appearance closes open menus; when screenshotting a menu in both modes,
   switch the mode first, then open it.
+- Android resolves colors once at launch and pins the app to that scheme (`theme/tokens.ts`), so a
+  dark-mode switch shows after the next launch. To screenshot both modes on the emulator, run
+  `adb shell cmd uimode night yes|no`, then force-stop and reopen the app.
+- On Android, `Stack.SearchBar`'s own back handling doesn't run inside the native tabs: a tab root
+  with a search bar closes it on back itself (see `activity.tsx`). `onCancelButtonPress` is iOS
+  only; Android reports closing the search with `onClose`.
 
 ### Platform differences worth keeping
 
