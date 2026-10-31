@@ -2,13 +2,9 @@ import { Stack } from 'expo-router';
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 
-import {
-  groupedScreenOptions,
-  opaqueHeaderOptions,
-  stackScreenOptions,
-  tabRootOptions,
-} from '@/theme/navigation';
+import { groupedScreenOptions, stackScreenOptions, tabRootOptions } from '@/theme/navigation';
 
+// Edit profile, feedback and delete account are modals in (app)/_layout.tsx, over the tab bar.
 const AccountLayout = () => {
   const { t } = useTranslation();
 
@@ -17,37 +13,6 @@ const AccountLayout = () => {
       <Stack.Screen
         name="account"
         options={{ ...tabRootOptions, ...groupedScreenOptions, title: t('tabs.account') }}
-      />
-      {/*
-        Modal forms: Cancel on the left, the confirm action on the right. Opaque headers, as a
-        transparent header in a sheet covers the top of the content on iOS.
-      */}
-      <Stack.Screen
-        name="edit-profile"
-        options={{
-          ...groupedScreenOptions,
-          ...opaqueHeaderOptions,
-          presentation: 'modal',
-          title: t('account.edit_details'),
-        }}
-      />
-      <Stack.Screen
-        name="feedback"
-        options={{
-          ...groupedScreenOptions,
-          ...opaqueHeaderOptions,
-          presentation: 'modal',
-          title: t('account.feedback'),
-        }}
-      />
-      <Stack.Screen
-        name="delete-account"
-        options={{
-          ...groupedScreenOptions,
-          ...opaqueHeaderOptions,
-          presentation: 'modal',
-          title: t('account.delete_account'),
-        }}
       />
     </Stack>
   );

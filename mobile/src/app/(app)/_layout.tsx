@@ -5,7 +5,7 @@ import { Platform } from 'react-native';
 
 import { useOpenPendingLink } from '@/providers/usePendingLink';
 import { usePushNotifications } from '@/providers/usePushNotifications';
-import { groupedScreenOptions, stackScreenOptions } from '@/theme/navigation';
+import { groupedScreenOptions, opaqueHeaderOptions, stackScreenOptions } from '@/theme/navigation';
 
 // A screen opened from a link at launch still has the tabs to go back to.
 export const unstable_settings = {
@@ -67,6 +67,37 @@ const AppLayout = () => {
         }}
       />
       <Stack.Screen name="new" options={{ headerShown: false }} />
+      {/*
+        The account tab's forms. Opaque headers, as a transparent header in a sheet covers the top of
+        the content on iOS. Here rather than in the tab's stack, so they cover the tab bar on Android.
+      */}
+      <Stack.Screen
+        name="edit-profile"
+        options={{
+          ...groupedScreenOptions,
+          ...opaqueHeaderOptions,
+          presentation: 'modal',
+          title: t('account.edit_details'),
+        }}
+      />
+      <Stack.Screen
+        name="feedback"
+        options={{
+          ...groupedScreenOptions,
+          ...opaqueHeaderOptions,
+          presentation: 'modal',
+          title: t('account.feedback'),
+        }}
+      />
+      <Stack.Screen
+        name="delete-account"
+        options={{
+          ...groupedScreenOptions,
+          ...opaqueHeaderOptions,
+          presentation: 'modal',
+          title: t('account.delete_account'),
+        }}
+      />
       <Stack.Screen
         name="settle-up"
         options={{
