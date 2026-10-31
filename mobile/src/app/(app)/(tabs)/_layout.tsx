@@ -14,7 +14,8 @@ const TabsLayout = () => {
   const { t } = useTranslation();
 
   return (
-    <NativeTabs tintColor={colors.tint}>
+    // Material 3 labels every destination of the navigation bar (Android only; iOS always does).
+    <NativeTabs tintColor={colors.tint} labelVisibilityMode="labeled">
       <NativeTabs.Trigger name="(balances)">
         <NativeTabs.Trigger.Icon
           sf={{ default: icons.balances.ios, selected: icons.balancesSelected.ios }}
