@@ -21,6 +21,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     bundleIdentifier: 'app.splitpro',
     supportsTablet: true,
     usesAppleSignIn: true,
+    // Only standard HTTPS, which is exempt from export compliance paperwork.
+    infoPlist: { ITSAppUsesNonExemptEncryption: false },
     // TODO: enable universal links once https://splitpro.app/.well-known/apple-app-site-association
     // is served: associatedDomains: ['applinks:splitpro.app'],
   },
