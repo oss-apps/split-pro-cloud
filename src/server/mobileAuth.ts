@@ -241,6 +241,11 @@ export const deleteMobileSession = async (sessionToken: string, pushToken?: stri
 /**
  * Sends the same sign-in code as the web email provider, stored the way next-auth stores it.
  */
+const isReviewLoginEmail = (email: string) =>
+  !!env.REVIEW_LOGIN_EMAIL &&
+  !!env.REVIEW_LOGIN_CODE &&
+  email === tryNormalizeEmail(env.REVIEW_LOGIN_EMAIL);
+
 export const sendEmailCode = async (rawEmail: string, ip: string) => {
   const email = tryNormalizeEmail(rawEmail);
 
@@ -268,12 +273,18 @@ export const sendEmailCode = async (rawEmail: string, ip: string) => {
     );
   }
 
-  const token = generateEmailToken();
+  // App store reviewers can't receive our emails: one configured address gets a fixed code instead
+  const isReviewLogin = isReviewLoginEmail(email);
+  const token = isReviewLogin ? env.REVIEW_LOGIN_CODE!.trim().toUpperCase() : generateEmailToken();
   await adapter.createVerificationToken({
     identifier: email,
     token: hashVerificationToken(token, getAuthSecret()),
     expires: fromNow(EMAIL_TOKEN_MAX_AGE_SECONDS),
   });
+
+  if (isReviewLogin) {
+    return;
+  }
 
   // The same link the web sends, so it still works when opened in a browser
   const url = new URL('/api/auth/callback/email', env.NEXTAUTH_URL);

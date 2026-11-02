@@ -54,6 +54,11 @@ export const env = createEnv({
     APPLE_TEAM_ID: z.string().optional(),
     APPLE_KEY_ID: z.string().optional(),
     APPLE_PRIVATE_KEY: z.string().optional(),
+    // A login for App Store and Play reviewers, who can't receive our emails: requesting a code for
+    // REVIEW_LOGIN_EMAIL sends nothing and the code is always REVIEW_LOGIN_CODE (6 characters from
+    // the sign-in code alphabet). Normal code expiry and attempt limits still apply.
+    REVIEW_LOGIN_EMAIL: z.string().email().optional(),
+    REVIEW_LOGIN_CODE: z.string().optional(),
     R2_ACCESS_KEY: z.string().optional(),
     R2_SECRET_KEY: z.string().optional(),
     R2_BUCKET: z.string().optional(),
@@ -118,6 +123,8 @@ export const env = createEnv({
     APPLE_TEAM_ID: process.env.APPLE_TEAM_ID,
     APPLE_KEY_ID: process.env.APPLE_KEY_ID,
     APPLE_PRIVATE_KEY: process.env.APPLE_PRIVATE_KEY,
+    REVIEW_LOGIN_EMAIL: process.env.REVIEW_LOGIN_EMAIL,
+    REVIEW_LOGIN_CODE: process.env.REVIEW_LOGIN_CODE,
     R2_ACCESS_KEY: process.env.R2_ACCESS_KEY,
     R2_SECRET_KEY: process.env.R2_SECRET_KEY,
     R2_BUCKET: process.env.R2_BUCKET,
