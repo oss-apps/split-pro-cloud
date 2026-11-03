@@ -9,7 +9,6 @@ import {
   rememberChallenge,
   signOutBrowserSession,
 } from '~/server/mobileAuth';
-import { isOwnNavigation } from '~/server/mobileAuthTokens';
 
 const escapeHtml = (value: string) =>
   value.replace(
@@ -58,11 +57,6 @@ const renderSignInPage = (provider: string, callbackUrl: string) =>
     </script>`,
   );
 
-const START_FROM_APP_PAGE = renderPage(
-  'Sign in from the SplitPro app',
-  '    <p>To sign in to the SplitPro app, open the app and start signing in there.</p>',
-);
-
 const querySchema = z.object({ provider: z.literal('google') });
 
 export default mobileAuthRoute('GET', async (req, res) => {
@@ -75,18 +69,8 @@ export default mobileAuthRoute('GET', async (req, res) => {
 
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
 
-  // The app opens this in a browser of its own. A link from another site must not be able to sign
-  // the visitor out of the web, which is the first thing this does.
-  if (!isOwnNavigation(req.headers['sec-fetch-site'], req.headers.referer, env.NEXTAUTH_URL)) {
-    console.warn('Mobile sign-in start refused', {
-      secFetchSite: req.headers['sec-fetch-site'],
-      referer: req.headers.referer?.slice(0, 100),
-      userAgent: req.headers['user-agent']?.slice(0, 160),
-    });
-    res.status(403).send(START_FROM_APP_PAGE);
-    return;
-  }
-
+  // Sign the browser out first, so the handoff can only see the session Google creates next. This
+  // can't be limited to the app's own browser: Android's Custom Tabs look like any cross-site link.
   const callbackUrl = `/api/mobile/auth/handoff?${new URLSearchParams({ challenge, redirect }).toString()}`;
 
   await signOutBrowserSession(req, res);

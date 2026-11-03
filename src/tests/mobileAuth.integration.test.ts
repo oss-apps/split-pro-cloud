@@ -240,29 +240,13 @@ void test(
       });
       assert.equal(expoGo.status, 400);
 
-      // A link or form on another site can't use /start to sign the browser out
       const existing = await createWebSession(Date.now() - DAY_MS);
-      for (const headers of [
-        { 'sec-fetch-site': 'cross-site' } as Record<string, string>,
-        { 'sec-fetch-site': 'same-site' },
-        { referer: 'https://evil.example/' },
-      ]) {
-        const linked = await callRoute(start, {
-          query: { provider: 'google', challenge, redirect },
-          headers,
-          cookies: { 'next-auth.session-token': existing.sessionToken },
-        });
-        assert.equal(linked.status, 403, JSON.stringify(headers));
-        assert.match(String(linked.body), /open the app and start signing in there/);
-        assert.deepEqual(linked.setCookies, []);
-        assert.equal(await db.session.count({ where: { id: existing.id } }), 1);
-      }
 
-      // Opened by the app's browser, /start signs it out of the web and asks Google which account
-      // to use. Browsers too old to send Sec-Fetch-Site are treated the same.
+      // /start signs the browser out of the web and asks Google which account to use, however the
+      // browser got there (Android Custom Tabs arrive as a cross-site navigation)
       const fromApp = await callRoute(start, {
         query: { provider: 'google', challenge, redirect },
-        headers: { 'sec-fetch-site': 'none' },
+        headers: { 'sec-fetch-site': 'cross-site' },
       });
       assert.equal(fromApp.status, 200);
       const started = await callRoute(start, {

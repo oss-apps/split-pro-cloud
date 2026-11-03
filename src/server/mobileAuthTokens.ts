@@ -139,44 +139,6 @@ export const hasBearerAuthorization = (authorization: string | undefined) =>
 export const isJsonContentType = (contentType: string | undefined) =>
   'application/json' === contentType?.split(';')[0]?.trim().toLowerCase();
 
-// Sec-Fetch-Site of a page the browser opened itself (`none`: the app's sign-in browser, a typed
-// URL or a bookmark) or one of our own pages linked to
-const OWN_NAVIGATION_SITES = ['none', 'same-origin'];
-
-/**
- * Whether the browser opened the page itself or came from one of ours, rather than a link or form
- * on another site. Browsers without Fetch Metadata (e.g. Safari before 16.4, which older iOS uses
- * for the app's sign-in) are let through unless their Referer names another site: refusing them
- * would break sign-in there, and a link can at worst sign such a browser out.
- */
-const ANDROID_APP_REFERER = 'android-app://app.splitpro';
-
-export const isOwnNavigation = (
-  secFetchSite: string | string[] | undefined,
-  referer: string | undefined,
-  origin: string,
-) => {
-  // Chrome Custom Tabs opened by our Android app send the app as the Referer (and mark the visit
-  // cross-site). Pages can't set an android-app:// Referer, only apps launching the browser can.
-  if (referer && referer.replace(/\/+$/, '') === ANDROID_APP_REFERER) {
-    return true;
-  }
-
-  if (undefined !== secFetchSite) {
-    return 'string' === typeof secFetchSite && OWN_NAVIGATION_SITES.includes(secFetchSite);
-  }
-
-  if (!referer) {
-    return true;
-  }
-
-  try {
-    return new URL(referer).origin === new URL(origin).origin;
-  } catch {
-    return false;
-  }
-};
-
 export type AppleFullName =
   | string
   | {
