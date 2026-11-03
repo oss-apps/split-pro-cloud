@@ -11,6 +11,7 @@ import {
   TINT_WASH_OPACITY,
   blend,
   contrast,
+  withOpacity,
 } from './palette';
 
 /** WCAG 2 AA for normal-size text. */
@@ -53,7 +54,7 @@ describe('palette contrast', () => {
 
   describe('Android', () => {
     MODES.forEach(({ mode }) => {
-      const { tint, onTint } = ANDROID_BRAND[mode];
+      const { tint, onTint, container } = ANDROID_BRAND[mode];
       // Material surfaces come from the wallpaper; these are the neutral extremes.
       const surfaces = 'light' === mode ? ['#ffffff', '#f3f3f3'] : ['#111318', '#1d2024'];
 
@@ -67,6 +68,18 @@ describe('palette contrast', () => {
           assertAA(tint, blend(tint, surface, TINT_WASH_OPACITY), 'tinted button');
         });
       });
+
+      it(`should keep the selected tab readable on its indicator in ${mode} mode`, () => {
+        assertAA(tint, container, 'selected navigation bar item');
+      });
     });
+  });
+});
+
+describe('withOpacity', () => {
+  it('should append the alpha channel', () => {
+    assert.equal(withOpacity('#00687a', 0.1), '#00687a1a');
+    assert.equal(withOpacity('#00687a', 1), '#00687aff');
+    assert.equal(withOpacity('#00687a', 0), '#00687a00');
   });
 });

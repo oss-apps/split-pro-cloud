@@ -23,6 +23,7 @@ export { SheetHeader } from './SheetHeader';
 export { Skeleton } from './Skeleton';
 export { FullScreenSpinner, Spinner } from './Spinner';
 export { SwipeActions } from './SwipeActions';
+export { tabIcon } from './tabIcon';
 export { Text } from './Text';
 export { Toaster, toast } from './Toast';
 export type { AvatarProps } from './Avatar';

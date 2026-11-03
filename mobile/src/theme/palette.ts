@@ -37,11 +37,23 @@ export const TINT_WASH_OPACITY = 0.12;
 
 export const ON_TINT = '#ffffff';
 
-/** Material 3 tonal palette for the brand (primary / on-primary), from the cyan seed. */
+/**
+ * Material 3 tonal palette for the brand (primary / on-primary), from the cyan seed. `container` is
+ * the seed's secondary container, which Material puts behind the selected navigation bar item.
+ */
 export const ANDROID_BRAND = {
-  light: { tint: '#00687a', onTint: '#ffffff' },
-  dark: { tint: '#4dd0e1', onTint: '#00363f' },
+  light: { tint: '#00687a', onTint: '#ffffff', container: '#cee7ef' },
+  dark: { tint: '#4dd0e1', onTint: '#00363f', container: '#334a51' },
 };
+
+/** Material 3 pressed state layer opacity (ripples). */
+export const PRESSED_STATE_LAYER_OPACITY = 0.1;
+
+/** `#rrggbb` at `opacity`, as `#rrggbbaa`. */
+export const withOpacity = (hex: string, opacity: number) =>
+  `${hex}${Math.round(opacity * 255)
+    .toString(16)
+    .padStart(2, '0')}`;
 
 /** Apple's accessible variants of systemGreen / systemOrange, readable as text on white. */
 export const POSITIVE = { light: '#248a3d', dark: '#30d158' };

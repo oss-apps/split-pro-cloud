@@ -15,6 +15,8 @@ import {
   NEGATIVE,
   ON_TINT,
   POSITIVE,
+  PRESSED_STATE_LAYER_OPACITY,
+  withOpacity,
 } from './palette';
 
 /**
@@ -179,6 +181,19 @@ export const colors: Colors = Platform.select({
   android: () => androidColors(isDark),
   default: () => webColors(isDark),
 })();
+
+const androidBrand = ANDROID_BRAND[isDark ? 'dark' : 'light'];
+
+/**
+ * The Material navigation bar (the Android tab bar), in the brand palette like the rest of the
+ * tint: the selected tab is `tint` on the brand's secondary container, and a press is a 10% tint
+ * state layer. The defaults would put the tint on the wallpaper's container (another hue) and
+ * ripple with opaque `primary`, which covers the icon.
+ */
+export const navigationBarColors = {
+  indicator: androidBrand.container,
+  ripple: withOpacity(androidBrand.tint, PRESSED_STATE_LAYER_OPACITY),
+} as const;
 
 /** The system colors Settings uses behind its row icons (`SettingsIcon`). */
 export type TileColor =

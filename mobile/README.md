@@ -157,7 +157,9 @@ Android), `layout.rowMinHeight` (44 iOS / 56 Android), `layout.rowAvatar`, `layo
 - **Tabs** are the system tab bar (`NativeTabs` from `expo-router/native-tabs`): `UITabBar` with
   Liquid Glass on iOS 26, the Material navigation bar on Android. Each tab is a route group with
   its own `Stack` (`(tabs)/(balances)/_layout.tsx` …), so detail screens push inside the native stack
-  with the system back button and swipe-back.
+  with the system back button and swipe-back. Its colors are `tabBarOptions` (`theme/navigation.ts`):
+  on Android the selected tab is `tint` on the brand's secondary container with a 10% tint ripple,
+  on Material's surface-container bar. Tab icons are `tabIcon(icon, selectedIcon)`.
 - **Every screen has a native header.** Never draw a title or a back button in JS. Tab roots use
   `tabRootOptions` (large title that collapses on scroll); detail screens use a normal title.
   Set the title with `<Stack.Screen options={{ title }} />` or in the layout.
@@ -248,7 +250,10 @@ Android), `layout.rowMinHeight` (44 iOS / 56 Android), `layout.rowAvatar`, `layo
 `<Icon name={icons.trash} />` renders an SF Symbol on iOS and a Material Symbol on Android via
 `expo-symbols`. Add every new icon to the `icons` map in `components/ui/Icon.tsx` with both names, so
 the platforms stay paired (SF Symbols app / fonts.google.com/icons). Header and tab icons take the
-same names (`icon.ios` for `sf`, `icon.android` for `md`). There is no icon font or Lucide; brand
+same names (`icon.ios` for `sf`, `icon.android` for `md`). A tab's selected icon is the `.fill`
+symbol on iOS and the same Material Symbol in the filled style on Android, which `md` can't draw:
+`tabIcon` renders it from `@expo-google-fonts/material-symbols` (add its code point in
+`tabIcon.android.tsx`). There is no other icon font or Lucide; brand
 marks (Google "G", X logo) are SVGs (`react-native-svg`).
 
 Don't keep local icon maps in feature folders; `icons` is the only table (settings tiles, form rows,
@@ -279,6 +284,9 @@ taps or navigation.
 - Android resolves colors once at launch and pins the app to that scheme (`theme/tokens.ts`), so a
   dark-mode switch shows after the next launch. To screenshot both modes on the emulator, run
   `adb shell cmd uimode night yes|no`, then force-stop and reopen the app.
+- On Android, react-native-screens re-applies the whole tab bar appearance on every tab change, so
+  Material rebuilds each item's ripple and the press ripple stops when the tab switches. Keep
+  `rippleColor` a faint state layer (`navigationBarColors.ripple`) so the cut isn't visible.
 - On Android, `Stack.SearchBar`'s own back handling doesn't run inside the native tabs: a tab root
   with a search bar closes it on back itself (see `activity.tsx`). `onCancelButtonPress` is iOS
   only; Android reports closing the search with `onClose`.

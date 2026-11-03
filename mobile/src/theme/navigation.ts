@@ -1,6 +1,25 @@
 import { type NativeStackNavigationOptions } from 'expo-router';
+import { type NativeTabsProps } from 'expo-router/native-tabs';
+import { Platform } from 'react-native';
 
-import { colors } from './tokens';
+import { colors, navigationBarColors } from './tokens';
+
+/**
+ * The tab bar. The tint marks the selected tab; on Android its indicator and ripple are in the
+ * brand palette too (`navigationBarColors`), and Material labels every destination (iOS always
+ * does). The bar itself keeps Material's surface container.
+ */
+export const tabBarOptions: Partial<NativeTabsProps> = {
+  tintColor: colors.tint,
+  ...Platform.select<Partial<NativeTabsProps>>({
+    android: {
+      indicatorColor: navigationBarColors.indicator,
+      rippleColor: navigationBarColors.ripple,
+      labelVisibilityMode: 'labeled',
+    },
+    default: {},
+  }),
+};
 
 /**
  * Defaults for every native stack: system back button and tint. On iOS 26 headers are transparent
