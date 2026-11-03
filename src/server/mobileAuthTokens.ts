@@ -149,11 +149,19 @@ const OWN_NAVIGATION_SITES = ['none', 'same-origin'];
  * for the app's sign-in) are let through unless their Referer names another site: refusing them
  * would break sign-in there, and a link can at worst sign such a browser out.
  */
+const ANDROID_APP_REFERER = 'android-app://app.splitpro';
+
 export const isOwnNavigation = (
   secFetchSite: string | string[] | undefined,
   referer: string | undefined,
   origin: string,
 ) => {
+  // Chrome Custom Tabs opened by our Android app send the app as the Referer (and mark the visit
+  // cross-site). Pages can't set an android-app:// Referer, only apps launching the browser can.
+  if (referer && referer.replace(/\/+$/, '') === ANDROID_APP_REFERER) {
+    return true;
+  }
+
   if (undefined !== secFetchSite) {
     return 'string' === typeof secFetchSite && OWN_NAVIGATION_SITES.includes(secFetchSite);
   }

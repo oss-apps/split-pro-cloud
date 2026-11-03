@@ -290,6 +290,13 @@ void describe('isOwnNavigation', () => {
     assert.equal(isOwnNavigation(['none', 'none'], undefined, origin), false);
   });
 
+  void it('allows the Chrome Custom Tab our Android app opens, and no other app', () => {
+    assert.equal(isOwnNavigation('cross-site', 'android-app://app.splitpro/', origin), true);
+    assert.equal(isOwnNavigation('cross-site', 'android-app://app.splitpro', origin), true);
+    assert.equal(isOwnNavigation('cross-site', 'android-app://com.evil/', origin), false);
+    assert.equal(isOwnNavigation('cross-site', 'android-app://app.splitpro.evil/', origin), false);
+  });
+
   void it('allows browsers without Fetch Metadata unless the Referer is another site', () => {
     assert.equal(isOwnNavigation(undefined, undefined, origin), true);
     assert.equal(isOwnNavigation(undefined, `${origin}/balances`, origin), true);

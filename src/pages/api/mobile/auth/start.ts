@@ -78,6 +78,11 @@ export default mobileAuthRoute('GET', async (req, res) => {
   // The app opens this in a browser of its own. A link from another site must not be able to sign
   // the visitor out of the web, which is the first thing this does.
   if (!isOwnNavigation(req.headers['sec-fetch-site'], req.headers.referer, env.NEXTAUTH_URL)) {
+    console.warn('Mobile sign-in start refused', {
+      secFetchSite: req.headers['sec-fetch-site'],
+      referer: req.headers.referer?.slice(0, 100),
+      userAgent: req.headers['user-agent']?.slice(0, 160),
+    });
     res.status(403).send(START_FROM_APP_PAGE);
     return;
   }
