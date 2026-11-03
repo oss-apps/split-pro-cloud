@@ -35,11 +35,18 @@ const AUTH_PATHS = {
   signOut: '/api/mobile/auth/signout',
 } as const;
 
+const REQUEST_TIMEOUT_MS = 20_000;
+
 const post = async <T>(path: string, body?: unknown, token?: string): Promise<T> => {
   let response: Response;
 
+  // A request that never answers would leave the sign-in screens spinning
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
   try {
     response = await fetch(`${API_URL}${path}`, {
+      signal: controller.signal,
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -49,6 +56,8 @@ const post = async <T>(path: string, body?: unknown, token?: string): Promise<T>
     });
   } catch {
     throw new AuthApiError('Could not reach SplitPro. Check your connection.', 0);
+  } finally {
+    clearTimeout(timeout);
   }
 
   const data = (await response.json().catch(() => null)) as (T & { error?: unknown }) | null;

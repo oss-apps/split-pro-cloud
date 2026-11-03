@@ -1,5 +1,5 @@
 import { router, useLocalSearchParams } from 'expo-router';
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { StyleSheet, View } from 'react-native';
 
@@ -31,8 +31,11 @@ const Verify = () => {
   const isLocked = 0 < verifySecondsLeft;
   const wasLocked = null !== verifyLockedUntil && !isLocked;
 
+  // State is stale inside a render's callbacks, so auto-submit plus a Verify tap could both run
+  const inFlight = useRef(false);
+
   const verify = async (value: string) => {
-    if (verifying || isLocked) {
+    if (inFlight.current || isLocked) {
       return;
     }
 
@@ -43,6 +46,7 @@ const Verify = () => {
 
     setError(null);
     setVerifyLockedUntil(null);
+    inFlight.current = true;
     setVerifying(true);
 
     try {
@@ -62,6 +66,9 @@ const Verify = () => {
             : t('common.something_went_wrong'),
         );
       }
+    } finally {
+      // Harmless after a successful sign-in has replaced this screen
+      inFlight.current = false;
       setVerifying(false);
     }
   };
