@@ -2,6 +2,7 @@ import React from 'react';
 import { Button } from './ui/button';
 import { Download } from 'lucide-react';
 import { AppDrawer } from './ui/drawer';
+import { AppBetaLinks } from './AppBeta';
 
 const InstallApp: React.FC = () => {
   const [isStandalone, setIsStandalone] = React.useState(false);
@@ -44,29 +45,36 @@ const InstallApp: React.FC = () => {
         shouldCloseOnAction
       >
         <div className="flex flex-col gap-8">
-          <p>You can download SplitPro as a PWA to your home screen</p>
+          <div className="flex flex-col gap-4">
+            <p>The native app is in beta. Try it early and tell me what breaks.</p>
+            <AppBetaLinks />
+          </div>
 
-          <p>
-            If you are using iOS, checkout this{' '}
-            <a
-              className="text-cyan-500 underline"
-              href="https://youtube.com/shorts/MQHeLOjr350"
-              target="_blank"
-            >
-              video
-            </a>
-          </p>
+          <div className="flex flex-col gap-4 border-t pt-6">
+            <p>Or add SplitPro to your home screen from the browser.</p>
 
-          <p>
-            If you are using Android, checkout this{' '}
-            <a
-              className="text-cyan-500 underline"
-              href="https://youtube.com/shorts/04n7oKGzgOs"
-              target="_blank"
-            >
-              Video
-            </a>
-          </p>
+            <p>
+              If you are using iOS, checkout this{' '}
+              <a
+                className="text-cyan-500 underline"
+                href="https://youtube.com/shorts/MQHeLOjr350"
+                target="_blank"
+              >
+                video
+              </a>
+            </p>
+
+            <p>
+              If you are using Android, checkout this{' '}
+              <a
+                className="text-cyan-500 underline"
+                href="https://youtube.com/shorts/04n7oKGzgOs"
+                target="_blank"
+              >
+                Video
+              </a>
+            </p>
+          </div>
         </div>
       </AppDrawer>
 

@@ -22,9 +22,12 @@ export const PrimaryLink: React.FC<{
   href: string;
   children: React.ReactNode;
   className?: string;
-}> = ({ href, children, className }) => (
+  /** Opens in a new tab. */
+  external?: boolean;
+}> = ({ href, children, className, external }) => (
   <Link
     href={href}
+    {...(external ? { target: '_blank', rel: 'noreferrer' } : {})}
     className={cn(
       'inline-flex h-11 items-center justify-center rounded-lg bg-primary px-5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90',
       className,
@@ -38,9 +41,12 @@ export const SecondaryLink: React.FC<{
   href: string;
   children: React.ReactNode;
   className?: string;
-}> = ({ href, children, className }) => (
+  /** Opens in a new tab. */
+  external?: boolean;
+}> = ({ href, children, className, external }) => (
   <Link
     href={href}
+    {...(external ? { target: '_blank', rel: 'noreferrer' } : {})}
     className={cn(
       'inline-flex h-11 items-center justify-center rounded-lg border border-white/15 px-5 text-sm font-medium text-gray-100 transition-colors hover:bg-white/5',
       className,
