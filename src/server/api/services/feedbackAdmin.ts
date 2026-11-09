@@ -5,10 +5,11 @@ import {
   Prisma,
   type PrismaClient,
 } from '@prisma/client';
+import { randomUUID } from 'crypto';
 import { z } from 'zod';
 
 import { db as defaultDb } from '~/server/db';
-import { MailNotSentError, sendFeedbackReplyEmail } from '~/server/mailer';
+import { BOUNDED_SEND_SETTLED_MS, MailNotSentError, sendFeedbackReplyEmail } from '~/server/mailer';
 
 import { isUniqueViolation } from './feedbackService';
 
@@ -30,6 +31,14 @@ export class ReplyInProgressError extends Error {}
 export class ReplyNotFoundError extends Error {}
 /** Only a SENDING reply can be resolved by hand. */
 export class ReplyNotSendingError extends Error {}
+/** Its send attempt may still be running, so it can't be resolved yet. */
+export class ReplyStillSendingError extends Error {}
+
+/** A SENDING reply's attempt is certainly over once it started this long ago. */
+export const REPLY_ATTEMPT_SETTLED_MS = BOUNDED_SEND_SETTLED_MS;
+
+/** A new attempt to send a reply: only the attempt holding a SENDING reply may complete it. */
+const newAttempt = () => ({ attemptId: randomUUID(), attemptStartedAt: new Date() });
 
 const statusSchema = z.nativeEnum(FeedbackStatus);
 
@@ -168,12 +177,13 @@ export const setFeedbackStatus = async (
 
 type Reservation =
   | { send: false; reply: ReplyDetails }
-  | { send: true; reply: ReplyDetails; to: string; original: string };
+  | { send: true; reply: ReplyDetails; attemptId: string; to: string; original: string };
 
 /**
  * Claims the reply with this key for sending, or finds that it was sent. Each step is a single
- * atomic write (the unique key on insert, a conditional update from FAILED), so only one request
- * ever holds a reply in SENDING, and nothing stays locked while the email goes out.
+ * atomic write (the unique key on insert, a conditional update from FAILED), so only one attempt
+ * ever holds a reply in SENDING, and nothing stays locked while the email goes out. The claim
+ * gets a new `attemptId`.
  */
 const reserveReply = async (
   db: PrismaClient,
@@ -205,11 +215,12 @@ const reserveReply = async (
 
   if (!existing) {
     try {
+      const claim = newAttempt();
       const reply = await db.feedbackReply.create({
-        data: { feedbackId: id, message, idempotencyKey },
+        data: { feedbackId: id, message, idempotencyKey, ...claim },
         select: replySelect,
       });
-      return { send: true, reply, ...target };
+      return { send: true, reply, attemptId: claim.attemptId, ...target };
     } catch (error) {
       // Another request took the key first: look again at what it did
       if (isUniqueViolation(error, 'idempotencyKey')) {
@@ -234,9 +245,10 @@ const reserveReply = async (
   }
 
   // FAILED certainly wasn't sent: claim it again, unless another retry just did
+  const claim = newAttempt();
   const { count } = await db.feedbackReply.updateMany({
     where: { id: existing.id, deliveryStatus: FeedbackReplyStatus.FAILED },
-    data: { deliveryStatus: FeedbackReplyStatus.SENDING },
+    data: { deliveryStatus: FeedbackReplyStatus.SENDING, ...claim },
   });
   if (0 === count) {
     return retry();
@@ -244,6 +256,7 @@ const reserveReply = async (
   return {
     send: true,
     reply: { ...existing, deliveryStatus: FeedbackReplyStatus.SENDING },
+    attemptId: claim.attemptId,
     ...target,
   };
 };
@@ -268,46 +281,81 @@ export const replyToFeedback = async (
     return { reply: toReplyJson(reservation.reply), created: false };
   }
 
+  // Completing only ever touches the reply while this attempt still holds it: once an operator
+  // resolved it, or another attempt claimed it since, this one's outcome is no longer its to record.
+  const owned = {
+    id: reservation.reply.id,
+    deliveryStatus: FeedbackReplyStatus.SENDING,
+    attemptId: reservation.attemptId,
+  };
+  const lostOwnership = () =>
+    console.warn('Feedback reply attempt no longer holds the reply', reservation.reply.id);
+
   try {
     await send({ to: reservation.to, reply: message, original: reservation.original });
   } catch (error) {
     if (error instanceof MailNotSentError && error.definite) {
-      // Unless an operator resolved it meanwhile
-      await db.feedbackReply.updateMany({
-        where: { id: reservation.reply.id, deliveryStatus: FeedbackReplyStatus.SENDING },
+      const { count } = await db.feedbackReply.updateMany({
+        where: owned,
         data: { deliveryStatus: FeedbackReplyStatus.FAILED },
       });
+      if (0 === count) {
+        lostOwnership();
+      }
     }
     throw error;
   }
 
-  const [reply] = await db.$transaction([
-    db.feedbackReply.update({
-      where: { id: reservation.reply.id },
+  const recorded = await db.$transaction(async (tx) => {
+    const { count } = await tx.feedbackReply.updateMany({
+      where: owned,
       data: { deliveryStatus: FeedbackReplyStatus.SENT, sentAt: new Date() },
+    });
+    if (1 === count) {
+      await tx.feedback.updateMany({ where: { id }, data: { status: FeedbackStatus.REPLIED } });
+    }
+    const reply = await tx.feedbackReply.findUniqueOrThrow({
+      where: { id: reservation.reply.id },
       select: replySelect,
-    }),
-    db.feedback.updateMany({ where: { id }, data: { status: FeedbackStatus.REPLIED } }),
-  ]);
-  return { reply: toReplyJson(reply), created: true };
+    });
+    return { reply, created: 1 === count };
+  });
+  if (!recorded.created) {
+    lostOwnership();
+  }
+  return { reply: toReplyJson(recorded.reply), created: recorded.created };
 };
 
 /**
  * Settles a reply stuck in SENDING, e.g. after the connection dropped mid-send, once an operator
  * has checked whether it was delivered: SENT records it as sent, FAILED lets the same key and
- * message be sent again. Never done automatically.
+ * message be sent again. Never done automatically, and only once its attempt is certainly over
+ * (`REPLY_ATTEMPT_SETTLED_MS`); that attempt can't complete it afterwards.
  */
 export const resolveReply = async (
   feedbackId: string,
   replyId: string,
   { deliveryStatus }: z.infer<typeof resolveReplyBody>,
   db: PrismaClient = defaultDb,
+  now = new Date(),
 ) =>
   db.$transaction(async (tx) => {
     const sent = FeedbackReplyStatus.SENT === deliveryStatus;
     const { count } = await tx.feedbackReply.updateMany({
-      where: { id: replyId, feedbackId, deliveryStatus: FeedbackReplyStatus.SENDING },
-      data: sent ? { deliveryStatus, sentAt: new Date() } : { deliveryStatus },
+      where: {
+        id: replyId,
+        feedbackId,
+        deliveryStatus: FeedbackReplyStatus.SENDING,
+        OR: [
+          { attemptStartedAt: null },
+          { attemptStartedAt: { lt: new Date(now.getTime() - REPLY_ATTEMPT_SETTLED_MS) } },
+        ],
+      },
+      data: {
+        deliveryStatus,
+        attemptId: null,
+        ...(sent ? { sentAt: new Date() } : {}),
+      },
     });
 
     const reply = await tx.feedbackReply.findFirst({
@@ -318,6 +366,9 @@ export const resolveReply = async (
       throw new ReplyNotFoundError('Reply not found');
     }
     if (0 === count) {
+      if (FeedbackReplyStatus.SENDING === reply.deliveryStatus) {
+        throw new ReplyStillSendingError('Reply is still sending; try again later');
+      }
       throw new ReplyNotSendingError(
         `Reply is ${reply.deliveryStatus}; only SENDING replies can be resolved`,
       );

@@ -129,6 +129,38 @@ void test(
 
 type ReplyEmail = { to: string; reply: string; original: string };
 
+/** Makes a reply's send attempt old enough to be certainly over, as if time had passed. */
+const settleAttempt = async (t: Awaited<ReturnType<typeof setup>>, replyId: string) => {
+  await t.db.feedbackReply.update({
+    where: { id: replyId },
+    data: { attemptStartedAt: new Date(Date.now() - t.REPLY_ATTEMPT_SETTLED_MS - 1000) },
+  });
+};
+
+const deferred = () => {
+  let resolve!: () => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<void>((done, fail) => {
+    resolve = done;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+};
+
+/**
+ * A send that waits until the test settles it, and says when it started: the email is then "in
+ * flight".
+ */
+const pausedSend = () => {
+  const started = deferred();
+  const finish = deferred();
+  const send = async () => {
+    started.resolve();
+    await finish.promise;
+  };
+  return { send, started: started.promise, finish };
+};
+
 void test(
   'feedback: replies are sent once per key and recorded with their delivery',
   { skip: !databaseUrl },
@@ -530,7 +562,14 @@ void test(
           ),
           t.MailNotSentError,
         );
-        return t.db.feedbackReply.findUniqueOrThrow({ where: { idempotencyKey } });
+        const reply = await t.db.feedbackReply.findUniqueOrThrow({ where: { idempotencyKey } });
+        // Its attempt may still be running for a while, so it can't be settled yet
+        await assert.rejects(
+          t.resolveReply(id, reply.id, { deliveryStatus: 'FAILED' }, t.db),
+          t.ReplyStillSendingError,
+        );
+        await settleAttempt(t, reply.id);
+        return reply;
       };
 
       // Delivered after all: recorded as sent, and the key answers without sending
@@ -581,6 +620,138 @@ void test(
       );
     } finally {
       await t.db.user.delete({ where: { id: jo.id } });
+    }
+  },
+);
+
+void test(
+  'feedback: a late outcome of an attempt an operator resolved never touches a newer attempt',
+  { skip: !databaseUrl },
+  async () => {
+    const t = await setup();
+    const kim = await t.createUser('Kim');
+    const quiet = { db: t.db, notify: async () => undefined };
+    const idempotencyKey = `race-${t.suffix}`;
+    const input = { message: 'Thanks for writing!', idempotencyKey };
+    let sends = 0;
+    const counted = (send: () => Promise<void>) => async () => {
+      sends += 1;
+      await send();
+    };
+
+    try {
+      const { id } = await t.submitFeedback(kim, { feedback: 'Feedback for a race' }, 'web', quiet);
+
+      // A is in flight
+      const a = pausedSend();
+      const attemptA = t.replyToFeedback(id, input, { db: t.db, send: counted(a.send) });
+      await a.started;
+      const reply = await t.db.feedbackReply.findUniqueOrThrow({ where: { idempotencyKey } });
+
+      // Too young to settle by hand
+      await assert.rejects(
+        t.resolveReply(id, reply.id, { deliveryStatus: 'FAILED' }, t.db),
+        t.ReplyStillSendingError,
+      );
+
+      // Once it looks over, the operator marks it FAILED, and B claims it
+      await settleAttempt(t, reply.id);
+      await t.resolveReply(id, reply.id, { deliveryStatus: 'FAILED' }, t.db);
+      const b = pausedSend();
+      const attemptB = t.replyToFeedback(id, input, { db: t.db, send: counted(b.send) });
+      await b.started;
+      const claimedByB = await t.db.feedbackReply.findUniqueOrThrow({ where: { idempotencyKey } });
+      assert.equal(claimedByB.deliveryStatus, 'SENDING');
+      assert.ok(claimedByB.attemptId);
+
+      // A fails late: B's attempt keeps the reply
+      const originalWarn = console.warn;
+      const warnings: unknown[] = [];
+      console.warn = (...args: unknown[]) => warnings.push(args);
+      try {
+        a.finish.reject(new t.MailNotSentError({ code: 'ENOTCONFIGURED' }));
+        await assert.rejects(attemptA, t.MailNotSentError);
+      } finally {
+        console.warn = originalWarn;
+      }
+      assert.deepEqual(warnings, [['Feedback reply attempt no longer holds the reply', reply.id]]);
+      const afterA = await t.db.feedbackReply.findUniqueOrThrow({ where: { idempotencyKey } });
+      assert.equal(afterA.deliveryStatus, 'SENDING');
+      assert.equal(afterA.attemptId, claimedByB.attemptId);
+
+      // So no third attempt can start
+      await assert.rejects(
+        t.replyToFeedback(id, input, { db: t.db, send: counted(async () => undefined) }),
+        t.ReplyInProgressError,
+      );
+
+      // B completes it
+      b.finish.resolve();
+      const done = await attemptB;
+      assert.equal(done.created, true);
+      assert.equal(done.reply.deliveryStatus, 'SENT');
+      assert.equal(sends, 2);
+    } finally {
+      await t.db.user.delete({ where: { id: kim.id } });
+    }
+  },
+);
+
+void test(
+  'feedback: a stale success can’t mark a reclaimed reply sent',
+  { skip: !databaseUrl },
+  async () => {
+    const t = await setup();
+    const lee = await t.createUser('Lee');
+    const quiet = { db: t.db, notify: async () => undefined };
+    const idempotencyKey = `stale-${t.suffix}`;
+    const input = { message: 'Thanks for the idea!', idempotencyKey };
+    const originalWarn = console.warn;
+    console.warn = () => undefined;
+
+    try {
+      const { id } = await t.submitFeedback(
+        lee,
+        { feedback: 'Feedback for a stale send' },
+        'web',
+        quiet,
+      );
+
+      const a = pausedSend();
+      const attemptA = t.replyToFeedback(id, input, { db: t.db, send: a.send });
+      await a.started;
+      const reply = await t.db.feedbackReply.findUniqueOrThrow({ where: { idempotencyKey } });
+      await settleAttempt(t, reply.id);
+      await t.resolveReply(id, reply.id, { deliveryStatus: 'FAILED' }, t.db);
+
+      const b = pausedSend();
+      const attemptB = t.replyToFeedback(id, input, { db: t.db, send: b.send });
+      await b.started;
+
+      // A's email went out after all, but B holds the reply now
+      a.finish.resolve();
+      const lateA = await attemptA;
+      assert.equal(lateA.created, false);
+      assert.equal(lateA.reply.deliveryStatus, 'SENDING');
+      const afterA = await t.db.feedbackReply.findUniqueOrThrow({ where: { idempotencyKey } });
+      assert.equal(afterA.deliveryStatus, 'SENDING');
+      assert.equal(afterA.sentAt, null);
+      assert.equal((await t.db.feedback.findUniqueOrThrow({ where: { id } })).status, 'NEW');
+
+      // B's own outcome is what's recorded
+      b.finish.reject(new t.MailNotSentError({ code: 'ENOTCONFIGURED' }));
+      await assert.rejects(attemptB, t.MailNotSentError);
+      const afterB = await t.db.feedbackReply.findUniqueOrThrow({ where: { idempotencyKey } });
+      assert.equal(afterB.deliveryStatus, 'FAILED');
+
+      // And a resolved attempt can't complete the reply either
+      await assert.rejects(
+        t.resolveReply(id, reply.id, { deliveryStatus: 'SENT' }, t.db),
+        t.ReplyNotSendingError,
+      );
+    } finally {
+      console.warn = originalWarn;
+      await t.db.user.delete({ where: { id: lee.id } });
     }
   },
 );

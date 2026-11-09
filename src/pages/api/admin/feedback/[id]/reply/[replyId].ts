@@ -2,6 +2,7 @@ import { AdminApiError, adminApiRoute, queryParam } from '~/server/adminApi';
 import {
   ReplyNotFoundError,
   ReplyNotSendingError,
+  ReplyStillSendingError,
   resolveReply,
   resolveReplyBody,
 } from '~/server/api/services/feedbackAdmin';
@@ -12,7 +13,8 @@ export const config = { api: { bodyParser: false } };
 /**
  * PATCH /api/admin/feedback/{id}/reply/{replyId} with `{ "deliveryStatus": "SENT" | "FAILED" }`
  * Settles a reply stuck in SENDING once you've checked whether it was delivered. SENT records it
- * as sent; FAILED lets the same key and message be sent again. 409 unless it's SENDING.
+ * as sent; FAILED lets the same key and message be sent again. 409 unless it's SENDING, and
+ * while its send attempt may still be running (for 2 minutes after it started).
  */
 export default adminApiRoute(['PATCH'], async (req, res, body) => {
   const feedbackId = queryParam(req.query.id) ?? '';
@@ -25,7 +27,7 @@ export default adminApiRoute(['PATCH'], async (req, res, body) => {
     if (error instanceof ReplyNotFoundError) {
       throw new AdminApiError(404, error.message);
     }
-    if (error instanceof ReplyNotSendingError) {
+    if (error instanceof ReplyNotSendingError || error instanceof ReplyStillSendingError) {
       throw new AdminApiError(409, error.message);
     }
     throw error;

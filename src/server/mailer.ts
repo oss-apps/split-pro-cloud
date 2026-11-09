@@ -15,6 +15,18 @@ const BOUNDED_TIMEOUTS = {
   socketTimeout: 15_000,
 };
 
+/**
+ * How long after it started a bounded send is certainly over, one way or another: each timeout
+ * can run once, with room to spare for a server that answers just in time (the socket timeout is
+ * for inactivity) and for the request's own database work.
+ */
+export const BOUNDED_SEND_SETTLED_MS =
+  3 *
+    (BOUNDED_TIMEOUTS.connectionTimeout +
+      BOUNDED_TIMEOUTS.greetingTimeout +
+      BOUNDED_TIMEOUTS.socketTimeout) +
+  15_000;
+
 const createTransporter = (timeouts?: typeof BOUNDED_TIMEOUTS) => {
   const host = env.EMAIL_SERVER_HOST;
   const port = parseInt(env.EMAIL_SERVER_PORT ?? '');

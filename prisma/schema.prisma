@@ -423,16 +423,19 @@ enum FeedbackReplyStatus {
 }
 
 model FeedbackReply {
-    id             String              @id @default(cuid())
-    feedbackId     String
-    message        String
-    idempotencyKey String              @unique
-    deliveryStatus FeedbackReplyStatus @default(SENDING)
+    id               String              @id @default(cuid())
+    feedbackId       String
+    message          String
+    idempotencyKey   String              @unique
+    deliveryStatus   FeedbackReplyStatus @default(SENDING)
+    /// The send attempt that holds it while SENDING: only that attempt may complete it
+    attemptId        String?
+    attemptStartedAt DateTime?
     /// When the email was accepted for delivery
-    sentAt         DateTime?
-    createdAt      DateTime            @default(now())
-    updatedAt      DateTime            @updatedAt
-    feedback       Feedback            @relation(fields: [feedbackId], references: [id], onDelete: Cascade)
+    sentAt           DateTime?
+    createdAt        DateTime            @default(now())
+    updatedAt        DateTime            @updatedAt
+    feedback         Feedback            @relation(fields: [feedbackId], references: [id], onDelete: Cascade)
 
     @@index([feedbackId])
 }
