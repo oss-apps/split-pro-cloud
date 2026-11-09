@@ -17,6 +17,7 @@ import { NotificationModal } from '~/components/NotificationModal';
 import { GetServerSideProps } from 'next';
 import { Fragment } from 'react';
 import { AdSlot, isFeedAdPosition } from '~/components/Ads/AdSlot';
+import { AppBetaCard } from '~/components/AppBeta';
 
 const BalancePage: NextPageWithUser = () => {
   function shareWithFriends() {
@@ -54,6 +55,7 @@ const BalancePage: NextPageWithUser = () => {
         }
       >
         <NotificationModal />
+        <AppBetaCard className="mx-4 mb-4" />
         <div className="">
           <div className="mx-4 flex items-stretch justify-between gap-4">
             {balanceQuery.data?.youOwe.length ? (

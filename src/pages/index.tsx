@@ -7,11 +7,19 @@ import {
   Import,
   Repeat,
   SlidersHorizontal,
+  Smartphone,
   Users,
 } from 'lucide-react';
 import Image from 'next/image';
 import Link from 'next/link';
-import { GITHUB_URL, QUICK_SPLIT_PATH, SITE_URL } from '~/components/Site/constants';
+import {
+  ANDROID_BETA_GROUP_URL,
+  ANDROID_BETA_OPT_IN_URL,
+  GITHUB_URL,
+  IOS_BETA_URL,
+  QUICK_SPLIT_PATH,
+  SITE_URL,
+} from '~/components/Site/constants';
 import {
   CtaBand,
   Faq,
@@ -31,8 +39,11 @@ const FAQS: FaqItem[] = [
   },
   {
     question: 'Do I need to install an app?',
-    answer:
-      'No. SplitPro runs in your browser. On your phone you can add it to your home screen, where it opens like any other app and can send you notifications.',
+    answer: `No. SplitPro runs in your browser, and on your phone you can add it to your home screen. ${
+      null !== ANDROID_BETA_GROUP_URL
+        ? 'Native iPhone and Android apps are in beta too.'
+        : 'A native iPhone app is in beta too, with Android coming soon.'
+    }`,
   },
   {
     question: 'Do my friends need an account?',
@@ -89,6 +100,7 @@ export default function Home() {
       <Hero />
       <Features />
       <Showcase />
+      <AppBeta />
       <QuickSplitPromo />
       <Why />
       <section className="mx-auto mt-24 max-w-3xl px-5 lg:px-8">
@@ -223,6 +235,53 @@ const Showcase = () => (
     </div>
   </section>
 );
+
+const AppBeta = () => {
+  const androidGroupUrl = ANDROID_BETA_GROUP_URL;
+
+  return (
+    <section className="mx-auto mt-24 max-w-6xl px-5 lg:px-8">
+      <div className="flex flex-col gap-6 rounded-xl border border-white/10 p-6 sm:flex-row sm:items-center sm:justify-between sm:p-8">
+        <div className="max-w-xl">
+          <p className="flex items-center gap-2 text-sm font-medium text-primary">
+            <Smartphone className="h-4 w-4" />
+            Beta
+          </p>
+          <h2 className="mt-2 text-xl font-semibold text-white">
+            {null !== androidGroupUrl
+              ? 'SplitPro for iPhone and Android is in beta'
+              : 'SplitPro for iPhone is in beta'}
+          </h2>
+          <p className="mt-2 text-gray-400">
+            The native app is still rough around the edges. Try it early and tell me what breaks.
+          </p>
+        </div>
+        <div className="flex shrink-0 flex-col gap-6 sm:w-64">
+          <div>
+            <SecondaryLink href={IOS_BETA_URL} external className="w-full">
+              Join the iOS beta
+            </SecondaryLink>
+            <p className="mt-2 text-xs text-gray-500">Needs Apple&apos;s free TestFlight app.</p>
+          </div>
+          {null !== androidGroupUrl ? (
+            <div>
+              <p className="text-sm font-medium text-gray-100">Android, in two steps</p>
+              <div className="mt-2 flex flex-col gap-2">
+                <SecondaryLink href={androidGroupUrl} external className="w-full">
+                  1. Join the testers group
+                </SecondaryLink>
+                <SecondaryLink href={ANDROID_BETA_OPT_IN_URL} external className="w-full">
+                  2. Become a tester
+                </SecondaryLink>
+              </div>
+              <p className="mt-2 text-xs text-gray-500">Use the same Google account for both.</p>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </section>
+  );
+};
 
 const QuickSplitPromo = () => (
   <section className="mx-auto mt-24 max-w-6xl px-5 lg:px-8">
