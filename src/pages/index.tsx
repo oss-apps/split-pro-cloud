@@ -7,7 +7,6 @@ import {
   Import,
   Repeat,
   SlidersHorizontal,
-  Smartphone,
   Users,
 } from 'lucide-react';
 import Image from 'next/image';
@@ -100,7 +99,6 @@ export default function Home() {
       <Hero />
       <Features />
       <Showcase />
-      <AppBeta />
       <QuickSplitPromo />
       <Why />
       <section className="mx-auto mt-24 max-w-3xl px-5 lg:px-8">
@@ -116,6 +114,18 @@ export default function Home() {
   );
 }
 
+const AppleLogo = ({ className }: { className?: string }) => (
+  <svg viewBox="0 0 384 512" fill="currentColor" aria-hidden="true" className={className}>
+    <path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z" />
+  </svg>
+);
+
+const AndroidLogo = ({ className }: { className?: string }) => (
+  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className={className}>
+    <path d="M17.6 9.48l1.84-3.18a.38.38 0 00-.66-.38l-1.86 3.22a11.4 11.4 0 00-9.84 0L5.22 5.92a.38.38 0 00-.66.38L6.4 9.48A10.8 10.8 0 001 18h22a10.8 10.8 0 00-5.4-8.52zM7 15.25a1.25 1.25 0 111.25-1.25A1.25 1.25 0 017 15.25zm10 0A1.25 1.25 0 1118.25 14 1.25 1.25 0 0117 15.25z" />
+  </svg>
+);
+
 const Hero = () => (
   <section className="mx-auto grid max-w-6xl items-center gap-12 px-5 pt-14 sm:pt-20 lg:grid-cols-[1.2fr_1fr] lg:px-8">
     <div className="text-center lg:text-left">
@@ -128,11 +138,34 @@ const Hero = () => (
       </p>
       <div className="mt-8 flex flex-col items-center gap-3 sm:flex-row sm:justify-center lg:justify-start">
         <PrimaryLink href="/auth/signin">Start splitting for free</PrimaryLink>
-        <SecondaryLink href={QUICK_SPLIT_PATH}>Quick split, no sign-up</SecondaryLink>
+        <SecondaryLink href={IOS_BETA_URL} external className="gap-2">
+          <AppleLogo className="h-4 w-4 -translate-y-px" />
+          iOS app (beta)
+        </SecondaryLink>
+        {null !== ANDROID_BETA_GROUP_URL ? (
+          <SecondaryLink href={ANDROID_BETA_GROUP_URL} external className="gap-2">
+            <AndroidLogo className="h-4 w-4" />
+            Android app (beta)
+          </SecondaryLink>
+        ) : null}
       </div>
       <p className="mt-6 text-sm text-gray-500">
         Free · Open source · Works on any phone or computer
       </p>
+      {null !== ANDROID_BETA_GROUP_URL ? (
+        <p className="mt-2 text-xs text-gray-500">
+          Android: join the group, then{' '}
+          <a
+            href={ANDROID_BETA_OPT_IN_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="underline hover:text-gray-300"
+          >
+            become a tester
+          </a>{' '}
+          with the same Google account.
+        </p>
+      ) : null}
     </div>
     <div className="mx-auto w-full max-w-[300px]">
       <div className="overflow-hidden rounded-[2rem] border border-white/10">
@@ -235,53 +268,6 @@ const Showcase = () => (
     </div>
   </section>
 );
-
-const AppBeta = () => {
-  const androidGroupUrl = ANDROID_BETA_GROUP_URL;
-
-  return (
-    <section className="mx-auto mt-24 max-w-6xl px-5 lg:px-8">
-      <div className="flex flex-col gap-6 rounded-xl border border-white/10 p-6 sm:flex-row sm:items-center sm:justify-between sm:p-8">
-        <div className="max-w-xl">
-          <p className="flex items-center gap-2 text-sm font-medium text-primary">
-            <Smartphone className="h-4 w-4" />
-            Beta
-          </p>
-          <h2 className="mt-2 text-xl font-semibold text-white">
-            {null !== androidGroupUrl
-              ? 'SplitPro for iPhone and Android is in beta'
-              : 'SplitPro for iPhone is in beta'}
-          </h2>
-          <p className="mt-2 text-gray-400">
-            The native app is still rough around the edges. Try it early and tell me what breaks.
-          </p>
-        </div>
-        <div className="flex shrink-0 flex-col gap-6 sm:w-64">
-          <div>
-            <SecondaryLink href={IOS_BETA_URL} external className="w-full">
-              Join the iOS beta
-            </SecondaryLink>
-            <p className="mt-2 text-xs text-gray-500">Needs Apple&apos;s free TestFlight app.</p>
-          </div>
-          {null !== androidGroupUrl ? (
-            <div>
-              <p className="text-sm font-medium text-gray-100">Android, in two steps</p>
-              <div className="mt-2 flex flex-col gap-2">
-                <SecondaryLink href={androidGroupUrl} external className="w-full">
-                  1. Join the testers group
-                </SecondaryLink>
-                <SecondaryLink href={ANDROID_BETA_OPT_IN_URL} external className="w-full">
-                  2. Become a tester
-                </SecondaryLink>
-              </div>
-              <p className="mt-2 text-xs text-gray-500">Use the same Google account for both.</p>
-            </div>
-          ) : null}
-        </div>
-      </div>
-    </section>
-  );
-};
 
 const QuickSplitPromo = () => (
   <section className="mx-auto mt-24 max-w-6xl px-5 lg:px-8">
