@@ -12,9 +12,10 @@ export const config = { api: { bodyParser: false } };
 
 /**
  * PATCH /api/admin/feedback/{id}/reply/{replyId} with `{ "deliveryStatus": "SENT" | "FAILED" }`
- * Settles a reply stuck in SENDING once you've checked whether it was delivered. SENT records it
- * as sent; FAILED lets the same key and message be sent again. 409 unless it's SENDING, and
- * while its send attempt may still be running (for 2 minutes after it started).
+ * Settles a reply stuck in SENDING. Only do this after checking whether the email arrived: SENT
+ * records it as sent; FAILED lets the same key and message be sent again. Allowed only from
+ * SENDING, once the send attempt started at least 10 minutes ago and is treated as abandoned;
+ * before that, 409 "Reply is still sending; try again later".
  */
 export default adminApiRoute(['PATCH'], async (req, res, body) => {
   const feedbackId = queryParam(req.query.id) ?? '';

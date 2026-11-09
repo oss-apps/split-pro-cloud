@@ -129,11 +129,11 @@ void test(
 
 type ReplyEmail = { to: string; reply: string; original: string };
 
-/** Makes a reply's send attempt old enough to be certainly over, as if time had passed. */
+/** Makes a reply's send attempt old enough to count as abandoned, as if time had passed. */
 const settleAttempt = async (t: Awaited<ReturnType<typeof setup>>, replyId: string) => {
   await t.db.feedbackReply.update({
     where: { id: replyId },
-    data: { attemptStartedAt: new Date(Date.now() - t.REPLY_ATTEMPT_SETTLED_MS - 1000) },
+    data: { attemptStartedAt: new Date(Date.now() - t.RECONCILE_AFTER_MS - 1000) },
   });
 };
 
@@ -563,7 +563,7 @@ void test(
           t.MailNotSentError,
         );
         const reply = await t.db.feedbackReply.findUniqueOrThrow({ where: { idempotencyKey } });
-        // Its attempt may still be running for a while, so it can't be settled yet
+        // Its attempt isn't treated as abandoned yet, so it can't be settled
         await assert.rejects(
           t.resolveReply(id, reply.id, { deliveryStatus: 'FAILED' }, t.db),
           t.ReplyStillSendingError,
@@ -649,6 +649,15 @@ void test(
       const reply = await t.db.feedbackReply.findUniqueOrThrow({ where: { idempotencyKey } });
 
       // Too young to settle by hand
+      await assert.rejects(
+        t.resolveReply(id, reply.id, { deliveryStatus: 'FAILED' }, t.db),
+        t.ReplyStillSendingError,
+      );
+      // Still too young just under the limit
+      await t.db.feedbackReply.update({
+        where: { id: reply.id },
+        data: { attemptStartedAt: new Date(Date.now() - t.RECONCILE_AFTER_MS + 60_000) },
+      });
       await assert.rejects(
         t.resolveReply(id, reply.id, { deliveryStatus: 'FAILED' }, t.db),
         t.ReplyStillSendingError,

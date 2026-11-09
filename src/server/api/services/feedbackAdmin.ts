@@ -9,7 +9,7 @@ import { randomUUID } from 'crypto';
 import { z } from 'zod';
 
 import { db as defaultDb } from '~/server/db';
-import { BOUNDED_SEND_SETTLED_MS, MailNotSentError, sendFeedbackReplyEmail } from '~/server/mailer';
+import { MailNotSentError, sendFeedbackReplyEmail } from '~/server/mailer';
 
 import { isUniqueViolation } from './feedbackService';
 
@@ -31,11 +31,16 @@ export class ReplyInProgressError extends Error {}
 export class ReplyNotFoundError extends Error {}
 /** Only a SENDING reply can be resolved by hand. */
 export class ReplyNotSendingError extends Error {}
-/** Its send attempt may still be running, so it can't be resolved yet. */
+/** Its send attempt started less than `RECONCILE_AFTER_MS` ago, so it can't be resolved yet. */
 export class ReplyStillSendingError extends Error {}
 
-/** A SENDING reply's attempt is certainly over once it started this long ago. */
-export const REPLY_ATTEMPT_SETTLED_MS = BOUNDED_SEND_SETTLED_MS;
+/**
+ * A reply stuck in SENDING this long after its attempt started is treated as abandoned, and an
+ * operator may resolve it. This doesn't prove the send has stopped (the SMTP socket timeout is for
+ * inactivity), so resolving stays a manual step, taken only after checking whether the email
+ * arrived.
+ */
+export const RECONCILE_AFTER_MS = 10 * 60 * 1000;
 
 /** A new attempt to send a reply: only the attempt holding a SENDING reply may complete it. */
 const newAttempt = () => ({ attemptId: randomUUID(), attemptStartedAt: new Date() });
@@ -327,10 +332,11 @@ export const replyToFeedback = async (
 };
 
 /**
- * Settles a reply stuck in SENDING, e.g. after the connection dropped mid-send, once an operator
- * has checked whether it was delivered: SENT records it as sent, FAILED lets the same key and
- * message be sent again. Never done automatically, and only once its attempt is certainly over
- * (`REPLY_ATTEMPT_SETTLED_MS`); that attempt can't complete it afterwards.
+ * Settles a reply stuck in SENDING, e.g. after the connection dropped mid-send. An operator action,
+ * to take only after checking whether the email arrived: SENT records it as sent, FAILED lets the
+ * same key and message be sent again. Never done automatically, and only once its attempt started
+ * at least `RECONCILE_AFTER_MS` ago and is treated as abandoned; that attempt can't complete it
+ * afterwards.
  */
 export const resolveReply = async (
   feedbackId: string,
@@ -348,7 +354,7 @@ export const resolveReply = async (
         deliveryStatus: FeedbackReplyStatus.SENDING,
         OR: [
           { attemptStartedAt: null },
-          { attemptStartedAt: { lt: new Date(now.getTime() - REPLY_ATTEMPT_SETTLED_MS) } },
+          { attemptStartedAt: { lt: new Date(now.getTime() - RECONCILE_AFTER_MS) } },
         ],
       },
       data: {
