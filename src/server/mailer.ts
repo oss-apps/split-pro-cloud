@@ -1,4 +1,3 @@
-import { type User } from 'next-auth';
 import nodemailer, { type Transporter } from 'nodemailer';
 import { env } from '~/env';
 import { sendToDiscord } from './service-notification';
@@ -100,15 +99,87 @@ export async function sendInviteEmail(email: string, name: string) {
   await sendMail(email, subject, text, html);
 }
 
-export async function sendFeedbackEmail(feedback: string, user: User) {
-  console.log('Received feedback from: ', user.email, 'Feedback: ', feedback);
+export type FeedbackEmailDetails = {
+  id: string;
+  message: string;
+  email: string;
+  name: string | null;
+  source: string;
+  appVersion: string | null;
+};
 
-  if (!env.FEEDBACK_EMAIL) return;
+/**
+ * Tells us about new feedback. The subject keeps the `Feedback received on SplitPro` prefix that
+ * existing inbox filters match.
+ */
+export async function sendFeedbackEmail(feedback: FeedbackEmailDetails) {
+  if (!env.FEEDBACK_EMAIL) return false;
 
-  const subject = `Feedback received on SplitPro from ${user.name}`;
-  const text = `Feedback created by ${user.name} :\n\nFeedback: ${feedback}\n\nemail: ${user.email}`;
+  const sender = feedback.name ?? feedback.email;
+  const subject = `Feedback received on SplitPro from ${sender}`;
+  const version = feedback.appVersion ? ` ${feedback.appVersion}` : '';
+  const text = `Feedback created by ${sender} :\n\nFeedback: ${feedback.message}\n\nemail: ${feedback.email}\nsource: ${feedback.source}${version}\nfeedback id: ${feedback.id}`;
+  const html = `<p>Feedback created by ${escapeHtml(sender)}:</p><p style="white-space: pre-wrap">${escapeHtml(feedback.message)}</p><p>email: ${escapeHtml(feedback.email)}<br/>source: ${escapeHtml(feedback.source + version)}<br/>feedback id: ${escapeHtml(feedback.id)}</p>`;
 
-  await sendMail(env.FEEDBACK_EMAIL, subject, text, text, user.email ?? undefined);
+  return sendMail(env.FEEDBACK_EMAIL, subject, text, html, feedback.email);
+}
+
+/**
+ * Replies to someone's feedback, quoting what they sent. Unlike the other emails this throws when
+ * the email can't be sent, so the caller doesn't record a reply that never went out.
+ */
+export async function sendFeedbackReplyEmail({
+  to,
+  reply,
+  original,
+}: {
+  to: string;
+  reply: string;
+  original: string;
+}) {
+  const subject = 'Re: your SplitPro feedback';
+  const quoted = original
+    .split('\n')
+    .map((line) => `> ${line}`)
+    .join('\n');
+  const text = `${reply}\n\n${quoted}`;
+  const html = `<p style="white-space: pre-wrap">${escapeHtml(reply)}</p><blockquote style="margin: 16px 0 0; padding-left: 12px; border-left: 3px solid #ccc; color: #666; white-space: pre-wrap">${escapeHtml(original)}</blockquote>`;
+
+  await deliverMail(to, subject, text, html, env.FEEDBACK_EMAIL);
+}
+
+export const escapeHtml = (value: string) =>
+  value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+export class MailNotSentError extends Error {}
+
+/**
+ * Sends an email and throws `MailNotSentError` when SMTP isn't configured or sending fails.
+ */
+async function deliverMail(
+  email: string,
+  subject: string,
+  text: string,
+  html: string,
+  replyTo?: string,
+) {
+  const transporter = getTransporter();
+  if (!transporter) {
+    throw new MailNotSentError('SMTP server not configured');
+  }
+
+  try {
+    await transporter.sendMail({ to: email, from: env.FROM_EMAIL, subject, text, html, replyTo });
+  } catch (error) {
+    throw new MailNotSentError(error instanceof Error ? error.message : 'Unknown error', {
+      cause: error,
+    });
+  }
 }
 
 async function sendMail(

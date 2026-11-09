@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import Constants from 'expo-constants';
+import * as Crypto from 'expo-crypto';
+import React, { useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ScrollView, StyleSheet } from 'react-native';
+import { Platform, ScrollView, StyleSheet } from 'react-native';
 
 import { Input, ModalHeader, Section, icons, toast } from '@/components/ui';
 import { api } from '@/lib/api';
@@ -15,20 +17,32 @@ const Feedback = () => {
   const { t } = useTranslation();
   const submitFeedback = api.user.submitFeedback.useMutation();
   const [feedback, setFeedback] = useState('');
+  // One key per draft: resending it (a double tap, a retry after an error) never saves it twice
+  const [clientKey] = useState(() => Crypto.randomUUID());
+  // Covers taps before the header re-renders with the spinner
+  const submitting = useRef(false);
   const trimmed = feedback.trim();
   const allowClose = useConfirmDiscard(0 < trimmed.length && !submitFeedback.isLoading);
 
   const submit = async () => {
-    if (MIN_LENGTH > trimmed.length) {
+    if (MIN_LENGTH > trimmed.length || submitting.current) {
       return;
     }
 
+    submitting.current = true;
     try {
-      await submitFeedback.mutateAsync({ feedback: trimmed });
+      await submitFeedback.mutateAsync({
+        feedback: trimmed,
+        clientKey,
+        source: 'ios' === Platform.OS ? 'ios' : 'android',
+        appVersion: Constants.expoConfig?.version,
+      });
     } catch (error) {
       console.warn(error);
       toast.error(t('account.feedback_failed'));
       return;
+    } finally {
+      submitting.current = false;
     }
 
     toast.success(t('account.feedback_sent'));

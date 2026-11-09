@@ -21,13 +21,14 @@ import { TRPCError } from '@trpc/server';
 import { randomUUID } from 'crypto';
 import { getDocumentUploadUrl } from '~/server/storage';
 import { FILE_SIZE_LIMIT } from '~/lib/constants';
-import { sendFeedbackEmail, sendInviteEmail } from '~/server/mailer';
+import { sendInviteEmail } from '~/server/mailer';
 import { pushNotification } from '~/server/notification';
 import { DEVICE_PLATFORMS, isValidExpoPushToken } from '~/utils/expoPush';
 import { toFixedNumber, toUIString } from '~/utils/numbers';
 import { SplitwiseGroupSchema, SplitwiseUserSchema } from '~/types';
 import { env } from '~/env';
 import { runBalanceTransaction } from '../services/balanceTransaction';
+import { submitFeedback, submitFeedbackInput } from '../services/feedbackService';
 import { getBalanceBreakdownWithFriend } from '../services/balanceBreakdown';
 import { sendRecurringStatusPushNotification } from '../services/notificationService';
 import { pauseRulesWith, recurrenceInputSchema } from '../services/recurringService';
@@ -451,11 +452,14 @@ export const userRouter = createTRPCRouter({
       await deleteExpense(input.expenseId, ctx.session.user.id);
     }),
 
-  submitFeedback: protectedProcedure
-    .input(z.object({ feedback: z.string().min(10) }))
-    .mutation(async ({ input, ctx }) => {
-      await sendFeedbackEmail(input.feedback, ctx.session.user);
-    }),
+  submitFeedback: protectedProcedure.input(submitFeedbackInput).mutation(async ({ input, ctx }) => {
+    const { id } = await submitFeedback(
+      ctx.session.user,
+      input,
+      ctx.mobileSessionId ? 'mobile' : 'web',
+    );
+    return { id };
+  }),
 
   getFriend: protectedProcedure
     .input(z.object({ friendId: z.number() }))

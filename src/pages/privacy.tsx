@@ -36,6 +36,11 @@ const Privacy: NextPage<{ feedbackEmail: string; adsEnabled: boolean }> = ({
           We automatically collect information about how you interact with the Service, such as
           pages visited and features used.
         </p>
+        <p className="mt-4 text-lg text-gray-300">Feedback</p>
+        <p className="mt-0.5 text-lg text-gray-400">
+          When you send us feedback, we store it with your account, name and email address so we can
+          reply. It is deleted when you delete your account.
+        </p>
         <p className="mt-4 text-lg text-gray-300">Quick splits</p>
         <p className="mt-0.5 text-lg text-gray-400">
           When you use Quick split without an account, we store the split&apos;s name, the names you

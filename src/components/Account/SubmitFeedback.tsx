@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { AppDrawer } from '../ui/drawer';
 import { ChevronRight, MessageSquare } from 'lucide-react';
 import { api } from '~/utils/api';
@@ -12,25 +12,46 @@ import { toast } from 'sonner';
 const feedbackSchema = z.object({
   feedback: z
     .string({ required_error: 'Feedback is required' })
-    .min(10, { message: 'Feedback should be at least 10 characters' }),
+    .trim()
+    .min(10, { message: 'Feedback should be at least 10 characters' })
+    .max(5000, { message: 'Feedback should be at most 5000 characters' }),
 });
 
 export const SubmitFeedback: React.FC = () => {
   const submitFeedbackMutation = api.user.submitFeedback.useMutation();
   const [feedbackOpen, setFeedbackOpen] = useState(false);
+  // One key per draft: resending the same draft (a double tap, a retry) never saves it twice
+  const [clientKey, setClientKey] = useState(() => crypto.randomUUID());
+  // Covers taps before the disabled button re-renders
+  const submitting = useRef(false);
 
   const feedbackForm = useForm<z.infer<typeof feedbackSchema>>({
     resolver: zodResolver(feedbackSchema),
   });
 
   async function onGroupSubmit(values: z.infer<typeof feedbackSchema>) {
-    try {
-      await submitFeedbackMutation.mutateAsync({ feedback: values.feedback });
-      feedbackForm.reset();
-      toast.success('Feedback submitted', { duration: 1500 });
-    } catch (e) {
-      toast.error('Failed to submit feedback');
+    if (submitting.current) {
+      return;
     }
+
+    submitting.current = true;
+    try {
+      await submitFeedbackMutation.mutateAsync({
+        feedback: values.feedback,
+        clientKey,
+        source: 'web',
+      });
+    } catch (e) {
+      // Keep the drawer and the text, so it can be sent again as it is
+      toast.error('Failed to submit feedback, please try again');
+      return;
+    } finally {
+      submitting.current = false;
+    }
+
+    feedbackForm.reset({ feedback: '' });
+    setClientKey(crypto.randomUUID());
+    toast.success('Feedback submitted', { duration: 1500 });
     setFeedbackOpen(false);
   }
 
@@ -53,6 +74,7 @@ export const SubmitFeedback: React.FC = () => {
       className="h-[70vh]"
       shouldCloseOnAction={false}
       actionTitle="Submit"
+      actionDisabled={submitFeedbackMutation.isLoading}
       actionOnClick={async () => {
         await feedbackForm.handleSubmit(onGroupSubmit)();
       }}

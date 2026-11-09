@@ -209,6 +209,8 @@ void test(
       });
       assert.equal(await t.db.verificationToken.count({ where: { identifier } }), 1);
 
+      await caller.user.submitFeedback({ feedback: 'Feedback that goes with the account' });
+
       // An Apple link with Apple failing doesn't stop the deletion
       await t.db.account.create({
         data: {
@@ -235,6 +237,7 @@ void test(
       const deleted = await t.db.user.findUniqueOrThrow({ where: { id: eve.id } });
       assert.ok(deleted.deletedAt);
       assert.equal(deleted.email, null);
+      assert.equal(await t.db.feedback.count({ where: { userId: eve.id } }), 0);
 
       // Single use: the same code doesn't work again
       await assert.rejects(deleteWith(code), withCode('BAD_REQUEST'));

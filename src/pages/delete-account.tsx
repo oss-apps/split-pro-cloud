@@ -44,7 +44,7 @@ const DeleteAccount: NextPage<{ feedbackEmail: string }> = ({ feedbackEmail }) =
       <h2 className="mt-12 text-xl font-semibold text-white">What gets deleted</h2>
       <p className="mt-3 text-lg text-gray-400">
         Your name, email address, profile photo, sign-in methods (Google, Apple, email), sessions,
-        notification settings and your friends list are deleted straight away.
+        notification settings, your friends list and feedback you sent us are deleted straight away.
       </p>
 
       <h2 className="mt-10 text-xl font-semibold text-white">What is kept</h2>
