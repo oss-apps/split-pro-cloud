@@ -27,6 +27,9 @@ export class FeedbackNotFoundError extends Error {}
 export class IdempotencyConflictError extends Error {}
 /** A reply with this key is being sent, or it's unknown whether it went: not sending it again. */
 export class ReplyInProgressError extends Error {}
+export class ReplyNotFoundError extends Error {}
+/** Only a SENDING reply can be resolved by hand. */
+export class ReplyNotSendingError extends Error {}
 
 const statusSchema = z.nativeEnum(FeedbackStatus);
 
@@ -43,6 +46,10 @@ export const replyBody = z.object({
 });
 
 export const statusBody = z.object({ status: statusSchema });
+
+export const resolveReplyBody = z.object({
+  deliveryStatus: z.enum([FeedbackReplyStatus.SENT, FeedbackReplyStatus.FAILED]),
+});
 
 export const importBody = z.object({
   items: z
@@ -215,6 +222,10 @@ const reserveReply = async (
   if (existing.feedbackId !== id) {
     throw new IdempotencyConflictError('idempotencyKey was used for other feedback');
   }
+  // A key stands for one message: an edited reply needs a new key, also after a failure
+  if (existing.message !== message) {
+    throw new IdempotencyConflictError('idempotencyKey was used for a different message');
+  }
   if (FeedbackReplyStatus.SENT === existing.deliveryStatus) {
     return { send: false, reply: existing };
   }
@@ -225,14 +236,14 @@ const reserveReply = async (
   // FAILED certainly wasn't sent: claim it again, unless another retry just did
   const { count } = await db.feedbackReply.updateMany({
     where: { id: existing.id, deliveryStatus: FeedbackReplyStatus.FAILED },
-    data: { deliveryStatus: FeedbackReplyStatus.SENDING, message },
+    data: { deliveryStatus: FeedbackReplyStatus.SENDING },
   });
   if (0 === count) {
     return retry();
   }
   return {
     send: true,
-    reply: { ...existing, message, deliveryStatus: FeedbackReplyStatus.SENDING },
+    reply: { ...existing, deliveryStatus: FeedbackReplyStatus.SENDING },
     ...target,
   };
 };
@@ -261,8 +272,9 @@ export const replyToFeedback = async (
     await send({ to: reservation.to, reply: message, original: reservation.original });
   } catch (error) {
     if (error instanceof MailNotSentError && error.definite) {
-      await db.feedbackReply.update({
-        where: { id: reservation.reply.id },
+      // Unless an operator resolved it meanwhile
+      await db.feedbackReply.updateMany({
+        where: { id: reservation.reply.id, deliveryStatus: FeedbackReplyStatus.SENDING },
         data: { deliveryStatus: FeedbackReplyStatus.FAILED },
       });
     }
@@ -279,6 +291,46 @@ export const replyToFeedback = async (
   ]);
   return { reply: toReplyJson(reply), created: true };
 };
+
+/**
+ * Settles a reply stuck in SENDING, e.g. after the connection dropped mid-send, once an operator
+ * has checked whether it was delivered: SENT records it as sent, FAILED lets the same key and
+ * message be sent again. Never done automatically.
+ */
+export const resolveReply = async (
+  feedbackId: string,
+  replyId: string,
+  { deliveryStatus }: z.infer<typeof resolveReplyBody>,
+  db: PrismaClient = defaultDb,
+) =>
+  db.$transaction(async (tx) => {
+    const sent = FeedbackReplyStatus.SENT === deliveryStatus;
+    const { count } = await tx.feedbackReply.updateMany({
+      where: { id: replyId, feedbackId, deliveryStatus: FeedbackReplyStatus.SENDING },
+      data: sent ? { deliveryStatus, sentAt: new Date() } : { deliveryStatus },
+    });
+
+    const reply = await tx.feedbackReply.findFirst({
+      where: { id: replyId, feedbackId },
+      select: replySelect,
+    });
+    if (!reply) {
+      throw new ReplyNotFoundError('Reply not found');
+    }
+    if (0 === count) {
+      throw new ReplyNotSendingError(
+        `Reply is ${reply.deliveryStatus}; only SENDING replies can be resolved`,
+      );
+    }
+
+    if (sent) {
+      await tx.feedback.update({
+        where: { id: feedbackId },
+        data: { status: FeedbackStatus.REPLIED },
+      });
+    }
+    return toReplyJson(reply);
+  });
 
 type ImportItem = z.infer<typeof importBody>['items'][number];
 type ImportOutcome = 'created' | 'skipped' | 'unmatched';

@@ -16,6 +16,8 @@ const { FEEDBACK_RATE_LIMIT, isOverFeedbackLimit, submitFeedback, submitFeedback
   await import('~/server/api/services/feedbackService');
 
 const { adminApiRoute } = await import('~/server/adminApi');
+const { MailNotSentError, sendFeedbackEmail } = await import('~/server/mailer');
+const { env } = await import('~/env');
 
 void describe('isAdminAuthorized', () => {
   void it('accepts the exact bearer token', () => {
@@ -481,5 +483,89 @@ void describe('adminApiRoute', () => {
       console.error = originalError;
     }
     assert.ok(!JSON.stringify(errors).includes('secret@example.com'));
+  });
+});
+
+void describe('sendFeedbackEmail', () => {
+  const feedback = {
+    id: 'fb-123',
+    message: 'The feedback itself',
+    email: 'sender@example.com',
+    name: 'Sender',
+    source: 'web',
+    appVersion: null,
+  };
+  const smtpRejection = () =>
+    Object.assign(new Error('550 5.1.1 <feedback-inbox@example.com>: Recipient address rejected'), {
+      code: 'EENVELOPE',
+      responseCode: 550,
+      response: '550 5.1.1 <feedback-inbox@example.com>: Recipient address rejected',
+    });
+
+  /** Runs `run` with console output and Discord posts captured. */
+  const capture = async (run: () => Promise<unknown>) => {
+    const mutableEnv = env as { -readonly [Key in keyof typeof env]: (typeof env)[Key] };
+    const originalEnv = { ...env };
+    const original = { error: console.error, log: console.log, warn: console.warn };
+    const originalFetch = globalThis.fetch;
+    const output: unknown[] = [];
+    const record = (...args: unknown[]) => {
+      output.push(args);
+    };
+    mutableEnv.FEEDBACK_EMAIL = 'feedback-inbox@example.com';
+    mutableEnv.DISCORD_WEBHOOK_URL = 'https://discord.invalid/webhook';
+    console.error = record;
+    console.log = record;
+    console.warn = record;
+    globalThis.fetch = (async (_url: string, init?: { body?: string }) => {
+      output.push(['discord', init?.body]);
+      return new Response(null, { status: 204 });
+    }) as typeof fetch;
+
+    try {
+      return { result: await run(), output: JSON.stringify(output) };
+    } finally {
+      Object.assign(mutableEnv, originalEnv);
+      Object.assign(console, original);
+      globalThis.fetch = originalFetch;
+    }
+  };
+
+  void it('logs and reports only the feedback id and codes when the server rejects it', async () => {
+    const thrown = [smtpRejection(), new MailNotSentError(smtpRejection())];
+
+    await thrown.reduce(async (previous, error) => {
+      await previous;
+      const { result, output } = await capture(() =>
+        sendFeedbackEmail(feedback, async () => {
+          throw error;
+        }),
+      );
+
+      assert.equal(result, false);
+      assert.ok(output.includes('fb-123'));
+      assert.ok(output.includes('EENVELOPE'));
+      assert.ok(output.includes('discord'));
+      [
+        'feedback-inbox@example.com',
+        'sender@example.com',
+        'Recipient address',
+        '550 5.1.1',
+      ].forEach((secret) => assert.ok(!output.includes(secret), `${secret} leaked: ${output}`));
+    }, Promise.resolve());
+  });
+
+  void it('sends to the feedback inbox with the sender as reply-to', async () => {
+    const calls: unknown[][] = [];
+    const { result } = await capture(() =>
+      sendFeedbackEmail(feedback, async (...args) => {
+        calls.push(args);
+      }),
+    );
+
+    assert.equal(result, true);
+    assert.equal(calls[0]?.[0], 'feedback-inbox@example.com');
+    assert.match(String(calls[0]?.[1]), /^Feedback received on SplitPro/);
+    assert.equal(calls[0]?.[4], 'sender@example.com');
   });
 });

@@ -139,9 +139,13 @@ export type FeedbackEmailDetails = {
 
 /**
  * Tells us about new feedback. The subject keeps the `Feedback received on SplitPro` prefix that
- * existing inbox filters match.
+ * existing inbox filters match. Best effort: returns whether it was sent, and on failure logs and
+ * reports only the feedback id and error codes, never the recipient or the server's reply.
  */
-export async function sendFeedbackEmail(feedback: FeedbackEmailDetails) {
+export async function sendFeedbackEmail(
+  feedback: FeedbackEmailDetails,
+  deliver: typeof deliverMail = deliverMail,
+) {
   if (!env.FEEDBACK_EMAIL) return false;
 
   const sender = feedback.name ?? feedback.email;
@@ -150,7 +154,17 @@ export async function sendFeedbackEmail(feedback: FeedbackEmailDetails) {
   const text = `Feedback created by ${sender} :\n\nFeedback: ${feedback.message}\n\nemail: ${feedback.email}\nsource: ${feedback.source}${version}\nfeedback id: ${feedback.id}`;
   const html = `<p>Feedback created by ${escapeHtml(sender)}:</p><p style="white-space: pre-wrap">${escapeHtml(feedback.message)}</p><p>email: ${escapeHtml(feedback.email)}<br/>source: ${escapeHtml(feedback.source + version)}<br/>feedback id: ${escapeHtml(feedback.id)}</p>`;
 
-  return sendMail(env.FEEDBACK_EMAIL, subject, text, html, feedback.email);
+  try {
+    await deliver(env.FEEDBACK_EMAIL, subject, text, html, feedback.email);
+    return true;
+  } catch (error) {
+    const { code, responseCode } = safeMailErrorDetails(error);
+    console.error('Feedback email not sent', { feedbackId: feedback.id, code, responseCode });
+    await sendToDiscord(
+      `Feedback email not sent for feedback ${feedback.id} (code: ${code ?? 'unknown'}, response code: ${responseCode ?? 'none'})`,
+    ).catch(() => undefined);
+    return false;
+  }
 }
 
 /**

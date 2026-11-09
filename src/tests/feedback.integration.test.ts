@@ -150,11 +150,11 @@ void test(
         quiet,
       );
 
-      // A definite failure is recorded as FAILED, and the same key sends again
+      // A definite failure is recorded as FAILED, and the same key and message send again
       await assert.rejects(
         t.replyToFeedback(
           id,
-          { message: 'Yes!', idempotencyKey: key('k1') },
+          { message: 'Yes, coming soon', idempotencyKey: key('k1') },
           {
             db: t.db,
             send: async () => {
@@ -433,6 +433,154 @@ void test(
     } finally {
       await t.db.feedback.deleteMany({ where: { externalId: { in: externalIds } } });
       await t.db.user.deleteMany({ where: { id: { in: [carol.id, hank.id] } } });
+    }
+  },
+);
+
+void test(
+  'feedback: a reply key stands for one message, also after a failure',
+  { skip: !databaseUrl },
+  async () => {
+    const t = await setup();
+    const ivy = await t.createUser('Ivy');
+    const sent: ReplyEmail[] = [];
+    const send = async (email: ReplyEmail) => {
+      sent.push(email);
+    };
+    const quiet = { db: t.db, notify: async () => undefined };
+    const reply = (
+      id: string,
+      message: string,
+      idempotencyKey: string,
+      deps = { db: t.db, send },
+    ) => t.replyToFeedback(id, { message, idempotencyKey }, deps);
+
+    try {
+      const { id } = await t.submitFeedback(
+        ivy,
+        { feedback: 'Feedback for keyed replies' },
+        'web',
+        quiet,
+      );
+
+      // SENT: the same key with another message is a conflict, not the earlier success
+      const sentKey = `sent-${t.suffix}`;
+      await reply(id, 'First answer', sentKey);
+      await assert.rejects(reply(id, 'Edited answer', sentKey), t.IdempotencyConflictError);
+      assert.equal(sent.length, 1);
+
+      // FAILED: only the same message is retried; an edit needs a new key
+      const failedKey = `failed-${t.suffix}`;
+      await assert.rejects(
+        reply(id, 'Answer that fails', failedKey, {
+          db: t.db,
+          send: async () => {
+            throw new t.MailNotSentError({ code: 'ENOTCONFIGURED' });
+          },
+        }),
+        t.MailNotSentError,
+      );
+      await assert.rejects(reply(id, 'Answer, edited', failedKey), t.IdempotencyConflictError);
+      const stillFailed = await t.db.feedbackReply.findUniqueOrThrow({
+        where: { idempotencyKey: failedKey },
+      });
+      assert.equal(stillFailed.deliveryStatus, 'FAILED');
+      assert.equal(stillFailed.message, 'Answer that fails');
+      assert.equal(sent.length, 1);
+
+      const retried = await reply(id, 'Answer that fails', failedKey);
+      assert.equal(retried.created, true);
+      assert.equal(sent.length, 2);
+      assert.equal(sent[1]?.reply, 'Answer that fails');
+    } finally {
+      await t.db.user.delete({ where: { id: ivy.id } });
+    }
+  },
+);
+
+void test(
+  'feedback: an operator settles a reply stuck in SENDING',
+  { skip: !databaseUrl },
+  async () => {
+    const t = await setup();
+    const jo = await t.createUser('Jo');
+    let sends = 0;
+    const send = async () => {
+      sends += 1;
+    };
+    const dropped = async () => {
+      sends += 1;
+      throw new t.MailNotSentError({ code: 'ECONNECTION' });
+    };
+    const quiet = { db: t.db, notify: async () => undefined };
+
+    try {
+      const { id } = await t.submitFeedback(
+        jo,
+        { feedback: 'Feedback with stuck replies' },
+        'web',
+        quiet,
+      );
+      const stuck = async (idempotencyKey: string) => {
+        await assert.rejects(
+          t.replyToFeedback(
+            id,
+            { message: 'Thanks!', idempotencyKey },
+            { db: t.db, send: dropped },
+          ),
+          t.MailNotSentError,
+        );
+        return t.db.feedbackReply.findUniqueOrThrow({ where: { idempotencyKey } });
+      };
+
+      // Delivered after all: recorded as sent, and the key answers without sending
+      const deliveredKey = `delivered-${t.suffix}`;
+      const delivered = await stuck(deliveredKey);
+      assert.equal(delivered.deliveryStatus, 'SENDING');
+      const resolved = await t.resolveReply(id, delivered.id, { deliveryStatus: 'SENT' }, t.db);
+      assert.equal(resolved.deliveryStatus, 'SENT');
+      assert.ok(resolved.sentAt);
+      assert.equal((await t.db.feedback.findUniqueOrThrow({ where: { id } })).status, 'REPLIED');
+      const again = await t.replyToFeedback(
+        id,
+        { message: 'Thanks!', idempotencyKey: deliveredKey },
+        { db: t.db, send },
+      );
+      assert.equal(again.created, false);
+      assert.equal(sends, 1);
+
+      // Only from SENDING
+      await assert.rejects(
+        t.resolveReply(id, delivered.id, { deliveryStatus: 'FAILED' }, t.db),
+        t.ReplyNotSendingError,
+      );
+
+      // Never delivered: FAILED makes the same key and message send again
+      const lostKey = `lost-${t.suffix}`;
+      const lost = await stuck(lostKey);
+      const failed = await t.resolveReply(id, lost.id, { deliveryStatus: 'FAILED' }, t.db);
+      assert.equal(failed.deliveryStatus, 'FAILED');
+      assert.equal(failed.sentAt, null);
+      const resent = await t.replyToFeedback(
+        id,
+        { message: 'Thanks!', idempotencyKey: lostKey },
+        { db: t.db, send },
+      );
+      assert.equal(resent.created, true);
+      assert.equal(sends, 3);
+
+      // The reply has to belong to that feedback
+      const other = await t.submitFeedback(jo, { feedback: 'Some other feedback' }, 'web', quiet);
+      await assert.rejects(
+        t.resolveReply(other.id, lost.id, { deliveryStatus: 'SENT' }, t.db),
+        t.ReplyNotFoundError,
+      );
+      await assert.rejects(
+        t.resolveReply(id, 'missing', { deliveryStatus: 'SENT' }, t.db),
+        t.ReplyNotFoundError,
+      );
+    } finally {
+      await t.db.user.delete({ where: { id: jo.id } });
     }
   },
 );

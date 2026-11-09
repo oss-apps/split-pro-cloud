@@ -13,9 +13,11 @@ export const config = { api: { bodyParser: false } };
 
 /**
  * POST /api/admin/feedback/{id}/reply with `{ "message": string, "idempotencyKey": string }`
- * Emails the reply and records it. 201 when sent now, 200 when that key was already sent, 409 when
- * it's being sent or it's unknown whether it went, 502 when the email wasn't sent (retry with the
- * same key) or it's unknown whether it went (not retried).
+ * Emails the reply and records it. A key stands for one message: send an edited reply with a new
+ * key. 201 when sent now, 200 when that key and message were already sent, 409 when the key was
+ * used for other feedback or another message, or the reply is being sent or it's unknown whether
+ * it went (resolve it with PATCH .../reply/{replyId}), 502 when the email wasn't sent (retry with
+ * the same key and message) or it's unknown whether it went (not retried).
  */
 export default adminApiRoute(['POST'], async (req, res, body) => {
   const id = queryParam(req.query.id) ?? '';
