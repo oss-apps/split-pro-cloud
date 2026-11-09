@@ -27,6 +27,14 @@ import {
   SecondaryLink,
   SectionHeading,
 } from '~/components/Site/blocks';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '~/components/ui/dialog';
 import { Seo, faqJsonLd } from '~/components/Site/Seo';
 import { SiteLayout } from '~/components/Site/SiteLayout';
 
@@ -126,6 +134,32 @@ const AndroidLogo = ({ className }: { className?: string }) => (
   </svg>
 );
 
+const AndroidBetaButton = ({ groupUrl }: { groupUrl: string }) => (
+  <Dialog>
+    <DialogTrigger className="inline-flex h-11 w-44 items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-white/15 px-5 text-sm font-medium text-gray-100 transition-colors hover:bg-white/5">
+      <AndroidLogo className="h-4 w-4" />
+      Android (beta)
+    </DialogTrigger>
+    <DialogContent className="max-w-sm">
+      <DialogHeader>
+        <DialogTitle>Join the Android beta</DialogTitle>
+        <DialogDescription>
+          Two quick steps. Use the same Google account for both.
+        </DialogDescription>
+      </DialogHeader>
+      <div className="mt-2 flex flex-col gap-3">
+        <PrimaryLink href={groupUrl} external className="w-full">
+          1. Join the testers group
+        </PrimaryLink>
+        <SecondaryLink href={ANDROID_BETA_OPT_IN_URL} external className="w-full">
+          2. Become a tester
+        </SecondaryLink>
+      </div>
+      <p className="text-xs text-gray-500">Then install SplitPro from Google Play.</p>
+    </DialogContent>
+  </Dialog>
+);
+
 const Hero = () => (
   <section className="mx-auto grid max-w-6xl items-center gap-12 px-5 pt-14 sm:pt-20 lg:grid-cols-[1.2fr_1fr] lg:px-8">
     <div className="text-center lg:text-left">
@@ -137,35 +171,20 @@ const Hero = () => (
         no paywall for the basics.
       </p>
       <div className="mt-8 flex flex-col items-center gap-3 sm:flex-row sm:justify-center lg:justify-start">
-        <PrimaryLink href="/auth/signin">Start splitting for free</PrimaryLink>
-        <SecondaryLink href={IOS_BETA_URL} external className="gap-2">
+        <PrimaryLink href="/auth/signin" className="w-44 whitespace-nowrap">
+          Get started
+        </PrimaryLink>
+        <SecondaryLink href={IOS_BETA_URL} external className="w-44 gap-2 whitespace-nowrap">
           <AppleLogo className="h-4 w-4 -translate-y-px" />
-          iOS app (beta)
+          iOS (beta)
         </SecondaryLink>
         {null !== ANDROID_BETA_GROUP_URL ? (
-          <SecondaryLink href={ANDROID_BETA_GROUP_URL} external className="gap-2">
-            <AndroidLogo className="h-4 w-4" />
-            Android app (beta)
-          </SecondaryLink>
+          <AndroidBetaButton groupUrl={ANDROID_BETA_GROUP_URL} />
         ) : null}
       </div>
       <p className="mt-6 text-sm text-gray-500">
         Free · Open source · Works on any phone or computer
       </p>
-      {null !== ANDROID_BETA_GROUP_URL ? (
-        <p className="mt-2 text-xs text-gray-500">
-          Android: join the group, then{' '}
-          <a
-            href={ANDROID_BETA_OPT_IN_URL}
-            target="_blank"
-            rel="noreferrer"
-            className="underline hover:text-gray-300"
-          >
-            become a tester
-          </a>{' '}
-          with the same Google account.
-        </p>
-      ) : null}
     </div>
     <div className="mx-auto w-full max-w-[300px]">
       <div className="overflow-hidden rounded-[2rem] border border-white/10">
