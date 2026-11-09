@@ -3,6 +3,8 @@
 The iOS and Android app for [SplitPro](https://splitpro.app), built with Expo (SDK 58) and Expo Router. It
 talks to the same tRPC API as the web app and reuses the web's pure logic from `../src`.
 
+Releasing, store accounts and beta status: see [RELEASING.md](RELEASING.md).
+
 ## Run it
 
 ```sh
