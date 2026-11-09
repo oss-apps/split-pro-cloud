@@ -15,7 +15,7 @@ export const QUICK_SPLIT_PATH = '/split';
 export const IOS_BETA_URL = 'https://testflight.apple.com/join/FURvpmbH';
 // Android: testers join this Google Group first, then opt in on the Play testing page.
 // Set the group URL once the group exists. While it's null, every Android link stays hidden.
-export const ANDROID_BETA_GROUP_URL: string | null = null;
+export const ANDROID_BETA_GROUP_URL: string | null = 'https://groups.google.com/g/splitpro-beta';
 export const ANDROID_BETA_OPT_IN_URL = 'https://play.google.com/apps/testing/app.splitpro';
 
 // Same-origin on purpose; see the /stats rewrites in next.config.js.
