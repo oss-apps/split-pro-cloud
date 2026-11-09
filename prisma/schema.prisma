@@ -414,13 +414,25 @@ model Feedback {
     @@index([userId, createdAt])
 }
 
+enum FeedbackReplyStatus {
+    /// Reserved, the email is being sent, or it's unknown whether it went
+    SENDING
+    SENT
+    /// Certainly not sent, so it's safe to send again
+    FAILED
+}
+
 model FeedbackReply {
-    id             String   @id @default(cuid())
+    id             String              @id @default(cuid())
     feedbackId     String
     message        String
-    idempotencyKey String   @unique
-    sentAt         DateTime @default(now())
-    feedback       Feedback @relation(fields: [feedbackId], references: [id], onDelete: Cascade)
+    idempotencyKey String              @unique
+    deliveryStatus FeedbackReplyStatus @default(SENDING)
+    /// When the email was accepted for delivery
+    sentAt         DateTime?
+    createdAt      DateTime            @default(now())
+    updatedAt      DateTime            @updatedAt
+    feedback       Feedback            @relation(fields: [feedbackId], references: [id], onDelete: Cascade)
 
     @@index([feedbackId])
 }

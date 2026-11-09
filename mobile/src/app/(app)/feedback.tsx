@@ -6,34 +6,39 @@ import { Platform, ScrollView, StyleSheet } from 'react-native';
 
 import { Input, ModalHeader, Section, icons, toast } from '@/components/ui';
 import { api } from '@/lib/api';
+import { type DraftKey, keyForDraft } from '@/lib/draftKey';
 import { goBackOr, useConfirmDiscard } from '@/lib/navigation';
 import { colors, spacing } from '@/theme/tokens';
 
-/** The server's `submitFeedback` minimum. */
+/** The server's `submitFeedback` limits. */
 const MIN_LENGTH = 10;
+const MAX_LENGTH = 5000;
 
 /** Port of the web's src/components/Account/SubmitFeedback.tsx, as a modal form. */
 const Feedback = () => {
   const { t } = useTranslation();
   const submitFeedback = api.user.submitFeedback.useMutation();
   const [feedback, setFeedback] = useState('');
-  // One key per draft: resending it (a double tap, a retry after an error) never saves it twice
-  const [clientKey] = useState(() => Crypto.randomUUID());
+  // Resending the same text (a double tap, a retry after an error) reuses its key, so it's saved
+  // once; edited text gets a new one
+  const draftKey = useRef<DraftKey | null>(null);
   // Covers taps before the header re-renders with the spinner
   const submitting = useRef(false);
   const trimmed = feedback.trim();
+  const tooLong = MAX_LENGTH < trimmed.length;
   const allowClose = useConfirmDiscard(0 < trimmed.length && !submitFeedback.isLoading);
 
   const submit = async () => {
-    if (MIN_LENGTH > trimmed.length || submitting.current) {
+    if (MIN_LENGTH > trimmed.length || tooLong || submitting.current) {
       return;
     }
 
     submitting.current = true;
+    draftKey.current = keyForDraft(draftKey.current, trimmed, () => Crypto.randomUUID());
     try {
       await submitFeedback.mutateAsync({
         feedback: trimmed,
-        clientKey,
+        clientKey: draftKey.current.key,
         source: 'ios' === Platform.OS ? 'ios' : 'android',
         appVersion: Constants.expoConfig?.version,
       });
@@ -61,7 +66,9 @@ const Feedback = () => {
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
       >
-        <Section footer={t('account.feedback_too_short')}>
+        <Section
+          footer={tooLong ? t('account.feedback_too_long') : t('account.feedback_too_short')}
+        >
           <Input
             inline
             placeholder={t('account.feedback_placeholder')}
@@ -81,7 +88,7 @@ const Feedback = () => {
         confirm={{
           label: t('account.feedback_submit'),
           icon: icons.sendFill,
-          disabled: MIN_LENGTH > trimmed.length,
+          disabled: MIN_LENGTH > trimmed.length || tooLong,
           loading: submitFeedback.isLoading,
           onPress: () => void submit(),
         }}

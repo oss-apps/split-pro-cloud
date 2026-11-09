@@ -81,6 +81,7 @@
     "feedback": "Send feedback",
     "feedback_placeholder": "Enter your feedback",
     "feedback_too_short": "Feedback should be at least 10 characters",
+    "feedback_too_long": "Feedback should be at most 5000 characters",
     "feedback_submit": "Submit",
     "feedback_sent": "Feedback submitted",
     "feedback_failed": "Failed to submit feedback",

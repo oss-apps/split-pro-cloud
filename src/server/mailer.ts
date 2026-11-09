@@ -1,12 +1,21 @@
 import nodemailer, { type Transporter } from 'nodemailer';
 import { env } from '~/env';
+import { MAIL_NOT_CONFIGURED, isDefiniteSendFailure, safeMailErrorDetails } from './mailErrors';
 import { sendToDiscord } from './service-notification';
 
 let transporter: Transporter;
+let boundedTransporter: Transporter;
 
-const getTransporter = () => {
-  if (transporter) return transporter;
+/**
+ * For sends a request waits on: gives up instead of hanging on a slow or silent server.
+ */
+const BOUNDED_TIMEOUTS = {
+  connectionTimeout: 10_000,
+  greetingTimeout: 10_000,
+  socketTimeout: 15_000,
+};
 
+const createTransporter = (timeouts?: typeof BOUNDED_TIMEOUTS) => {
   const host = env.EMAIL_SERVER_HOST;
   const port = parseInt(env.EMAIL_SERVER_PORT ?? '');
   const user = env.EMAIL_SERVER_USER;
@@ -27,10 +36,30 @@ const getTransporter = () => {
     tls: {
       rejectUnauthorized: env.NODE_ENV !== 'development',
     },
+    ...timeouts,
   };
 
-  transporter = nodemailer.createTransport(transport);
-  return transporter;
+  return nodemailer.createTransport(transport);
+};
+
+const getTransporter = () => {
+  if (transporter) return transporter;
+
+  const created = createTransporter();
+  if (created) {
+    transporter = created;
+  }
+  return created;
+};
+
+const getBoundedTransporter = () => {
+  if (boundedTransporter) return boundedTransporter;
+
+  const created = createTransporter(BOUNDED_TIMEOUTS);
+  if (created) {
+    boundedTransporter = created;
+  }
+  return created;
 };
 
 export async function sendSignUpEmail(email: string, token: string, url: string) {
@@ -156,10 +185,27 @@ export const escapeHtml = (value: string) =>
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 
-export class MailNotSentError extends Error {}
+/**
+ * An email that wasn't sent, or might not have been. Carries only nodemailer's error code and the
+ * SMTP reply code, never the error message, so it's safe to log.
+ */
+export class MailNotSentError extends Error {
+  /** True when the server certainly didn't accept the message, so retrying can't send it twice. */
+  definite: boolean;
+  code?: string;
+  responseCode?: number;
+
+  constructor(error: unknown) {
+    super('Email not sent');
+    this.name = 'MailNotSentError';
+    this.definite = isDefiniteSendFailure(error);
+    Object.assign(this, safeMailErrorDetails(error));
+  }
+}
 
 /**
- * Sends an email and throws `MailNotSentError` when SMTP isn't configured or sending fails.
+ * Sends an email with bounded timeouts and throws `MailNotSentError` when SMTP isn't configured or
+ * sending fails.
  */
 async function deliverMail(
   email: string,
@@ -168,17 +214,15 @@ async function deliverMail(
   html: string,
   replyTo?: string,
 ) {
-  const transporter = getTransporter();
+  const transporter = getBoundedTransporter();
   if (!transporter) {
-    throw new MailNotSentError('SMTP server not configured');
+    throw new MailNotSentError({ code: MAIL_NOT_CONFIGURED });
   }
 
   try {
     await transporter.sendMail({ to: email, from: env.FROM_EMAIL, subject, text, html, replyTo });
   } catch (error) {
-    throw new MailNotSentError(error instanceof Error ? error.message : 'Unknown error', {
-      cause: error,
-    });
+    throw new MailNotSentError(error);
   }
 }
 

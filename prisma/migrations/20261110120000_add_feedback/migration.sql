@@ -1,6 +1,9 @@
 -- CreateEnum
 CREATE TYPE "FeedbackStatus" AS ENUM ('NEW', 'REPLIED', 'CLOSED');
 
+-- CreateEnum
+CREATE TYPE "FeedbackReplyStatus" AS ENUM ('SENDING', 'SENT', 'FAILED');
+
 -- CreateTable
 CREATE TABLE "Feedback" (
     "id" TEXT NOT NULL,
@@ -25,7 +28,10 @@ CREATE TABLE "FeedbackReply" (
     "feedbackId" TEXT NOT NULL,
     "message" TEXT NOT NULL,
     "idempotencyKey" TEXT NOT NULL,
-    "sentAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "deliveryStatus" "FeedbackReplyStatus" NOT NULL DEFAULT 'SENDING',
+    "sentAt" TIMESTAMP(3),
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "FeedbackReply_pkey" PRIMARY KEY ("id")
 );

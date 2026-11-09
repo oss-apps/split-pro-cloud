@@ -8,6 +8,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Form, FormControl, FormField, FormItem, FormMessage } from '../ui/form';
 import { toast } from 'sonner';
+import { type DraftKey, keyForDraft } from '~/utils/draftKey';
 
 const feedbackSchema = z.object({
   feedback: z
@@ -20,8 +21,8 @@ const feedbackSchema = z.object({
 export const SubmitFeedback: React.FC = () => {
   const submitFeedbackMutation = api.user.submitFeedback.useMutation();
   const [feedbackOpen, setFeedbackOpen] = useState(false);
-  // One key per draft: resending the same draft (a double tap, a retry) never saves it twice
-  const [clientKey, setClientKey] = useState(() => crypto.randomUUID());
+  // Resending the same text (a double tap, a retry) reuses its key, so it's saved once
+  const draftKey = useRef<DraftKey | null>(null);
   // Covers taps before the disabled button re-renders
   const submitting = useRef(false);
 
@@ -35,10 +36,11 @@ export const SubmitFeedback: React.FC = () => {
     }
 
     submitting.current = true;
+    draftKey.current = keyForDraft(draftKey.current, values.feedback, () => crypto.randomUUID());
     try {
       await submitFeedbackMutation.mutateAsync({
         feedback: values.feedback,
-        clientKey,
+        clientKey: draftKey.current.key,
         source: 'web',
       });
     } catch (e) {
@@ -50,7 +52,7 @@ export const SubmitFeedback: React.FC = () => {
     }
 
     feedbackForm.reset({ feedback: '' });
-    setClientKey(crypto.randomUUID());
+    draftKey.current = null;
     toast.success('Feedback submitted', { duration: 1500 });
     setFeedbackOpen(false);
   }

@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 import { db as defaultDb } from '~/server/db';
 import { type FeedbackEmailDetails, sendFeedbackEmail } from '~/server/mailer';
+import { safeMailErrorDetails } from '~/server/mailErrors';
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -25,7 +26,8 @@ export const submitFeedbackInput = z.object({
 
 export type SubmitFeedbackInput = z.infer<typeof submitFeedbackInput>;
 
-export type FeedbackSender = { id: number; email?: string | null; name?: string | null };
+/** Only the id is used: the email and name are read from the account when it's saved. */
+export type FeedbackSender = { id: number };
 
 type Deps = {
   db: PrismaClient;
@@ -47,8 +49,9 @@ export const isUniqueViolation = (error: unknown, field: string) =>
   JSON.stringify(error.meta?.target ?? '').includes(field);
 
 /**
- * The feedback this submission repeats, if any: the same draft (`clientKey`), or the same message
- * from the same person within a day, which covers older apps that don't send a key.
+ * The feedback this submission repeats, if any: the same draft (`clientKey`) with the same text, or
+ * the same message from the same person within a day, which covers older apps that don't send a
+ * key.
  */
 const findExisting = async (
   tx: Prisma.TransactionClient,
@@ -60,7 +63,9 @@ const findExisting = async (
   if (clientKey) {
     const byKey = await tx.feedback.findUnique({ where: { clientKey } });
     if (byKey) {
-      if (byKey.userId !== userId) {
+      // Another person's key, or the same draft edited after a failed send: never report text
+      // as saved when it wasn't
+      if (byKey.userId !== userId || byKey.message !== message) {
         throw new TRPCError({ code: 'CONFLICT', message: 'Feedback key already used' });
       }
       return byKey;
@@ -84,20 +89,26 @@ export const submitFeedback = async (
   fallbackSource: 'web' | 'mobile',
   { db, notify }: Deps = defaultDeps,
 ): Promise<{ id: string; created: boolean }> => {
-  if (!user.email) {
-    throw new TRPCError({ code: 'BAD_REQUEST', message: 'Add an email address to send feedback' });
-  }
-
-  const email = user.email;
   const message = input.feedback.trim();
   const now = new Date();
 
   let result: { feedback: Feedback; created: boolean };
   try {
     // Locking the sender's row makes their submissions one at a time, so two quick resends can't
-    // both miss each other in the checks below.
+    // both miss each other in the checks below. It also waits for an account deletion that's under
+    // way, and the email and name come from the locked row, not the possibly stale session.
     result = await db.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${user.id} FOR UPDATE`;
+      const [sender] = await tx.$queryRaw<{ email: string | null; name: string | null }[]>`
+        SELECT email, name FROM "User" WHERE id = ${user.id} AND "deletedAt" IS NULL FOR UPDATE`;
+      if (!sender) {
+        throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Account not found' });
+      }
+      if (!sender.email) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Add an email address to send feedback',
+        });
+      }
 
       const existing = await findExisting(tx, user.id, message, input.clientKey, now);
       if (existing) {
@@ -120,8 +131,8 @@ export const submitFeedback = async (
       const feedback = await tx.feedback.create({
         data: {
           userId: user.id,
-          email,
-          name: user.name ?? null,
+          email: sender.email,
+          name: sender.name,
           message,
           source: input.source ?? fallbackSource,
           // An empty version is no version
@@ -137,7 +148,7 @@ export const submitFeedback = async (
     }
 
     const existing = await db.feedback.findUnique({ where: { clientKey: input.clientKey } });
-    if (existing?.userId !== user.id) {
+    if (existing?.userId !== user.id || existing.message !== message) {
       throw new TRPCError({ code: 'CONFLICT', message: 'Feedback key already used' });
     }
     result = { feedback: existing, created: false };
@@ -146,7 +157,7 @@ export const submitFeedback = async (
   const { feedback, created } = result;
   if (created) {
     notify(feedback).catch((error) =>
-      console.error('Failed to email feedback', feedback.id, error),
+      console.error('Failed to email feedback', feedback.id, safeMailErrorDetails(error)),
     );
   }
 
