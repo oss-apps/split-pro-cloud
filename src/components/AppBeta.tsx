@@ -10,7 +10,9 @@ import { cn } from '~/lib/utils';
 
 export type DevicePlatform = 'ios' | 'android' | 'desktop';
 
-const DISMISS_KEY = 'splitpro:app-beta-card-dismissed';
+// One key per card variant, so dismissing the iPhone-only version doesn't hide the Android one later
+const dismissKey = (platform: DevicePlatform) =>
+  `splitpro:app-beta-card-dismissed:${platform}:${null === ANDROID_BETA_GROUP_URL ? 'ios' : 'all'}`;
 
 const detectPlatform = (): DevicePlatform => {
   const ua = navigator.userAgent;
@@ -80,21 +82,27 @@ export const AppBetaCard: React.FC<{ className?: string }> = ({ className }) => 
   const [dismissed, setDismissed] = useState(true);
 
   useEffect(() => {
+    if (null === platform) {
+      return;
+    }
     try {
-      setDismissed('1' === localStorage.getItem(DISMISS_KEY));
+      setDismissed('1' === localStorage.getItem(dismissKey(platform)));
     } catch {
       setDismissed(false);
     }
-  }, []);
+  }, [platform]);
 
   const dismiss = useCallback(() => {
     setDismissed(true);
+    if (null === platform) {
+      return;
+    }
     try {
-      localStorage.setItem(DISMISS_KEY, '1');
+      localStorage.setItem(dismissKey(platform), '1');
     } catch {
       // Private mode or storage disabled: it's hidden until the next reload, which is fine.
     }
-  }, []);
+  }, [platform]);
 
   if (null === platform || dismissed) {
     return null;
