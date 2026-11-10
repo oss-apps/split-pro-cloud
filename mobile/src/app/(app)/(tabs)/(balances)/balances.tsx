@@ -1,11 +1,12 @@
-import { router } from 'expo-router';
+import { Stack, router } from 'expo-router';
 import React, { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { FlatList, RefreshControl, Share, StyleSheet } from 'react-native';
+import { FlatList, Platform, RefreshControl, Share, StyleSheet } from 'react-native';
 
 import { AddExpenseAction } from '@/components/expense';
 import { BalanceTotals } from '@/components/friend/BalanceTotals';
 import { FriendBalanceRow } from '@/components/friend/FriendBalanceRow';
+import { NativeBalances } from '@/components/friend/NativeBalances';
 import { EmptyState, FullScreenSpinner, Separator, icons, rowInset } from '@/components/ui';
 import { api } from '@/lib/api';
 import { API_URL } from '@/lib/config';
@@ -16,6 +17,7 @@ const Balances = () => {
   const { t } = useTranslation();
   const balanceQuery = api.user.getBalances.useQuery();
   const [refreshing, setRefreshing] = useState(false);
+  const [search, setSearch] = useState('');
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -98,10 +100,41 @@ const Balances = () => {
   return (
     // No wrapping view: the list must be the screen's first view for the large title to collapse.
     <>
-      {body}
-      <AddExpenseAction
-        actions={[{ label: t('balances.share_app'), icon: icons.share, onPress: shareApp }]}
-      />
+      {'ios' === Platform.OS ? (
+        <NativeBalances
+          data={data}
+          search={search}
+          loading={balanceQuery.isLoading}
+          error={balanceQuery.error?.message}
+          onRefresh={async () => {
+            await balanceQuery.refetch();
+          }}
+        />
+      ) : (
+        body
+      )}
+      {'ios' === Platform.OS ? (
+        <>
+          <Stack.SearchBar
+            placeholder={t('balances.search_friends')}
+            onChangeText={(event) => setSearch(event.nativeEvent.text)}
+            onCancelButtonPress={() => setSearch('')}
+            hideWhenScrolling={false}
+          />
+          <Stack.Toolbar placement="right">
+            <Stack.Toolbar.Button icon="square.and.arrow.up" onPress={shareApp}>
+              {t('balances.share_app')}
+            </Stack.Toolbar.Button>
+            <Stack.Toolbar.Button icon="plus" onPress={() => router.push('/add')}>
+              {t('balances.add_expense')}
+            </Stack.Toolbar.Button>
+          </Stack.Toolbar>
+        </>
+      ) : (
+        <AddExpenseAction
+          actions={[{ label: t('balances.share_app'), icon: icons.share, onPress: shareApp }]}
+        />
+      )}
     </>
   );
 };

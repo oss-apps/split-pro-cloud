@@ -120,6 +120,10 @@
     "delete_done": "Your account was deleted"
   },
   "balances": {
+    "search_friends": "Search friends",
+    "no_results": "No friends found",
+    "view_balance": "View balance",
+    "open_friend_hint": "Opens balances and expenses with this friend",
     "you_owe": "You owe",
     "you_get": "You get",
     "you_lent": "You lent",
