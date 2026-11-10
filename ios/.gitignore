@@ -1,4 +1,5 @@
 build/
+build-prototype-test/
 *.xcodeproj/
 *.xcresult/
 __pycache__/

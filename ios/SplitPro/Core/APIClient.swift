@@ -1,6 +1,15 @@
 import Foundation
 import Security
 
+enum Prototype {
+  #if PROTOTYPE_READONLY
+  static let readOnly = true
+  #else
+  static let readOnly = false
+  #endif
+  static let message = "Prototype build: saving is turned off"
+}
+
 struct Person: Codable, Identifiable, Hashable {
   let id: Int
   let name: String?
@@ -100,6 +109,11 @@ struct APIClient {
     return try JSONDecoder().decode(T.self, from: JSONSerialization.data(withJSONObject: normalized, options: [.fragmentsAllowed]))
   }
   func request(path: String, body: Data?, queryInput: String? = nil) async throws -> Data {
+    // Authentication is the only allowed write, including sign-out. Fail closed for all others.
+    if Prototype.readOnly, body != nil,
+       !["api/mobile/auth/email", "api/mobile/auth/email/verify", "api/mobile/auth/signout"].contains(path) {
+      throw APIError(message: Prototype.message)
+    }
     var components = URLComponents(url: baseURL.appending(path: path), resolvingAgainstBaseURL: false)!
     if let queryInput { components.queryItems = [URLQueryItem(name: "input", value: queryInput)] }
     var request = URLRequest(url: components.url!)

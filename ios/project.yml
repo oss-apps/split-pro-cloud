@@ -8,6 +8,8 @@ settings:
     TARGETED_DEVICE_FAMILY: '1'
     SPLITPRO_API_URL: http://localhost:3192
     SPLITPRO_CAPTURE: '0'
+    MARKETING_VERSION: '0.1.0'
+    CURRENT_PROJECT_VERSION: '1'
 targets:
   SplitPro:
     type: application
@@ -18,7 +20,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: app.splitpro.proto
         INFOPLIST_FILE: SplitPro/Info.plist
         TARGETED_DEVICE_FAMILY: '1'
-        ASSETCATALOG_COMPILER_APPICON_NAME: ''
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
   SplitProTests:
     type: bundle.unit-test
     platform: iOS
@@ -51,3 +53,5 @@ schemes:
       targets: [SplitProTests, SplitProUITests]
       environmentVariables:
         SPLITPRO_CAPTURE: $(SPLITPRO_CAPTURE)
+        SPLITPRO_PROTOTYPE_TEST: $(SPLITPRO_PROTOTYPE_TEST)
+        SPLITPRO_REVIEW_CODE_FILE: $(SPLITPRO_REVIEW_CODE_FILE)

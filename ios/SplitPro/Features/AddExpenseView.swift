@@ -16,6 +16,7 @@ struct AddExpenseView: View {
   @State private var failure: String?
   @State private var saved = false
   @State private var initialized = false
+  @State private var prototypeAlert = false
   @ScaledMetric(relativeTo: .largeTitle) private var amountSize = 48
   @FocusState private var focus: Field?
   private enum Field: Hashable { case amount, description, share(Int) }
@@ -105,11 +106,14 @@ struct AddExpenseView: View {
         }
         ToolbarItem(placement: .confirmationAction) {
           Button { save() } label: { if saving { ProgressView() } else { Text("Add").bold() } }
-            .disabled(!canSave).accessibilityIdentifier("expense.save")
+            .disabled(!Prototype.readOnly && !canSave).accessibilityIdentifier("expense.save")
         }
         ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("Done") { focus = nil }.accessibilityIdentifier("keyboard.done") }
       }
       .interactiveDismissDisabled(saving)
+      .alert("Read-only prototype", isPresented: $prototypeAlert) {
+        Button("OK", role: .cancel) {}
+      } message: { Text(Prototype.message) }
       .sensoryFeedback(.success, trigger: saved)
       .onAppear {
         guard !initialized else { return }
@@ -164,6 +168,7 @@ struct AddExpenseView: View {
       }
   }
   private func save() {
+    if Prototype.readOnly { prototypeAlert = true; return }
     guard canSave else { return }
     focus = nil
     saving = true
