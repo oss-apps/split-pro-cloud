@@ -1,0 +1,1672 @@
+[
+  {
+    "name": "EQUAL-3-0",
+    "cents": 10001,
+    "kind": "EQUAL",
+    "payer": 21,
+    "people": [
+      {
+        "id": 21,
+        "share": "1"
+      },
+      {
+        "id": 14,
+        "share": "1"
+      },
+      {
+        "id": 7,
+        "share": "1"
+      }
+    ],
+    "expected": [6667, -3334, -3333],
+    "valid": true,
+    "switches": [
+      {
+        "kind": "EQUAL",
+        "expected": [6667, -3334, -3333],
+        "valid": true
+      },
+      {
+        "kind": "PERCENTAGE",
+        "expected": [6667, -3334, -3333],
+        "valid": true
+      },
+      {
+        "kind": "EXACT",
+        "expected": [6667, -3334, -3333],
+        "valid": true
+      },
+      {
+        "kind": "SHARE",
+        "expected": [6667, -3334, -3333],
+        "valid": true
+      },
+      {
+        "kind": "ADJUSTMENT",
+        "expected": [6667, -3334, -3333],
+        "valid": true
+      }
+    ]
+  },
+  {
+    "name": "EQUAL-4-1",
+    "cents": 7793,
+    "kind": "EQUAL",
+    "payer": 21,
+    "people": [
+      {
+        "id": 28,
+        "share": "1"
+      },
+      {
+        "id": 21,
+        "share": "1"
+      },
+      {
+        "id": 14,
+        "share": "1"
+      },
+      {
+        "id": 7,
+        "share": "1"
+      }
+    ],
+    "expected": [-1948, 5845, -1948, -1949],
+    "valid": true,
+    "switches": [
+      {
+        "kind": "EQUAL",
+        "expected": [-1948, 5845, -1948, -1949],
+        "valid": true
+      },
+      {
+        "kind": "PERCENTAGE",
+        "expected": [-1948, 5845, -1948, -1949],
+        "valid": true
+      },
+      {
+        "kind": "EXACT",
+        "expected": [-1948, 5845, -1948, -1949],
+        "valid": true
+      },
+      {
+        "kind": "SHARE",
+        "expected": [-1948, 5845, -1948, -1949],
+        "valid": true
+      },
+      {
+        "kind": "ADJUSTMENT",
+        "expected": [-1948, 5845, -1948, -1949],
+        "valid": true
+      }
+    ]
+  },
+  {
+    "name": "EQUAL-5-2",
+    "cents": 1,
+    "kind": "EQUAL",
+    "payer": 21,
+    "people": [
+      {
+        "id": 35,
+        "share": "1"
+      },
+      {
+        "id": 28,
+        "share": "1"
+      },
+      {
+        "id": 21,
+        "share": "1"
+      },
+      {
+        "id": 14,
+        "share": "1"
+      },
+      {
+        "id": 7,
+        "share": "1"
+      }
+    ],
+    "expected": [0, 0, 1, 0, -1],
+    "valid": true,
+    "switches": [
+      {
+        "kind": "EQUAL",
+        "expected": [0, 0, 1, 0, -1],
+        "valid": true
+      },
+      {
+        "kind": "PERCENTAGE",
+        "expected": [0, 0, 1, 0, -1],
+        "valid": true
+      },
+      {
+        "kind": "EXACT",
+        "expected": [0, 0, 1, 0, -1],
+        "valid": true
+      },
+      {
+        "kind": "SHARE",
+        "expected": [0, 0, 1, 0, -1],
+        "valid": true
+      },
+      {
+        "kind": "ADJUSTMENT",
+        "expected": [0, 0, 1, 0, -1],
+        "valid": true
+      }
+    ]
+  },
+  {
+    "name": "EQUAL-6-3",
+    "cents": 12345,
+    "kind": "EQUAL",
+    "payer": 21,
+    "people": [
+      {
+        "id": 42,
+        "share": "1"
+      },
+      {
+        "id": 35,
+        "share": "1"
+      },
+      {
+        "id": 28,
+        "share": "1"
+      },
+      {
+        "id": 21,
+        "share": "1"
+      },
+      {
+        "id": 14,
+        "share": "1"
+      },
+      {
+        "id": 7,
+        "share": "1"
+      }
+    ],
+    "expected": [-2057, -2057, -2057, 10287, -2058, -2058],
+    "valid": true,
+    "switches": [
+      {
+        "kind": "EQUAL",
+        "expected": [-2057, -2057, -2057, 10287, -2058, -2058],
+        "valid": true
+      },
+      {
+        "kind": "PERCENTAGE",
+        "expected": [-2057, -2057, -2057, 10287, -2058, -2058],
+        "valid": true
+      },
+      {
+        "kind": "EXACT",
+        "expected": [-2057, -2057, -2057, 10287, -2058, -2058],
+        "valid": true
+      },
+      {
+        "kind": "SHARE",
+        "expected": [-2057, -2057, -2057, 10287, -2058, -2058],
+        "valid": true
+      },
+      {
+        "kind": "ADJUSTMENT",
+        "expected": [-2057, -2057, -2057, 10287, -2058, -2058],
+        "valid": true
+      }
+    ]
+  },
+  {
+    "name": "EQUAL-7-4",
+    "cents": 99999,
+    "kind": "EQUAL",
+    "payer": 21,
+    "people": [
+      {
+        "id": 49,
+        "share": "1"
+      },
+      {
+        "id": 42,
+        "share": "1"
+      },
+      {
+        "id": 35,
+        "share": "1"
+      },
+      {
+        "id": 28,
+        "share": "1"
+      },
+      {
+        "id": 21,
+        "share": "1"
+      },
+      {
+        "id": 14,
+        "share": "1"
+      },
+      {
+        "id": 7,
+        "share": "1"
+      }
+    ],
+    "expected": [-14286, -14286, -14286, -14286, 85714, -14285, -14285],
+    "valid": true,
+    "switches": [
+      {
+        "kind": "EQUAL",
+        "expected": [-14286, -14286, -14286, -14286, 85714, -14285, -14285],
+        "valid": true
+      },
+      {
+        "kind": "PERCENTAGE",
+        "expected": [-14286, -14286, -14286, -14286, 85714, -14285, -14285],
+        "valid": true
+      },
+      {
+        "kind": "EXACT",
+        "expected": [-14286, -14286, -14286, -14286, 85714, -14285, -14285],
+        "valid": true
+      },
+      {
+        "kind": "SHARE",
+        "expected": [-14286, -14286, -14286, -14286, 85714, -14285, -14285],
+        "valid": true
+      },
+      {
+        "kind": "ADJUSTMENT",
+        "expected": [-14286, -14286, -14286, -14286, 85714, -14285, -14285],
+        "valid": true
+      }
+    ]
+  },
+  {
+    "name": "EQUAL-3-5",
+    "cents": -10001,
+    "kind": "EQUAL",
+    "payer": 7,
+    "people": [
+      {
+        "id": 21,
+        "share": "1"
+      },
+      {
+        "id": 14,
+        "share": "1"
+      },
+      {
+        "id": 7,
+        "share": "1"
+      }
+    ],
+    "expected": [3334, 3334, -6668],
+    "valid": true,
+    "switches": [
+      {
+        "kind": "EQUAL",
+        "expected": [3334, 3334, -6668],
+        "valid": true
+      },
+      {
+        "kind": "PERCENTAGE",
+        "expected": [3334, 3334, -6668],
+        "valid": true
+      },
+      {
+        "kind": "EXACT",
+        "expected": [3334, 3334, -6668],
+        "valid": true
+      },
+      {
+        "kind": "SHARE",
+        "expected": [3334, 3334, -6668],
+        "valid": true
+      },
+      {
+        "kind": "ADJUSTMENT",
+        "expected": [3334, 3334, -6668],
+        "valid": true
+      }
+    ]
+  },
+  {
+    "name": "PERCENTAGE-3-0",
+    "cents": 10001,
+    "kind": "PERCENTAGE",
+    "payer": 21,
+    "people": [
+      {
+        "id": 21,
+        "share": "33.34"
+      },
+      {
+        "id": 14,
+        "share": "33.33"
+      },
+      {
+        "id": 7,
+        "share": "33.33"
+      }
+    ],
+    "expected": [6667, -3333, -3334],
+    "valid": true,
+    "switches": [
+      {
+        "kind": "EQUAL",
+        "expected": [6667, -3334, -3333],
+        "valid": true
+      },
+      {
+        "kind": "PERCENTAGE",
+        "expected": [6667, -3333, -3334],
+        "valid": true
+      },
+      {
+        "kind": "EXACT",
+        "expected": [6667, -3333, -3334],
+        "valid": true
+      },
+      {
+        "kind": "SHARE",
+        "expected": [6667, -3333, -3334],
+        "valid": true
+      },
+      {
+        "kind": "ADJUSTMENT",
+        "expected": [6667, -3333, -3334],
+        "valid": true
+      }
+    ]
+  },
+  {
+    "name": "PERCENTAGE-4-1",
+    "cents": 7793,
+    "kind": "PERCENTAGE",
+    "payer": 21,
+    "people": [
+      {
+        "id": 28,
+        "share": "25"
+      },
+      {
+        "id": 21,
+        "share": "25"
+      },
+      {
+        "id": 14,
+        "share": "25"
+      },
+      {
+        "id": 7,
+        "share": "25"
+      }
+    ],
+    "expected": [-1948, 5845, -1948, -1949],
+    "valid": true,
+    "switches": [
+      {
+        "kind": "EQUAL",
+        "expected": [-1948, 5845, -1948, -1949],
+        "valid": true
+      },
+      {
+        "kind": "PERCENTAGE",
+        "expected": [-1948, 5845, -1948, -1949],
+        "valid": true
+      },
+      {
+        "kind": "EXACT",
+        "expected": [-1948, 5845, -1948, -1949],
+        "valid": true
+      },
+      {
+        "kind": "SHARE",
+        "expected": [-1948, 5845, -1948, -1949],
+        "valid": true
+      },
+      {
+        "kind": "ADJUSTMENT",
+        "expected": [-1948, 5845, -1948, -1949],
+        "valid": true
+      }
+    ]
+  },
+  {
+    "name": "PERCENTAGE-5-2",
+    "cents": 1,
+    "kind": "PERCENTAGE",
+    "payer": 21,
+    "people": [
+      {
+        "id": 35,
+        "share": "20"
+      },
+      {
+        "id": 28,
+        "share": "20"
+      },
+      {
+        "id": 21,
+        "share": "20"
+      },
+      {
+        "id": 14,
+        "share": "20"
+      },
+      {
+        "id": 7,
+        "share": "20"
+      }
+    ],
+    "expected": [0, 0, 1, 0, -1],
+    "valid": true,
+    "switches": [
+      {
+        "kind": "EQUAL",
+        "expected": [0, 0, 1, 0, -1],
+        "valid": true
+      },
+      {
+        "kind": "PERCENTAGE",
+        "expected": [0, 0, 1, 0, -1],
+        "valid": true
+      },
+      {
+        "kind": "EXACT",
+        "expected": [0, 0, 1, 0, -1],
+        "valid": true
+      },
+      {
+        "kind": "SHARE",
+        "expected": [0, 0, 1, 0, -1],
+        "valid": true
+      },
+      {
+        "kind": "ADJUSTMENT",
+        "expected": [0, 0, 1, 0, -1],
+        "valid": true
+      }
+    ]
+  },
+  {
+    "name": "PERCENTAGE-6-3",
+    "cents": 12345,
+    "kind": "PERCENTAGE",
+    "payer": 21,
+    "people": [
+      {
+        "id": 42,
+        "share": "16.7"
+      },
+      {
+        "id": 35,
+        "share": "16.66"
+      },
+      {
+        "id": 28,
+        "share": "16.66"
+      },
+      {
+        "id": 21,
+        "share": "16.66"
+      },
+      {
+        "id": 14,
+        "share": "16.66"
+      },
+      {
+        "id": 7,
+        "share": "16.66"
+      }
+    ],
+    "expected": [-2062, -2057, -2057, 10288, -2056, -2056],
+    "valid": true,
+    "switches": [
+      {
+        "kind": "EQUAL",
+        "expected": [-2057, -2057, -2057, 10287, -2058, -2058],
+        "valid": true
+      },
+      {
+        "kind": "PERCENTAGE",
+        "expected": [-2062, -2057, -2057, 10288, -2056, -2056],
+        "valid": true
+      },
+      {
+        "kind": "EXACT",
+        "expected": [-2062, -2057, -2057, 10288, -2056, -2056],
+        "valid": true
+      },
+      {
+        "kind": "SHARE",
+        "expected": [-2062, -2057, -2057, 10288, -2056, -2056],
+        "valid": true
+      },
+      {
+        "kind": "ADJUSTMENT",
+        "expected": [-2062, -2057, -2057, 10288, -2056, -2056],
+        "valid": true
+      }
+    ]
+  },
+  {
+    "name": "PERCENTAGE-7-4",
+    "cents": 99999,
+    "kind": "PERCENTAGE",
+    "payer": 21,
+    "people": [
+      {
+        "id": 49,
+        "share": "14.32"
+      },
+      {
+        "id": 42,
+        "share": "14.28"
+      },
+      {
+        "id": 35,
+        "share": "14.28"
+      },
+      {
+        "id": 28,
+        "share": "14.28"
+      },
+      {
+        "id": 21,
+        "share": "14.28"
+      },
+      {
+        "id": 14,
+        "share": "14.28"
+      },
+      {
+        "id": 7,
+        "share": "14.28"
+      }
+    ],
+    "expected": [-14320, -14280, -14280, -14280, 85719, -14280, -14279],
+    "valid": true,
+    "switches": [
+      {
+        "kind": "EQUAL",
+        "expected": [-14286, -14286, -14286, -14286, 85714, -14285, -14285],
+        "valid": true
+      },
+      {
+        "kind": "PERCENTAGE",
+        "expected": [-14320, -14280, -14280, -14280, 85719, -14280, -14279],
+        "valid": true
+      },
+      {
+        "kind": "EXACT",
+        "expected": [-14320, -14280, -14280, -14280, 85719, -14280, -14279],
+        "valid": true
+      },
+      {
+        "kind": "SHARE",
+        "expected": [-14320, -14280, -14280, -14280, 85719, -14280, -14279],
+        "valid": true
+      },
+      {
+        "kind": "ADJUSTMENT",
+        "expected": [-14320, -14280, -14280, -14280, 85719, -14280, -14279],
+        "valid": true
+      }
+    ]
+  },
+  {
+    "name": "PERCENTAGE-3-5",
+    "cents": -10001,
+    "kind": "PERCENTAGE",
+    "payer": 7,
+    "people": [
+      {
+        "id": 21,
+        "share": "33.34"
+      },
+      {
+        "id": 14,
+        "share": "33.33"
+      },
+      {
+        "id": 7,
+        "share": "33.33"
+      }
+    ],
+    "expected": [3334, 3333, -6667],
+    "valid": true,
+    "switches": [
+      {
+        "kind": "EQUAL",
+        "expected": [3334, 3334, -6668],
+        "valid": true
+      },
+      {
+        "kind": "PERCENTAGE",
+        "expected": [3334, 3333, -6667],
+        "valid": true
+      },
+      {
+        "kind": "EXACT",
+        "expected": [3334, 3333, -6667],
+        "valid": true
+      },
+      {
+        "kind": "SHARE",
+        "expected": [3334, 3333, -6667],
+        "valid": true
+      },
+      {
+        "kind": "ADJUSTMENT",
+        "expected": [3334, 3333, -6667],
+        "valid": true
+      }
+    ]
+  },
+  {
+    "name": "EXACT-3-0",
+    "cents": 10001,
+    "kind": "EXACT",
+    "payer": 21,
+    "people": [
+      {
+        "id": 21,
+        "share": "33.35"
+      },
+      {
+        "id": 14,
+        "share": "33.33"
+      },
+      {
+        "id": 7,
+        "share": "33.33"
+      }
+    ],
+    "expected": [6666, -3333, -3333],
+    "valid": true,
+    "switches": [
+      {
+        "kind": "EQUAL",
+        "expected": [6667, -3334, -3333],
+        "valid": true
+      },
+      {
+        "kind": "PERCENTAGE",
+        "expected": [6666, -3333, -3333],
+        "valid": true
+      },
+      {
+        "kind": "EXACT",
+        "expected": [6666, -3333, -3333],
+        "valid": true
+      },
+      {
+        "kind": "SHARE",
+        "expected": [6666, -3333, -3333],
+        "valid": true
+      },
+      {
+        "kind": "ADJUSTMENT",
+        "expected": [6666, -3333, -3333],
+        "valid": true
+      }
+    ]
+  },
+  {
+    "name": "EXACT-4-1",
+    "cents": 7793,
+    "kind": "EXACT",
+    "payer": 21,
+    "people": [
+      {
+        "id": 28,
+        "share": "19.49"
+      },
+      {
+        "id": 21,
+        "share": "19.48"
+      },
+      {
+        "id": 14,
+        "share": "19.48"
+      },
+      {
+        "id": 7,
+        "share": "19.48"
+      }
+    ],
+    "expected": [-1949, 5845, -1948, -1948],
+    "valid": true,
+    "switches": [
+      {
+        "kind": "EQUAL",
+        "expected": [-1948, 5845, -1948, -1949],
+        "valid": true
+      },
+      {
+        "kind": "PERCENTAGE",
+        "expected": [-1949, 5845, -1948, -1948],
+        "valid": true
+      },
+      {
+        "kind": "EXACT",
+        "expected": [-1949, 5845, -1948, -1948],
+        "valid": true
+      },
+      {
+        "kind": "SHARE",
+        "expected": [-1949, 5845, -1948, -1948],
+        "valid": true
+      },
+      {
+        "kind": "ADJUSTMENT",
+        "expected": [-1949, 5845, -1948, -1948],
+        "valid": true
+      }
+    ]
+  },
+  {
+    "name": "EXACT-5-2",
+    "cents": 1,
+    "kind": "EXACT",
+    "payer": 21,
+    "people": [
+      {
+        "id": 35,
+        "share": "0.01"
+      },
+      {
+        "id": 28,
+        "share": "0"
+      },
+      {
+        "id": 21,
+        "share": "0"
+      },
+      {
+        "id": 14,
+        "share": "0"
+      },
+      {
+        "id": 7,
+        "share": "0"
+      }
+    ],
+    "expected": [-1, 0, 1, 0, 0],
+    "valid": true,
+    "switches": [
+      {
+        "kind": "EQUAL",
+        "expected": [-1, 0, 1, 0, 0],
+        "valid": true
+      },
+      {
+        "kind": "PERCENTAGE",
+        "expected": [-1, 0, 1, 0, 0],
+        "valid": true
+      },
+      {
+        "kind": "EXACT",
+        "expected": [-1, 0, 1, 0, 0],
+        "valid": true
+      },
+      {
+        "kind": "SHARE",
+        "expected": [-1, 0, 1, 0, 0],
+        "valid": true
+      },
+      {
+        "kind": "ADJUSTMENT",
+        "expected": [-1, 0, 1, 0, 0],
+        "valid": true
+      }
+    ]
+  },
+  {
+    "name": "EXACT-6-3",
+    "cents": 12345,
+    "kind": "EXACT",
+    "payer": 21,
+    "people": [
+      {
+        "id": 42,
+        "share": "20.6"
+      },
+      {
+        "id": 35,
+        "share": "20.57"
+      },
+      {
+        "id": 28,
+        "share": "20.57"
+      },
+      {
+        "id": 21,
+        "share": "20.57"
+      },
+      {
+        "id": 14,
+        "share": "20.57"
+      },
+      {
+        "id": 7,
+        "share": "20.57"
+      }
+    ],
+    "expected": [-2060, -2057, -2057, 10288, -2057, -2057],
+    "valid": true,
+    "switches": [
+      {
+        "kind": "EQUAL",
+        "expected": [-2057, -2057, -2057, 10287, -2058, -2058],
+        "valid": true
+      },
+      {
+        "kind": "PERCENTAGE",
+        "expected": [-2060, -2057, -2057, 10288, -2057, -2057],
+        "valid": true
+      },
+      {
+        "kind": "EXACT",
+        "expected": [-2060, -2057, -2057, 10288, -2057, -2057],
+        "valid": true
+      },
+      {
+        "kind": "SHARE",
+        "expected": [-2060, -2057, -2057, 10288, -2057, -2057],
+        "valid": true
+      },
+      {
+        "kind": "ADJUSTMENT",
+        "expected": [-2060, -2057, -2057, 10288, -2057, -2057],
+        "valid": true
+      }
+    ]
+  },
+  {
+    "name": "EXACT-7-4",
+    "cents": 99999,
+    "kind": "EXACT",
+    "payer": 21,
+    "people": [
+      {
+        "id": 49,
+        "share": "142.89"
+      },
+      {
+        "id": 42,
+        "share": "142.85"
+      },
+      {
+        "id": 35,
+        "share": "142.85"
+      },
+      {
+        "id": 28,
+        "share": "142.85"
+      },
+      {
+        "id": 21,
+        "share": "142.85"
+      },
+      {
+        "id": 14,
+        "share": "142.85"
+      },
+      {
+        "id": 7,
+        "share": "142.85"
+      }
+    ],
+    "expected": [-14289, -14285, -14285, -14285, 85714, -14285, -14285],
+    "valid": true,
+    "switches": [
+      {
+        "kind": "EQUAL",
+        "expected": [-14286, -14286, -14286, -14286, 85714, -14285, -14285],
+        "valid": true
+      },
+      {
+        "kind": "PERCENTAGE",
+        "expected": [-14289, -14285, -14285, -14285, 85714, -14285, -14285],
+        "valid": true
+      },
+      {
+        "kind": "EXACT",
+        "expected": [-14289, -14285, -14285, -14285, 85714, -14285, -14285],
+        "valid": true
+      },
+      {
+        "kind": "SHARE",
+        "expected": [-14289, -14285, -14285, -14285, 85714, -14285, -14285],
+        "valid": true
+      },
+      {
+        "kind": "ADJUSTMENT",
+        "expected": [-14289, -14285, -14285, -14285, 85714, -14285, -14285],
+        "valid": true
+      }
+    ]
+  },
+  {
+    "name": "EXACT-3-5",
+    "cents": -10001,
+    "kind": "EXACT",
+    "payer": 7,
+    "people": [
+      {
+        "id": 21,
+        "share": "33.35"
+      },
+      {
+        "id": 14,
+        "share": "33.33"
+      },
+      {
+        "id": 7,
+        "share": "33.33"
+      }
+    ],
+    "expected": [3335, 3333, -6668],
+    "valid": true,
+    "switches": [
+      {
+        "kind": "EQUAL",
+        "expected": [3334, 3334, -6668],
+        "valid": true
+      },
+      {
+        "kind": "PERCENTAGE",
+        "expected": [3335, 3333, -6668],
+        "valid": true
+      },
+      {
+        "kind": "EXACT",
+        "expected": [3335, 3333, -6668],
+        "valid": true
+      },
+      {
+        "kind": "SHARE",
+        "expected": [3335, 3333, -6668],
+        "valid": true
+      },
+      {
+        "kind": "ADJUSTMENT",
+        "expected": [3335, 3333, -6668],
+        "valid": true
+      }
+    ]
+  },
+  {
+    "name": "SHARE-3-0",
+    "cents": 10001,
+    "kind": "SHARE",
+    "payer": 21,
+    "people": [
+      {
+        "id": 21,
+        "share": "1"
+      },
+      {
+        "id": 14,
+        "share": "2"
+      },
+      {
+        "id": 7,
+        "share": "3"
+      }
+    ],
+    "expected": [8334, -3334, -5000],
+    "valid": true,
+    "switches": [
+      {
+        "kind": "EQUAL",
+        "expected": [6667, -3334, -3333],
+        "valid": true
+      },
+      {
+        "kind": "PERCENTAGE",
+        "expected": [8334, -3334, -5000],
+        "valid": true
+      },
+      {
+        "kind": "EXACT",
+        "expected": [8334, -3334, -5000],
+        "valid": true
+      },
+      {
+        "kind": "SHARE",
+        "expected": [8334, -3334, -5000],
+        "valid": true
+      },
+      {
+        "kind": "ADJUSTMENT",
+        "expected": [8334, -3334, -5000],
+        "valid": true
+      }
+    ]
+  },
+  {
+    "name": "SHARE-4-1",
+    "cents": 7793,
+    "kind": "SHARE",
+    "payer": 21,
+    "people": [
+      {
+        "id": 28,
+        "share": "1"
+      },
+      {
+        "id": 21,
+        "share": "2"
+      },
+      {
+        "id": 14,
+        "share": "3"
+      },
+      {
+        "id": 7,
+        "share": "4"
+      }
+    ],
+    "expected": [-779, 6234, -2338, -3117],
+    "valid": true,
+    "switches": [
+      {
+        "kind": "EQUAL",
+        "expected": [-1948, 5845, -1948, -1949],
+        "valid": true
+      },
+      {
+        "kind": "PERCENTAGE",
+        "expected": [-779, 6234, -2338, -3117],
+        "valid": true
+      },
+      {
+        "kind": "EXACT",
+        "expected": [-779, 6234, -2338, -3117],
+        "valid": true
+      },
+      {
+        "kind": "SHARE",
+        "expected": [-779, 6234, -2338, -3117],
+        "valid": true
+      },
+      {
+        "kind": "ADJUSTMENT",
+        "expected": [-779, 6234, -2338, -3117],
+        "valid": true
+      }
+    ]
+  },
+  {
+    "name": "SHARE-5-2",
+    "cents": 1,
+    "kind": "SHARE",
+    "payer": 21,
+    "people": [
+      {
+        "id": 35,
+        "share": "1"
+      },
+      {
+        "id": 28,
+        "share": "2"
+      },
+      {
+        "id": 21,
+        "share": "3"
+      },
+      {
+        "id": 14,
+        "share": "4"
+      },
+      {
+        "id": 7,
+        "share": "5"
+      }
+    ],
+    "expected": [0, 0, 1, 0, -1],
+    "valid": true,
+    "switches": [
+      {
+        "kind": "EQUAL",
+        "expected": [0, 0, 1, 0, -1],
+        "valid": true
+      },
+      {
+        "kind": "PERCENTAGE",
+        "expected": [0, 0, 1, 0, -1],
+        "valid": true
+      },
+      {
+        "kind": "EXACT",
+        "expected": [0, 0, 1, 0, -1],
+        "valid": true
+      },
+      {
+        "kind": "SHARE",
+        "expected": [0, 0, 1, 0, -1],
+        "valid": true
+      },
+      {
+        "kind": "ADJUSTMENT",
+        "expected": [0, 0, 1, 0, -1],
+        "valid": true
+      }
+    ]
+  },
+  {
+    "name": "SHARE-6-3",
+    "cents": 12345,
+    "kind": "SHARE",
+    "payer": 21,
+    "people": [
+      {
+        "id": 42,
+        "share": "1"
+      },
+      {
+        "id": 35,
+        "share": "2"
+      },
+      {
+        "id": 28,
+        "share": "3"
+      },
+      {
+        "id": 21,
+        "share": "4"
+      },
+      {
+        "id": 14,
+        "share": "5"
+      },
+      {
+        "id": 7,
+        "share": "6"
+      }
+    ],
+    "expected": [-588, -1176, -1764, 9994, -2939, -3527],
+    "valid": true,
+    "switches": [
+      {
+        "kind": "EQUAL",
+        "expected": [-2057, -2057, -2057, 10287, -2058, -2058],
+        "valid": true
+      },
+      {
+        "kind": "PERCENTAGE",
+        "expected": [-588, -1176, -1764, 9994, -2939, -3527],
+        "valid": true
+      },
+      {
+        "kind": "EXACT",
+        "expected": [-588, -1176, -1764, 9994, -2939, -3527],
+        "valid": true
+      },
+      {
+        "kind": "SHARE",
+        "expected": [-588, -1176, -1764, 9994, -2939, -3527],
+        "valid": true
+      },
+      {
+        "kind": "ADJUSTMENT",
+        "expected": [-588, -1176, -1764, 9994, -2939, -3527],
+        "valid": true
+      }
+    ]
+  },
+  {
+    "name": "SHARE-7-4",
+    "cents": 99999,
+    "kind": "SHARE",
+    "payer": 21,
+    "people": [
+      {
+        "id": 49,
+        "share": "1"
+      },
+      {
+        "id": 42,
+        "share": "2"
+      },
+      {
+        "id": 35,
+        "share": "3"
+      },
+      {
+        "id": 28,
+        "share": "4"
+      },
+      {
+        "id": 21,
+        "share": "5"
+      },
+      {
+        "id": 14,
+        "share": "6"
+      },
+      {
+        "id": 7,
+        "share": "7"
+      }
+    ],
+    "expected": [-3571, -7143, -10714, -14286, 82142, -21428, -25000],
+    "valid": true,
+    "switches": [
+      {
+        "kind": "EQUAL",
+        "expected": [-14286, -14286, -14286, -14286, 85714, -14285, -14285],
+        "valid": true
+      },
+      {
+        "kind": "PERCENTAGE",
+        "expected": [-3571, -7143, -10714, -14286, 82142, -21428, -25000],
+        "valid": true
+      },
+      {
+        "kind": "EXACT",
+        "expected": [-3571, -7143, -10714, -14286, 82142, -21428, -25000],
+        "valid": true
+      },
+      {
+        "kind": "SHARE",
+        "expected": [-3571, -7143, -10714, -14286, 82142, -21428, -25000],
+        "valid": true
+      },
+      {
+        "kind": "ADJUSTMENT",
+        "expected": [-3571, -7143, -10714, -14286, 82142, -21428, -25000],
+        "valid": true
+      }
+    ]
+  },
+  {
+    "name": "SHARE-3-5",
+    "cents": -10001,
+    "kind": "SHARE",
+    "payer": 7,
+    "people": [
+      {
+        "id": 21,
+        "share": "1"
+      },
+      {
+        "id": 14,
+        "share": "2"
+      },
+      {
+        "id": 7,
+        "share": "3"
+      }
+    ],
+    "expected": [1667, 3334, -5001],
+    "valid": true,
+    "switches": [
+      {
+        "kind": "EQUAL",
+        "expected": [3334, 3334, -6668],
+        "valid": true
+      },
+      {
+        "kind": "PERCENTAGE",
+        "expected": [1667, 3334, -5001],
+        "valid": true
+      },
+      {
+        "kind": "EXACT",
+        "expected": [1667, 3334, -5001],
+        "valid": true
+      },
+      {
+        "kind": "SHARE",
+        "expected": [1667, 3334, -5001],
+        "valid": true
+      },
+      {
+        "kind": "ADJUSTMENT",
+        "expected": [1667, 3334, -5001],
+        "valid": true
+      }
+    ]
+  },
+  {
+    "name": "ADJUSTMENT-3-0",
+    "cents": 10001,
+    "kind": "ADJUSTMENT",
+    "payer": 21,
+    "people": [
+      {
+        "id": 21,
+        "share": "0"
+      },
+      {
+        "id": 14,
+        "share": "0.01"
+      },
+      {
+        "id": 7,
+        "share": "0.02"
+      }
+    ],
+    "expected": [6668, -3334, -3334],
+    "valid": true,
+    "switches": [
+      {
+        "kind": "EQUAL",
+        "expected": [6667, -3334, -3333],
+        "valid": true
+      },
+      {
+        "kind": "PERCENTAGE",
+        "expected": [6668, -3334, -3334],
+        "valid": true
+      },
+      {
+        "kind": "EXACT",
+        "expected": [6668, -3334, -3334],
+        "valid": true
+      },
+      {
+        "kind": "SHARE",
+        "expected": [6668, -3334, -3334],
+        "valid": true
+      },
+      {
+        "kind": "ADJUSTMENT",
+        "expected": [6668, -3334, -3334],
+        "valid": true
+      }
+    ]
+  },
+  {
+    "name": "ADJUSTMENT-4-1",
+    "cents": 7793,
+    "kind": "ADJUSTMENT",
+    "payer": 21,
+    "people": [
+      {
+        "id": 28,
+        "share": "0"
+      },
+      {
+        "id": 21,
+        "share": "0.01"
+      },
+      {
+        "id": 14,
+        "share": "0.02"
+      },
+      {
+        "id": 7,
+        "share": "0.03"
+      }
+    ],
+    "expected": [-1947, 5845, -1949, -1949],
+    "valid": true,
+    "switches": [
+      {
+        "kind": "EQUAL",
+        "expected": [-1948, 5845, -1948, -1949],
+        "valid": true
+      },
+      {
+        "kind": "PERCENTAGE",
+        "expected": [-1947, 5845, -1949, -1949],
+        "valid": true
+      },
+      {
+        "kind": "EXACT",
+        "expected": [-1947, 5845, -1949, -1949],
+        "valid": true
+      },
+      {
+        "kind": "SHARE",
+        "expected": [-1947, 5845, -1949, -1949],
+        "valid": true
+      },
+      {
+        "kind": "ADJUSTMENT",
+        "expected": [-1947, 5845, -1949, -1949],
+        "valid": true
+      }
+    ]
+  },
+  {
+    "name": "ADJUSTMENT-5-2",
+    "cents": 1,
+    "kind": "ADJUSTMENT",
+    "payer": 21,
+    "people": [
+      {
+        "id": 35,
+        "share": "0"
+      },
+      {
+        "id": 28,
+        "share": "0"
+      },
+      {
+        "id": 21,
+        "share": "0"
+      },
+      {
+        "id": 14,
+        "share": "0"
+      },
+      {
+        "id": 7,
+        "share": "0"
+      }
+    ],
+    "expected": [0, 0, 1, 0, -1],
+    "valid": true,
+    "switches": [
+      {
+        "kind": "EQUAL",
+        "expected": [0, 0, 1, 0, -1],
+        "valid": true
+      },
+      {
+        "kind": "PERCENTAGE",
+        "expected": [0, 0, 1, 0, -1],
+        "valid": true
+      },
+      {
+        "kind": "EXACT",
+        "expected": [0, 0, 1, 0, -1],
+        "valid": true
+      },
+      {
+        "kind": "SHARE",
+        "expected": [0, 0, 1, 0, -1],
+        "valid": true
+      },
+      {
+        "kind": "ADJUSTMENT",
+        "expected": [0, 0, 1, 0, -1],
+        "valid": true
+      }
+    ]
+  },
+  {
+    "name": "ADJUSTMENT-6-3",
+    "cents": 12345,
+    "kind": "ADJUSTMENT",
+    "payer": 21,
+    "people": [
+      {
+        "id": 42,
+        "share": "0"
+      },
+      {
+        "id": 35,
+        "share": "0.01"
+      },
+      {
+        "id": 28,
+        "share": "0.02"
+      },
+      {
+        "id": 21,
+        "share": "0.03"
+      },
+      {
+        "id": 14,
+        "share": "0.04"
+      },
+      {
+        "id": 7,
+        "share": "0.05"
+      }
+    ],
+    "expected": [-2055, -2056, -2057, 10287, -2059, -2060],
+    "valid": true,
+    "switches": [
+      {
+        "kind": "EQUAL",
+        "expected": [-2057, -2057, -2057, 10287, -2058, -2058],
+        "valid": true
+      },
+      {
+        "kind": "PERCENTAGE",
+        "expected": [-2055, -2056, -2057, 10287, -2059, -2060],
+        "valid": true
+      },
+      {
+        "kind": "EXACT",
+        "expected": [-2055, -2056, -2057, 10287, -2059, -2060],
+        "valid": true
+      },
+      {
+        "kind": "SHARE",
+        "expected": [-2055, -2056, -2057, 10287, -2059, -2060],
+        "valid": true
+      },
+      {
+        "kind": "ADJUSTMENT",
+        "expected": [-2055, -2056, -2057, 10287, -2059, -2060],
+        "valid": true
+      }
+    ]
+  },
+  {
+    "name": "ADJUSTMENT-7-4",
+    "cents": 99999,
+    "kind": "ADJUSTMENT",
+    "payer": 21,
+    "people": [
+      {
+        "id": 49,
+        "share": "0"
+      },
+      {
+        "id": 42,
+        "share": "0.01"
+      },
+      {
+        "id": 35,
+        "share": "0.02"
+      },
+      {
+        "id": 28,
+        "share": "0.03"
+      },
+      {
+        "id": 21,
+        "share": "0.04"
+      },
+      {
+        "id": 14,
+        "share": "0.05"
+      },
+      {
+        "id": 7,
+        "share": "0.06"
+      }
+    ],
+    "expected": [-14283, -14284, -14285, -14286, 85713, -14287, -14288],
+    "valid": true,
+    "switches": [
+      {
+        "kind": "EQUAL",
+        "expected": [-14286, -14286, -14286, -14286, 85714, -14285, -14285],
+        "valid": true
+      },
+      {
+        "kind": "PERCENTAGE",
+        "expected": [-14283, -14284, -14285, -14286, 85713, -14287, -14288],
+        "valid": true
+      },
+      {
+        "kind": "EXACT",
+        "expected": [-14283, -14284, -14285, -14286, 85713, -14287, -14288],
+        "valid": true
+      },
+      {
+        "kind": "SHARE",
+        "expected": [-14283, -14284, -14285, -14286, 85713, -14287, -14288],
+        "valid": true
+      },
+      {
+        "kind": "ADJUSTMENT",
+        "expected": [-14283, -14284, -14285, -14286, 85713, -14287, -14288],
+        "valid": true
+      }
+    ]
+  },
+  {
+    "name": "ADJUSTMENT-3-5",
+    "cents": -10001,
+    "kind": "ADJUSTMENT",
+    "payer": 7,
+    "people": [
+      {
+        "id": 21,
+        "share": "0"
+      },
+      {
+        "id": 14,
+        "share": "0.01"
+      },
+      {
+        "id": 7,
+        "share": "0.02"
+      }
+    ],
+    "expected": [3333, 3334, -6667],
+    "valid": true,
+    "switches": [
+      {
+        "kind": "EQUAL",
+        "expected": [3334, 3334, -6668],
+        "valid": true
+      },
+      {
+        "kind": "PERCENTAGE",
+        "expected": [3333, 3334, -6667],
+        "valid": true
+      },
+      {
+        "kind": "EXACT",
+        "expected": [3333, 3334, -6667],
+        "valid": true
+      },
+      {
+        "kind": "SHARE",
+        "expected": [3333, 3334, -6667],
+        "valid": true
+      },
+      {
+        "kind": "ADJUSTMENT",
+        "expected": [3333, 3334, -6667],
+        "valid": true
+      }
+    ]
+  }
+]

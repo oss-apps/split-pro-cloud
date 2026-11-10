@@ -1,0 +1,53 @@
+name: SplitPro
+options:
+  deploymentTarget:
+    iOS: '26.0'
+settings:
+  base:
+    SWIFT_VERSION: '6.0'
+    TARGETED_DEVICE_FAMILY: '1'
+    SPLITPRO_API_URL: http://localhost:3192
+    SPLITPRO_CAPTURE: '0'
+targets:
+  SplitPro:
+    type: application
+    platform: iOS
+    sources: [SplitPro]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.splitpro.proto
+        INFOPLIST_FILE: SplitPro/Info.plist
+        TARGETED_DEVICE_FAMILY: '1'
+        ASSETCATALOG_COMPILER_APPICON_NAME: ''
+  SplitProTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: SplitProTests
+        excludes: [Fixtures]
+      - path: SplitProTests/Fixtures
+        type: folder
+        buildPhase: resources
+    dependencies:
+      - target: SplitPro
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+  SplitProUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [SplitProUITests]
+    dependencies:
+      - target: SplitPro
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  SplitPro:
+    build:
+      targets:
+        SplitPro: all
+    test:
+      targets: [SplitProTests, SplitProUITests]
+      environmentVariables:
+        SPLITPRO_CAPTURE: $(SPLITPRO_CAPTURE)
