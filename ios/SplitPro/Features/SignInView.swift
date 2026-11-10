@@ -1,7 +1,9 @@
 import SwiftUI
+import AuthenticationServices
 
 struct SignInView: View {
   @Environment(AppModel.self) private var model
+  @Environment(\.colorScheme) private var colorScheme
   @State private var email = ""
   @State private var code = ""
   @State private var codeSent = false
@@ -19,9 +21,40 @@ struct SignInView: View {
           Text(codeSent ? "Check your inbox" : "Less settling up.\nMore living.")
             .font(.largeTitle.bold()).fixedSize(horizontal: false, vertical: true)
           Text(codeSent ? "Enter the sign-in code sent to \(email)." : "Split expenses with the people you share life with.")
-            .font(.title3).foregroundStyle(.secondary)
+            .font(.title3).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
         VStack(spacing: 18) {
+          if !codeSent {
+            SignInWithAppleButton(.continue) { request in
+              request.requestedScopes = [.fullName, .email]
+              focused = false
+              failure = nil
+              working = true
+            } onCompletion: { result in
+              Task { @MainActor in
+                defer { working = false }
+                do {
+                  let authorization = try result.get()
+                  guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
+                        let data = credential.identityToken,
+                        let token = String(data: data, encoding: .utf8), !token.isEmpty else {
+                    throw APIError(message: "Sign in with Apple returned no identity token. Please try again.")
+                  }
+                  let name = credential.fullName.map { PersonNameComponentsFormatter().string(from: $0) }
+                  try await model.signInWithApple(identityToken: token, fullName: name)
+                } catch {
+                  if (error as NSError).domain != ASAuthorizationError.errorDomain ||
+                     (error as NSError).code != ASAuthorizationError.canceled.rawValue {
+                    failure = error.localizedDescription
+                  }
+                }
+              }
+            }
+            .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
+            .frame(height: 52).clipShape(.rect(cornerRadius: 26))
+            .disabled(working).accessibilityIdentifier("auth.apple")
+            Text("or continue with email").font(.footnote).foregroundStyle(.secondary)
+          }
           TextField(codeSent ? "Sign-in code" : "Email address", text: codeSent ? $code : $email)
             .keyboardType(codeSent ? .asciiCapable : .emailAddress)
             .textContentType(codeSent ? .oneTimeCode : .emailAddress)
@@ -29,6 +62,7 @@ struct SignInView: View {
             .padding(18).background(.quaternary.opacity(0.45), in: .rect(cornerRadius: 16))
             .focused($focused).submitLabel(.go).onSubmit(submit)
             .accessibilityIdentifier(codeSent ? "auth.code" : "auth.email")
+            .disabled(working)
           if let failure { Text(failure).font(.callout).foregroundStyle(Brand.owing) }
           Button(action: submit) {
             HStack { if working { ProgressView() }; Text(codeSent ? "Sign In" : "Continue with Email").fontWeight(.semibold) }

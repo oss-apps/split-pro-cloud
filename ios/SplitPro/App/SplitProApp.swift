@@ -28,6 +28,16 @@ enum Brand {
   }
   func signIn(email: String, code: String) async throws {
     let result = try await api.auth("email/verify", body: ["email": email, "code": code], as: SignInResponse.self)
+    try await completeSignIn(result)
+  }
+  func signInWithApple(identityToken: String, fullName: String?) async throws {
+    // Matches Expo's existing endpoint: identityToken + optional fullName, not authorizationCode.
+    var body = ["identityToken": identityToken]
+    if let fullName, !fullName.isEmpty { body["fullName"] = fullName }
+    let result = try await api.auth("apple", body: body, as: SignInResponse.self)
+    try await completeSignIn(result)
+  }
+  private func completeSignIn(_ result: SignInResponse) async throws {
     try Keychain.save(result.token)
     api.token = result.token
     user = result.user

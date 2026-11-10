@@ -111,7 +111,7 @@ struct APIClient {
   func request(path: String, body: Data?, queryInput: String? = nil) async throws -> Data {
     // Authentication is the only allowed write, including sign-out. Fail closed for all others.
     if Prototype.readOnly, body != nil,
-       !["api/mobile/auth/email", "api/mobile/auth/email/verify", "api/mobile/auth/signout"].contains(path) {
+       !["api/mobile/auth/email", "api/mobile/auth/email/verify", "api/mobile/auth/apple", "api/mobile/auth/signout"].contains(path) {
       throw APIError(message: Prototype.message)
     }
     var components = URLComponents(url: baseURL.appending(path: path), resolvingAgainstBaseURL: false)!

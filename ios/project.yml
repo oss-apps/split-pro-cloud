@@ -14,13 +14,22 @@ targets:
   SplitPro:
     type: application
     platform: iOS
+    attributes:
+      SystemCapabilities:
+        com.apple.SignInWithApple:
+          enabled: 1
     sources: [SplitPro]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.splitpro.proto
         INFOPLIST_FILE: SplitPro/Info.plist
+        CODE_SIGN_ENTITLEMENTS: SplitPro/SplitPro.entitlements
         TARGETED_DEVICE_FAMILY: '1'
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    entitlements:
+      path: SplitPro/SplitPro.entitlements
+      properties:
+        com.apple.developer.applesignin: [Default]
   SplitProTests:
     type: bundle.unit-test
     platform: iOS
