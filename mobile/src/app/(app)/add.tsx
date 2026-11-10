@@ -6,9 +6,10 @@ import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from 're
 import { create } from 'zustand';
 
 import { AddExpenseForm } from '@/components/add-expense/AddExpenseForm';
+import { NativeExpenseForm } from '@/components/add-expense/NativeExpenseForm';
 import { getFormSnapshot } from '@/components/add-expense/formChanges';
 import { useSaveExpense } from '@/components/add-expense/useSaveExpense';
-import { EmptyState, ModalHeader, Spinner, icons } from '@/components/ui';
+import { EmptyState, HeaderActions, ModalHeader, Spinner, icons } from '@/components/ui';
 import { api } from '@/lib/api';
 import { goBackOr, useConfirmDiscard } from '@/lib/navigation';
 import { getEditFormState, isCurrentForm, useAddExpenseStore } from '@/store/addExpenseStore';
@@ -226,6 +227,8 @@ const AddExpense = () => {
         <KeyboardAvoidingView style={styles.fill} behavior="padding">
           {content}
         </KeyboardAvoidingView>
+      ) : isReady ? (
+        <NativeExpenseForm expenseId={expenseId} isAmountTooLarge={isAmountTooLarge} />
       ) : (
         content
       )}
@@ -235,19 +238,41 @@ const AddExpense = () => {
           headerShadowVisible: false,
         }}
       />
-      <ModalHeader
-        onCancel={close}
-        confirm={
-          isReady
-            ? {
-                label: t('expense.save'),
-                onPress: save,
-                disabled: isSaveDisabled,
-                loading: isSaving,
-              }
-            : undefined
-        }
-      />
+      {'ios' === Platform.OS ? (
+        <>
+          <HeaderActions
+            placement="left"
+            actions={[{ label: t('common.cancel'), onPress: close }]}
+          />
+          {isReady ? (
+            <HeaderActions
+              actions={[
+                {
+                  label: expenseId ? t('expense.save') : t('common.add'),
+                  onPress: save,
+                  disabled: isSaveDisabled,
+                  loading: isSaving,
+                  variant: 'prominent',
+                },
+              ]}
+            />
+          ) : null}
+        </>
+      ) : (
+        <ModalHeader
+          onCancel={close}
+          confirm={
+            isReady
+              ? {
+                  label: t('expense.save'),
+                  onPress: save,
+                  disabled: isSaveDisabled,
+                  loading: isSaving,
+                }
+              : undefined
+          }
+        />
+      )}
     </>
   );
 };

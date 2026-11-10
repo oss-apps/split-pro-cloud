@@ -12,7 +12,10 @@
     "discard_message": "Your changes haven't been saved.",
     "discard": "Discard",
     "keep_editing": "Keep editing",
-    "more": "More"
+    "more": "More",
+    "no_results": "No results",
+    "search_friends": "Search friends",
+    "add": "Add"
   },
   "invite": {
     "send": "Send invite",

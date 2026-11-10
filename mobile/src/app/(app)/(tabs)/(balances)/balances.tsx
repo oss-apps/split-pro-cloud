@@ -1,11 +1,12 @@
-import { router } from 'expo-router';
+import { Stack, router } from 'expo-router';
 import React, { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { FlatList, RefreshControl, Share, StyleSheet } from 'react-native';
+import { FlatList, Platform, RefreshControl, Share, StyleSheet } from 'react-native';
 
 import { AddExpenseAction } from '@/components/expense';
 import { BalanceTotals } from '@/components/friend/BalanceTotals';
 import { FriendBalanceRow } from '@/components/friend/FriendBalanceRow';
+import { NativeBalances } from '@/components/friend/NativeBalances';
 import { EmptyState, FullScreenSpinner, Separator, icons, rowInset } from '@/components/ui';
 import { api } from '@/lib/api';
 import { API_URL } from '@/lib/config';
@@ -16,6 +17,7 @@ const Balances = () => {
   const { t } = useTranslation();
   const balanceQuery = api.user.getBalances.useQuery();
   const [refreshing, setRefreshing] = useState(false);
+  const [search, setSearch] = useState('');
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -64,7 +66,13 @@ const Balances = () => {
   // it finds when the screen appears, to collapse the large title.
   const body = (
     <FlatList
-      data={data?.balances ?? []}
+      data={
+        data?.balances.filter((item) =>
+          `${item.friend.name ?? ''} ${item.friend.email ?? ''}`
+            .toLocaleLowerCase()
+            .includes(search.toLocaleLowerCase()),
+        ) ?? []
+      }
       keyExtractor={(item) => String(item.friendId)}
       // Scrolls under the transparent header and collapses the large title.
       contentInsetAdjustmentBehavior="automatic"
@@ -98,7 +106,24 @@ const Balances = () => {
   return (
     // No wrapping view: the list must be the screen's first view for the large title to collapse.
     <>
-      {body}
+      {'ios' === Platform.OS ? (
+        <NativeBalances
+          data={data}
+          search={search}
+          loading={balanceQuery.isLoading}
+          error={balanceQuery.error?.message}
+          onRefresh={async () => {
+            await balanceQuery.refetch();
+          }}
+        />
+      ) : (
+        body
+      )}
+      <Stack.SearchBar
+        placeholder={t('common.search_friends')}
+        onChangeText={(event) => setSearch(event.nativeEvent.text)}
+        hideWhenScrolling={false}
+      />
       <AddExpenseAction
         actions={[{ label: t('balances.share_app'), icon: icons.share, onPress: shareApp }]}
       />

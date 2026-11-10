@@ -61,7 +61,7 @@ const AppLayout = () => {
       <Stack.Screen
         name="add"
         options={{
-          presentation: 'fullScreenModal',
+          presentation: 'ios' === Platform.OS ? 'modal' : 'fullScreenModal',
           title: t('screens.add_expense'),
           ...groupedScreenOptions,
         }}
