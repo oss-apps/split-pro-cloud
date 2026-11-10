@@ -42,7 +42,7 @@ final class PrototypeTests: XCTestCase {
     let app = XCUIApplication(bundleIdentifier: "app.splitpro")
     app.launch()
     if !app.buttons["Add expense"].waitForExistence(timeout: 10) {
-      let email = app.textFields["Email address"]
+      let email = app.textFields["Enter your email"]
       XCTAssertTrue(email.waitForExistence(timeout: 15))
       email.tap()
       email.typeText("review@splitpro.app")
