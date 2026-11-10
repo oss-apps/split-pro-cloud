@@ -1,5 +1,5 @@
 -- CreateEnum
-CREATE TYPE "FeedbackStatus" AS ENUM ('NEW', 'REPLIED', 'CLOSED');
+CREATE TYPE "FeedbackStatus" AS ENUM ('OPEN', 'REPLIED', 'CLOSED');
 
 -- CreateEnum
 CREATE TYPE "FeedbackReplyStatus" AS ENUM ('SENDING', 'SENT', 'FAILED');
@@ -15,7 +15,7 @@ CREATE TABLE "Feedback" (
     "appVersion" TEXT,
     "clientKey" TEXT,
     "externalId" TEXT,
-    "status" "FeedbackStatus" NOT NULL DEFAULT 'NEW',
+    "status" "FeedbackStatus" NOT NULL DEFAULT 'OPEN',
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 

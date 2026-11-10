@@ -9,7 +9,7 @@ import {
 export const config = { api: { bodyParser: false } };
 
 /**
- * PATCH /api/admin/feedback/{id} with `{ "status": "NEW" | "REPLIED" | "CLOSED" }`
+ * PATCH /api/admin/feedback/{id} with `{ "status": "OPEN" | "REPLIED" | "CLOSED" }`
  */
 export default adminApiRoute(['PATCH'], async (req, res, body) => {
   const id = queryParam(req.query.id) ?? '';

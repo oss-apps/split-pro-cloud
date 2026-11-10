@@ -423,7 +423,7 @@ const importItem = async (db: PrismaClient, item: ImportItem): Promise<ImportOut
           email: item.email,
           message: item.message,
           source: 'import',
-          status: 0 < replies.length ? FeedbackStatus.REPLIED : FeedbackStatus.NEW,
+          status: 0 < replies.length ? FeedbackStatus.REPLIED : FeedbackStatus.OPEN,
           createdAt: new Date(item.createdAt),
           replies: {
             create: replies.map((reply) => ({

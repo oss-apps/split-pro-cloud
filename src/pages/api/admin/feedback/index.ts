@@ -5,7 +5,7 @@ import { listFeedback, listFeedbackQuery } from '~/server/api/services/feedbackA
 export const config = { api: { bodyParser: false } };
 
 /**
- * GET /api/admin/feedback?since=<iso>&status=<NEW|REPLIED|CLOSED>&limit=<1-200>&cursor=<id>
+ * GET /api/admin/feedback?since=<iso>&status=<OPEN|REPLIED|CLOSED>&limit=<1-200>&cursor=<id>
  * Feedback newest first, with `nextCursor` for the next page.
  */
 export default adminApiRoute(['GET'], async (req, res) => {

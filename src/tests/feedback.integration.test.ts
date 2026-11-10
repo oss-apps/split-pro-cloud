@@ -201,7 +201,7 @@ void test(
       });
       assert.equal(failed.deliveryStatus, 'FAILED');
       assert.equal(failed.sentAt, null);
-      assert.equal((await t.db.feedback.findUniqueOrThrow({ where: { id } })).status, 'NEW');
+      assert.equal((await t.db.feedback.findUniqueOrThrow({ where: { id } })).status, 'OPEN');
 
       const settled = await Promise.allSettled(
         Array.from({ length: 3 }, () =>
@@ -451,7 +451,7 @@ void test(
       assert.equal(imported[0]?.replies[0]?.deliveryStatus, 'SENT');
       assert.equal(imported[0]?.replies[0]?.sentAt?.toISOString(), '2026-01-03T03:04:05.000Z');
       assert.equal(imported[0]?.createdAt.toISOString(), '2026-01-02T03:04:05.000Z');
-      assert.equal(imported[1]?.status, 'NEW');
+      assert.equal(imported[1]?.status, 'OPEN');
 
       // Paging with `since` and a cursor
       const first = await t.listFeedback({ limit: 1, since: '2026-01-01T00:00:00Z' }, t.db);
@@ -745,7 +745,7 @@ void test(
       const afterA = await t.db.feedbackReply.findUniqueOrThrow({ where: { idempotencyKey } });
       assert.equal(afterA.deliveryStatus, 'SENDING');
       assert.equal(afterA.sentAt, null);
-      assert.equal((await t.db.feedback.findUniqueOrThrow({ where: { id } })).status, 'NEW');
+      assert.equal((await t.db.feedback.findUniqueOrThrow({ where: { id } })).status, 'OPEN');
 
       // B's own outcome is what's recorded
       b.finish.reject(new t.MailNotSentError({ code: 'ENOTCONFIGURED' }));
@@ -761,6 +761,62 @@ void test(
     } finally {
       console.warn = originalWarn;
       await t.db.user.delete({ where: { id: lee.id } });
+    }
+  },
+);
+
+void test(
+  'feedback: one feedback can get several replies, each sent and listed in order',
+  { skip: !databaseUrl },
+  async () => {
+    const t = await setup();
+    const max = await t.createUser('Max');
+    const sent: ReplyEmail[] = [];
+    const deps = {
+      db: t.db,
+      send: async (email: ReplyEmail) => {
+        sent.push(email);
+      },
+    };
+    const quiet = { db: t.db, notify: async () => undefined };
+
+    try {
+      const { id } = await t.submitFeedback(
+        max,
+        { feedback: 'A question in two parts' },
+        'web',
+        quiet,
+      );
+      assert.equal((await t.db.feedback.findUniqueOrThrow({ where: { id } })).status, 'OPEN');
+
+      const first = await t.replyToFeedback(
+        id,
+        { message: 'Answer to the first part', idempotencyKey: `first-${t.suffix}` },
+        deps,
+      );
+      const second = await t.replyToFeedback(
+        id,
+        { message: 'And the second part', idempotencyKey: `second-${t.suffix}` },
+        deps,
+      );
+      assert.equal(first.created, true);
+      assert.equal(second.created, true);
+      assert.deepEqual(
+        sent.map(({ reply }) => reply),
+        ['Answer to the first part', 'And the second part'],
+      );
+
+      const page = await t.listFeedback({ limit: 200, status: 'REPLIED' });
+      const listed = page.items.find((item) => item.id === id);
+      assert.deepEqual(
+        listed?.replies.map(({ message, deliveryStatus }) => [message, deliveryStatus]),
+        [
+          ['Answer to the first part', 'SENT'],
+          ['And the second part', 'SENT'],
+        ],
+      );
+    } finally {
+      await t.db.user.delete({ where: { id: max.id } });
     }
   },
 );

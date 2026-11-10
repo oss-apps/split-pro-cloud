@@ -121,7 +121,7 @@ const createFakeDb = () => {
     ...data,
     id: '',
     externalId: null,
-    status: 'NEW',
+    status: 'OPEN',
     createdAt: new Date(),
     updatedAt: new Date(),
   });
