@@ -48,11 +48,12 @@ final class PrototypeTests: XCTestCase {
       email.typeText("review@splitpro.app")
       app.buttons["Send code"].tap()
       let input = app.textFields["Code"]
-      XCTAssertTrue(input.waitForExistence(timeout: 45))
+      XCTAssertTrue(app.staticTexts["Check your email"].firstMatch.waitForExistence(timeout: 45))
       let path = try XCTUnwrap(ProcessInfo.processInfo.environment["SPLITPRO_REVIEW_CODE_FILE"])
       let code = try String(contentsOfFile: path, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
-      input.tap()
-      input.typeText(code)
+      // The hidden OTP input is auto-focused, but can be absent from the accessibility tree.
+      if input.exists { input.tap(); input.typeText(code) }
+      else { app.typeText(code) }
     }
     let add = app.buttons["Add expense"].firstMatch
     XCTAssertTrue(add.waitForExistence(timeout: 45))
