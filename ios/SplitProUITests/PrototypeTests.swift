@@ -40,20 +40,28 @@ final class PrototypeTests: XCTestCase {
     }
     continueAfterFailure = false
     let app = XCUIApplication(bundleIdentifier: "app.splitpro")
-    app.launch()
+    app.activate()
     if !app.buttons["Add expense"].waitForExistence(timeout: 10) {
-      let email = app.textFields["Enter your email"]
-      XCTAssertTrue(email.waitForExistence(timeout: 15))
-      email.tap()
-      email.typeText("review@splitpro.app")
-      app.buttons["Send code"].tap()
+      if !app.staticTexts["Check your email"].firstMatch.exists {
+        let email = app.textFields["Enter your email"]
+        XCTAssertTrue(email.waitForExistence(timeout: 15))
+        email.tap()
+        email.typeText("review@splitpro.app")
+        app.buttons["Send code"].tap()
+      }
       let input = app.textFields["Code"]
       XCTAssertTrue(app.staticTexts["Check your email"].firstMatch.waitForExistence(timeout: 45))
       let path = try XCTUnwrap(ProcessInfo.processInfo.environment["SPLITPRO_REVIEW_CODE_FILE"])
       let code = try String(contentsOfFile: path, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
       // The hidden OTP input is auto-focused, but can be absent from the accessibility tree.
       if input.exists { input.tap(); input.typeText(code) }
-      else { app.typeText(code) }
+      else {
+        for character in code.uppercased() {
+          let key = app.keys[String(character)].firstMatch
+          if !key.exists { app.keys["more"].tap() }
+          key.tap()
+        }
+      }
     }
     let add = app.buttons["Add expense"].firstMatch
     XCTAssertTrue(add.waitForExistence(timeout: 45))
