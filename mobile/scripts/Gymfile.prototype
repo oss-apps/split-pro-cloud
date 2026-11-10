@@ -6,7 +6,8 @@ configuration('Release')
 
 # Gym detects the provisioning profile from the project that EAS configures after the hook.
 export_options({
-  method: 'app-store-connect',
+  # Fastlane still requires this alias; Xcode accepts it for App Store Connect exports.
+  method: 'app-store',
   teamID: 'G5MR932BV5',
   testFlightInternalTestingOnly: true,
   manageAppVersionAndBuildNumber: false
