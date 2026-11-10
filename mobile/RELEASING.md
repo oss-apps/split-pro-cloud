@@ -68,7 +68,8 @@ lists both. The links live in `src/components/Site/constants.ts`.
 uses `https://splitpro.app` with `EXPO_PUBLIC_PROTOTYPE_READONLY=1`. This flag enables the Add
 alert and blocks all tRPC POSTs before transport (including settlement, deletion, profile,
 group and receipt mutations). Push registration is disabled. Authentication stays available.
-Verify the alert in the simulator before submitting manually with the production submit profile.
+Verify the alert in the simulator before submitting manually with the production submit profile
+and `--no-auto-testflight-setup` (the existing Team group already has access to all builds).
 Build 5 is reserved for Prototype A; build 6 is the separate SwiftUI comparison. After both are
 uploaded, set the EAS remote iOS build number to at least 6 to prevent the next real build colliding.
 
