@@ -72,6 +72,7 @@ model User {
     friendOf            Friendship[]         @relation("FriendFriendships")
     recurringExpenses   RecurringExpense[]
     devicePushTokens    DevicePushToken[]
+    feedback            Feedback[]
 }
 
 model VerificationToken {
@@ -380,4 +381,61 @@ model QuickSplitExpense {
     split      QuickSplit @relation(fields: [splitId], references: [id], onDelete: Cascade)
 
     @@index([splitId, createdAt])
+}
+
+enum FeedbackStatus {
+    OPEN
+    REPLIED
+    CLOSED
+}
+
+/// Feedback sent from the app. Deleted with the account.
+model Feedback {
+    id         String          @id @default(cuid())
+    userId     Int?
+    /// The sender's email and name when they sent it
+    email      String
+    name       String?
+    message    String
+    /// `web`, `ios`, `android`, `mobile` (older app builds that don't say which) or `import`
+    source     String
+    appVersion String?
+    /// Sent by the app once per draft, so a retried submit doesn't save it twice
+    clientKey  String?         @unique
+    /// Only set on feedback imported from the old feedback emails
+    externalId String?         @unique
+    status     FeedbackStatus  @default(OPEN)
+    createdAt  DateTime        @default(now())
+    updatedAt  DateTime        @updatedAt
+    user       User?           @relation(fields: [userId], references: [id], onDelete: Cascade)
+    replies    FeedbackReply[]
+
+    @@index([status, createdAt])
+    @@index([userId, createdAt])
+}
+
+enum FeedbackReplyStatus {
+    /// Reserved, the email is being sent, or it's unknown whether it went
+    SENDING
+    SENT
+    /// Certainly not sent, so it's safe to send again
+    FAILED
+}
+
+model FeedbackReply {
+    id               String              @id @default(cuid())
+    feedbackId       String
+    message          String
+    idempotencyKey   String              @unique
+    deliveryStatus   FeedbackReplyStatus @default(SENDING)
+    /// The send attempt that holds it while SENDING: only that attempt may complete it
+    attemptId        String?
+    attemptStartedAt DateTime?
+    /// When the email was accepted for delivery
+    sentAt           DateTime?
+    createdAt        DateTime            @default(now())
+    updatedAt        DateTime            @updatedAt
+    feedback         Feedback            @relation(fields: [feedbackId], references: [id], onDelete: Cascade)
+
+    @@index([feedbackId])
 }

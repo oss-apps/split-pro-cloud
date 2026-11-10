@@ -70,6 +70,8 @@ export const env = createEnv({
     /** Access token for Expo's enhanced push security, needed once it's turned on for the project. */
     EXPO_ACCESS_TOKEN: z.string().optional(),
     FEEDBACK_EMAIL: z.string().optional(),
+    /** Bearer token for the internal admin API under /api/admin. The API is off when unset. */
+    ADMIN_API_TOKEN: z.string().min(32).optional(),
     DISCORD_WEBHOOK_URL: z.string().optional(),
     ADSENSE_CLIENT: z.string().startsWith('ca-pub-').optional(),
     ADSENSE_FEED_SLOT: z.string().optional(),
@@ -135,6 +137,7 @@ export const env = createEnv({
     WEB_PUSH_PUBLIC_KEY: process.env.WEB_PUSH_PUBLIC_KEY,
     EXPO_ACCESS_TOKEN: process.env.EXPO_ACCESS_TOKEN,
     FEEDBACK_EMAIL: process.env.FEEDBACK_EMAIL,
+    ADMIN_API_TOKEN: process.env.ADMIN_API_TOKEN,
     DISCORD_WEBHOOK_URL: process.env.DISCORD_WEBHOOK_URL,
     ADSENSE_CLIENT: process.env.ADSENSE_CLIENT,
     ADSENSE_FEED_SLOT: process.env.ADSENSE_FEED_SLOT,

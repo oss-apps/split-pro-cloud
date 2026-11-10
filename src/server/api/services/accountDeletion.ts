@@ -344,8 +344,8 @@ const leaveSettledGroups = async (tx: Prisma.TransactionClient, userId: number) 
 };
 
 /**
- * Removes the person, not what they share: their name, email, sign-in methods, sessions, devices
- * and friendships go. Expenses, balances and notes stay for the people they share them with,
+ * Removes the person, not what they share: their name, email, sign-in methods, sessions, devices,
+ * friendships and feedback go. Expenses, balances and notes stay for the people they share them with,
  * against an anonymous user row.
  */
 const anonymiseAccount = async (
@@ -366,6 +366,8 @@ const anonymiseAccount = async (
   await tx.devicePushToken.deleteMany({ where: { userId } });
   await tx.session.deleteMany({ where: { userId } });
   await tx.pushNotification.deleteMany({ where: { userId } });
+  // The row stays, so its cascade doesn't remove these
+  await tx.feedback.deleteMany({ where: { userId } });
   await tx.verificationToken.deleteMany({
     where: {
       OR: [
