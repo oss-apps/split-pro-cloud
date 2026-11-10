@@ -70,6 +70,9 @@ alert and blocks all tRPC POSTs before transport (including settlement, deletion
 group and receipt mutations). Push registration is disabled. Authentication stays available.
 Verify the alert in the simulator before submitting manually with the production submit profile
 and `--no-auto-testflight-setup` (the existing Team group already has access to all builds).
+The prototype-only post-install hook supplies a supported custom Gymfile that exports with
+`testFlightInternalTestingOnly: true` and preserves the EAS build number. Other profiles retain
+the default EAS Gymfile. Confirm `INTERNAL_ONLY` in App Store Connect after processing.
 Build 5 is reserved for Prototype A; build 6 is the separate SwiftUI comparison. After both are
 uploaded, set the EAS remote iOS build number to at least 6 to prevent the next real build colliding.
 

@@ -4,6 +4,7 @@
   "private": true,
   "main": "expo-router/entry",
   "scripts": {
+    "eas-build-post-install": "node scripts/prototype-gymfile.mjs",
     "start": "expo start",
     "ios": "expo run:ios",
     "android": "expo run:android",
