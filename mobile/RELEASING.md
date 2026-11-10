@@ -73,8 +73,10 @@ and `--no-auto-testflight-setup` (the existing Team group already has access to 
 The prototype-only post-install hook supplies a supported custom Gymfile that exports with
 `testFlightInternalTestingOnly: true` and preserves the EAS build number. Other profiles retain
 the default EAS Gymfile. Confirm `INTERNAL_ONLY` in App Store Connect after processing.
-Build 5 is reserved for Prototype A; build 6 is the separate SwiftUI comparison. After both are
-uploaded, set the EAS remote iOS build number to at least 6 to prevent the next real build colliding.
+The replacement comparison builds are 1.0.0 (7) for Expo and (8) for SwiftUI (now with native Apple
+sign-in). Keep the previous prototypes (5) and (6) expired and the public beta (4) active. After
+both replacements are uploaded, the EAS remote iOS build number must be 8, so the next real build
+auto-increments to 9.
 
 **Never run `testflight-friends.sh` or `ship-builds.sh` for prototypes.** Set only their TestFlight
 build notes and export compliance, and confirm internal Team access and absence from Friends.
