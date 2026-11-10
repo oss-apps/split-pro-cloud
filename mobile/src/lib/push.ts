@@ -18,6 +18,7 @@ import superjson from 'superjson';
 import type { AppRouter } from '~/server/api/root';
 
 import { API_URL } from './config';
+import { PROTOTYPE_READONLY, prototypeFetch } from './prototype';
 import { storage } from './storage';
 
 /** The token this device registered with the server, so it can be unregistered at sign-out. */
@@ -35,7 +36,7 @@ export type PushState = 'unsupported' | 'undetermined' | 'denied' | 'disabled' |
 export type EnablePushResult = 'enabled' | 'denied' | 'unsupported' | 'unavailable';
 
 export const isPushSupported = () =>
-  ('ios' === Platform.OS || 'android' === Platform.OS) && Device.isDevice;
+  !PROTOTYPE_READONLY && ('ios' === Platform.OS || 'android' === Platform.OS) && Device.isDevice;
 
 const getProjectId = (): string | undefined => {
   const extra = Constants.expoConfig?.extra as { eas?: { projectId?: unknown } } | undefined;
@@ -52,6 +53,7 @@ const createClient = (sessionToken: string) =>
     transformer: superjson as unknown as AppRouter['_def']['_config']['transformer'],
     links: [
       httpLink({
+        fetch: prototypeFetch,
         url: `${API_URL}/api/trpc`,
         headers: () => ({ Authorization: `Bearer ${sessionToken}` }),
       }),

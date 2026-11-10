@@ -5,6 +5,7 @@ import { isAmountWithinLimit } from '~/utils/numbers';
 import { toast } from '@/components/ui';
 import { api } from '@/lib/api';
 import { goBackOr } from '@/lib/navigation';
+import { PROTOTYPE_READONLY, blockPrototypeWrite } from '@/lib/prototype';
 import {
   getParticipantsToSave,
   getRecurrenceToSave,
@@ -36,12 +37,13 @@ export const useSaveExpense = (expenseId: string | undefined, beforeClose?: () =
   const isSaving = userMutation.isLoading || groupMutation.isLoading;
   const isAmountTooLarge = !isAmountWithinLimit(amount);
   const isSaveDisabled =
-    isSaving ||
-    !amount ||
-    isAmountTooLarge ||
-    hasPendingInvite ||
-    '' === description ||
-    isFileUploading;
+    !PROTOTYPE_READONLY &&
+    (isSaving ||
+      !amount ||
+      isAmountTooLarge ||
+      hasPendingInvite ||
+      '' === description ||
+      isFileUploading);
 
   const onSuccess = () => {
     Promise.all([
@@ -61,6 +63,7 @@ export const useSaveExpense = (expenseId: string | undefined, beforeClose?: () =
   const onError = (error: { message: string }) => toast.error(error.message);
 
   const save = () => {
+    if (blockPrototypeWrite()) return;
     const state = useAddExpenseStore.getState();
     const { group, paidBy, splitType, fileKey, canSplitScreenClosed, currency } = state;
     if (!paidBy || isSaveDisabled || hasUnresolvedInvite(state)) {

@@ -25,6 +25,14 @@
         "buildType": "apk"
       }
     },
+    "prototype": {
+      "extends": "production",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://splitpro.app",
+        "EXPO_PUBLIC_PROTOTYPE_READONLY": "1"
+      },
+      "ios": { "buildConfiguration": "Release" }
+    },
     "production": {
       "extends": "base",
       "autoIncrement": true

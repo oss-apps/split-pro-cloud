@@ -8,6 +8,7 @@ import { FILE_SIZE_LIMIT } from '~/lib/constants';
 
 import { Icon, ListRow, Sheet, Spinner, Text, icons, rowInset, toast } from '@/components/ui';
 import { api } from '@/lib/api';
+import { blockPrototypeWrite } from '@/lib/prototype';
 import { isCurrentForm, uploadReceipt, useAddExpenseStore } from '@/store/addExpenseStore';
 import { colors, radii } from '@/theme/tokens';
 
@@ -32,6 +33,7 @@ export const ReceiptRow: React.FC<{ isEditing: boolean }> = ({ isEditing }) => {
   const choiceAfterClose = useRef<Choice | null>(null);
 
   const pick = async (source: Exclude<Choice, 'remove'>) => {
+    if (blockPrototypeWrite()) return;
     // Picking takes a while. A form that was reset meanwhile must not get this receipt.
     const { formGeneration } = useAddExpenseStore.getState();
 

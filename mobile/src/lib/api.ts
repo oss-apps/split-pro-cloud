@@ -8,6 +8,7 @@ import type { AppRouter } from '~/server/api/root';
 import { getAuthToken } from '@/store/authStore';
 
 import { API_URL } from './config';
+import { prototypeFetch } from './prototype';
 
 /** Typed tRPC hooks for the web app's router, e.g. `api.user.me.useQuery()`. */
 export const api = createTRPCReact<AppRouter>();
@@ -18,6 +19,7 @@ export const createTrpcClient = () =>
     transformer: superjson as unknown as AppRouter['_def']['_config']['transformer'],
     links: [
       httpBatchLink({
+        fetch: prototypeFetch,
         url: `${API_URL}/api/trpc`,
         headers: () => {
           const token = getAuthToken();

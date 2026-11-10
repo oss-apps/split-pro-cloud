@@ -62,6 +62,20 @@ lists both. The links live in `src/components/Site/constants.ts`.
 
 ## Building and shipping
 
+### Native prototype comparison (internal only)
+
+`eas build -p ios --profile prototype` inherits production signing/version auto-increment and
+uses `https://splitpro.app` with `EXPO_PUBLIC_PROTOTYPE_READONLY=1`. This flag enables the Add
+alert and blocks all tRPC POSTs before transport (including settlement, deletion, profile,
+group and receipt mutations). Push registration is disabled. Authentication stays available.
+Verify the alert in the simulator before submitting manually with the production submit profile.
+Build 5 is reserved for Prototype A; build 6 is the separate SwiftUI comparison. After both are
+uploaded, set the EAS remote iOS build number to at least 6 to prevent the next real build colliding.
+
+**Never run `testflight-friends.sh` or `ship-builds.sh` for prototypes.** Set only their TestFlight
+build notes and export compliance, and confirm internal Team access and absence from Friends.
+Do not submit beta app review or touch App Store metadata.
+
 Run from `mobile/`, with the EAS env vars loaded (`set -a; . ~/.appstore/splitpro.env; set +a`).
 
 **iOS**
