@@ -1,0 +1,21 @@
+# Railway builds with Nixpacks. Its Node comes from a nixpkgs snapshot that lags
+# Node security releases, so Node (and Nix's pnpm, which pulls in its own Node)
+# isn't taken from Nix: docker/nixpacks/install-node.sh installs a pinned
+# official release instead, used for both the build and the server. pnpm comes
+# from corepack (packageManager in package.json).
+# Update the version and hashes in that script with each Node security release.
+[phases.setup]
+nixPkgs = ["openssl"]
+
+[phases.node]
+dependsOn = ["setup"]
+cmds = ["bash docker/nixpacks/install-node.sh"]
+# Only the script, so code changes don't redownload Node.
+onlyIncludeFiles = ["docker/nixpacks/install-node.sh"]
+
+[phases.install]
+dependsOn = ["node"]
+cmds = [
+  "npm install -g corepack@0.24.1 && ln -sf /app/.node/bin/corepack /usr/bin/corepack && corepack enable --install-directory /usr/bin",
+  "pnpm i --frozen-lockfile",
+]
