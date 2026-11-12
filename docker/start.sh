@@ -1,10 +1,10 @@
 #!/bin/sh
 
-set -x
+set -ex
 
 echo "Deploying prisma migrations"
 
-pnpx prisma migrate deploy --schema ./prisma/schema.prisma
+prisma migrate deploy --schema ./prisma/schema.prisma
 
 echo "Starting web server"
 
