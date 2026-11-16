@@ -1,6 +1,9 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { z } from 'zod';
 
+import { DATA_VERSION_KEY, USER_CREATED_AT_BACKFILL_VERSION } from '~/migrations';
+import { CREATED_AT_MIGRATION, getCreatedAtExactSince } from '~/server/userCreatedAt';
+
 /**
  * Read-only growth numbers for the internal admin API (GET /api/admin/stats).
  *
@@ -10,9 +13,10 @@ import { z } from 'zod';
  *   who never signed in, are counted apart as `invitedUsers`. Deleted (anonymised) rows are never
  *   counted as users.
  * - *New users* are users whose `User.createdAt` falls on that day (`newUsersMethod`). Rows from
- *   before that column existed hold an estimate, their earliest recorded activity, so days before
- *   `newUsersExactSince` are approximate and users with no activity at all are missing from them.
- *   Someone invited first and signing in later counts on the day they were invited.
+ *   before that column existed hold an estimate (see `backfillUserCreatedAt`) once
+ *   `newUsersBackfilled`, so days before `newUsersExactSince` are approximate and users without
+ *   any signal are missing from them. Someone invited first and signing in later counts on the
+ *   day they were invited.
  * - An *expense event* is an expense that isn't deleted and was added by a person: occurrences the
  *   recurring runner created on its own (`recurringId` set and not the rule's first date) are
  *   left out of activity and counted as `recurringCreated` instead. Its time is `Expense.createdAt`.
@@ -30,7 +34,6 @@ export const WEEKS = 12;
 export const MONTHS = 6;
 const STATEMENT_TIMEOUT_MS = 5000;
 const DAY_MS = 24 * 60 * 60 * 1000;
-const CREATED_AT_MIGRATION = '20261117120000_add_user_created_at';
 
 export const adminStatsQuery = z.object({
   days: z.coerce
@@ -265,23 +268,10 @@ const getActiveUsers = async (
     FROM "active" WHERE "at" >= ${ts(firstMonth)} GROUP BY 2
   `;
 
-/** When `User.createdAt` started being set on create, or null if unknown (no migration table). */
-const getCreatedAtExactSince = async (tx: Tx) => {
-  const [table] = await tx.$queryRaw<{ exists: boolean }[]>`
-    SELECT to_regclass('"_prisma_migrations"') IS NOT NULL AS "exists"
-  `;
-  if (!table?.exists) {
-    return null;
-  }
-  const [row] = await tx.$queryRaw<{ finishedAt: Date | null }[]>`
-    SELECT "finished_at" AS "finishedAt" FROM "_prisma_migrations"
-    WHERE "migration_name" = ${CREATED_AT_MIGRATION} AND "rolled_back_at" IS NULL
-    ORDER BY "finished_at" DESC NULLS LAST LIMIT 1
-  `;
-  return row?.finishedAt ?? null;
-};
-
 const ACTIVE_FIELDS = ['activeUsers', 'activeCreators'] as const;
+
+const isBackfilled = (dataVersion: string | null) =>
+  null !== dataVersion && dataVersion >= USER_CREATED_AT_BACKFILL_VERSION;
 
 /** How `newUsers` is counted, with the date it became exact. */
 export const newUsersMethod = (exactSince: Date | null) =>
@@ -312,7 +302,10 @@ export const getAdminStats = async (
         end,
       });
       const exactSince = await getCreatedAtExactSince(tx);
-      return { totals, daily, active, exactSince };
+      const [version] = await tx.$queryRaw<{ value: string }[]>`
+        SELECT "value" FROM "AppMetadata" WHERE "key" = ${DATA_VERSION_KEY}
+      `;
+      return { totals, daily, active, exactSince, dataVersion: version?.value ?? null };
     },
     { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, timeout: 20_000 },
   );
@@ -338,6 +331,8 @@ export const getAdminStats = async (
     newUsersMethod: newUsersMethod(data.exactSince),
     /** Days before this are estimates from earliest activity; null if unknown */
     newUsersExactSince: data.exactSince?.toISOString() ?? null,
+    /** Whether the estimates for users from before then have been filled in yet */
+    newUsersBackfilled: isBackfilled(data.dataVersion),
     totals: data.totals,
     daily: dayKeys.map((date, i) => ({
       date,

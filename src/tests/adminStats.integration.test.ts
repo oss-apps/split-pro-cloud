@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
 import { after, before, test } from 'node:test';
 import { type PrismaClient } from '@prisma/client';
 
+import type * as Migrations from '~/migrations';
+import type * as Backfill from '~/migrations/backfillUserCreatedAt';
 import type * as AdminStats from '~/server/api/services/adminStats';
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -21,6 +22,8 @@ const schemaUrl = () => {
 
 let db: PrismaClient;
 let stats: typeof AdminStats;
+let migrations: typeof Migrations;
+let backfill: typeof Backfill;
 
 before(async () => {
   if (!databaseUrl) {
@@ -35,9 +38,11 @@ before(async () => {
     stdio: 'ignore',
   });
 
-  [{ db }, stats] = await Promise.all([
+  [{ db }, stats, migrations, backfill] = await Promise.all([
     import('~/server/db'),
     import('~/server/api/services/adminStats'),
+    import('~/migrations'),
+    import('~/migrations/backfillUserCreatedAt'),
   ]);
 });
 
@@ -52,7 +57,7 @@ after(async () => {
 const clearAll = () =>
   db.$executeRawUnsafe(
     `TRUNCATE "User", "Account", "Session", "Group", "Expense", "RecurringExpense",
-      "PushNotification" RESTART IDENTITY CASCADE`,
+      "PushNotification", "Feedback", "AppMetadata" RESTART IDENTITY CASCADE`,
   );
 
 // A Wednesday
@@ -83,6 +88,7 @@ void test('admin stats: an empty database', { skip: !databaseUrl }, async () => 
   assert.ok(result.weekly.every(({ activeUsers }) => 0 === activeUsers));
   assert.equal(result.platforms, null);
   assert.match(result.newUsersMethod, /^createdAt \(estimated before \d{4}-\d{2}-\d{2}\)$/);
+  assert.equal(result.newUsersBackfilled, false);
 });
 
 void test(
@@ -292,91 +298,227 @@ void test(
   },
 );
 
-/** The backfill statement of the createdAt migration, run again on rows without one. */
-const backfillSql = () => {
-  const sql = readFileSync(
-    'prisma/migrations/20261117120000_add_user_created_at/migration.sql',
-    'utf8',
-  )
-    .split('\n')
-    .filter((line) => !line.trim().startsWith('--'))
-    .join('\n');
-  const statement = sql.split(';').find((part) => part.trim().startsWith('WITH'));
-  assert.ok(statement, 'backfill statement');
-  return statement;
-};
+const expenseBy = (
+  id: string,
+  addedBy: number,
+  createdAt: Date,
+  { paidBy = addedBy, participants = [addedBy] }: { paidBy?: number; participants?: number[] } = {},
+) =>
+  db.expense.create({
+    data: {
+      id,
+      addedBy,
+      paidBy,
+      name: id,
+      category: 'general',
+      amount: 100,
+      currency: 'USD',
+      createdAt,
+      expenseDate: createdAt,
+      expenseParticipants: { create: participants.map((userId) => ({ userId, amount: 0 })) },
+    },
+  });
+
+/** A user from before `createdAt` existed: no value until the backfill fills one in. */
+const legacyUser = (id: number, data: Record<string, unknown> = {}) =>
+  db.user.create({ data: { id, email: `b${id}@example.com`, createdAt: null, ...data } });
+
+const createdAtById = async () =>
+  Object.fromEntries(
+    (await db.user.findMany({ select: { id: true, createdAt: true }, orderBy: { id: 'asc' } })).map(
+      (row) => [row.id, row.createdAt?.toISOString() ?? null],
+    ),
+  );
 
 void test(
-  'admin stats: the createdAt backfill estimates from earliest activity',
+  'createdAt backfill: estimates only from times the user already existed at',
   { skip: !databaseUrl },
   async () => {
     await clearAll();
-    const make = (id: number, data: Record<string, unknown> = {}) =>
-      db.user.create({ data: { id, email: `b${id}@example.com`, ...data } });
+    const cap = (
+      await db.$queryRaw<{ finished_at: Date }[]>`
+      SELECT "finished_at" FROM "_prisma_migrations"
+      WHERE "migration_name" = '20261117120000_add_user_created_at'
+    `
+    )[0]!.finished_at;
 
-    const payer = await make(1, { emailVerified: at('2026-09-01T00:00:00') });
-    const participant = await make(2);
-    const sessionOnly = await make(3);
-    // Nothing tied to them
-    await make(4);
-    const friendOnly = await make(5);
-    const renewed = await make(6);
+    const alice = await legacyUser(1, { emailVerified: at('2026-09-01T00:00:00') });
+    // Invited recently, then added as payer and participant to an expense from 2020
+    const invited = await legacyUser(2);
+    const appUser = await legacyUser(3);
+    const sessionOnly = await legacyUser(4);
+    const renewed = await legacyUser(5);
+    const groupOwner = await legacyUser(6);
+    const deviceUser = await legacyUser(7);
 
-    await db.expense.create({
+    await expenseBy('old', alice.id, at('2020-01-01T00:00:00'), {
+      paidBy: invited.id,
+      participants: [alice.id, invited.id],
+    });
+    await db.balance.create({
       data: {
-        id: 'x1',
-        addedBy: payer.id,
-        paidBy: payer.id,
-        name: 'x1',
-        category: 'general',
-        amount: 100,
+        userId: invited.id,
+        friendId: alice.id,
         currency: 'USD',
-        createdAt: at('2026-03-01T10:00:00'),
-        // Before the user existed: the expense date must not be used
-        expenseDate: at('2020-01-01T00:00:00'),
-        expenseParticipants: {
-          create: [
-            { userId: payer.id, amount: 0 },
-            { userId: participant.id, amount: 0 },
-          ],
+        amount: 0,
+        createdAt: at('2026-11-10T00:00:00'),
+      },
+    });
+
+    // Imported feedback carries an external time; feedback sent from the app counts
+    await db.feedback.createMany({
+      data: [
+        {
+          userId: appUser.id,
+          email: 'x@example.com',
+          message: 'old',
+          source: 'import',
+          createdAt: at('2019-05-01T00:00:00'),
         },
-      },
+        {
+          userId: appUser.id,
+          email: 'x@example.com',
+          message: 'new',
+          source: 'ios',
+          createdAt: at('2026-04-01T00:00:00'),
+        },
+      ],
     });
-    await db.friendship.create({
-      data: { userId: payer.id, friendId: friendOnly.id, createdAt: at('2026-02-01T00:00:00') },
+
+    await db.session.createMany({
+      data: [
+        { sessionToken: 's1', userId: sessionOnly.id, expires: at('2026-07-31T00:00:00') },
+        // Renewed now by the app, expiring months after the column was added: capped
+        { sessionToken: 's2', userId: renewed.id, expires: new Date(Date.now() + 180 * 86400e3) },
+      ],
     });
-    await db.session.create({
-      data: { sessionToken: 's1', userId: sessionOnly.id, expires: at('2026-07-31T00:00:00') },
-    });
-    // A session renewed today, which expires after the backfill runs: capped at now
-    await db.session.create({
+
+    // Groups change owner when one leaves, so owning an old group says nothing
+    await db.group.create({
       data: {
-        sessionToken: 's2',
-        userId: renewed.id,
-        expires: new Date(Date.now() + 180 * 86400e3),
+        publicId: 'old-group',
+        name: 'Old',
+        userId: groupOwner.id,
+        createdAt: at('2019-01-01T00:00:00'),
       },
     });
 
-    await db.$executeRawUnsafe(`UPDATE "User" SET "createdAt" = NULL`);
-    await db.$executeRawUnsafe(backfillSql());
-
-    const rows = await db.user.findMany({ select: { id: true, createdAt: true } });
-    const renewedAt = rows.find(({ id }) => renewed.id === id)?.createdAt?.getTime() ?? 0;
-    assert.ok(Math.abs(Date.now() - renewedAt) < 60_000, 'capped at now');
-
-    const createdAt = Object.fromEntries(
-      rows
-        .filter(({ id }) => renewed.id !== id)
-        .map((row) => [row.id, row.createdAt?.toISOString() ?? null]),
-    );
-    assert.deepEqual(createdAt, {
-      // Friendship (Feb) is earlier than the expense and emailVerified
-      1: '2026-02-01T00:00:00.000Z',
-      2: '2026-03-01T10:00:00.000Z',
-      3: '2026-07-01T00:00:00.000Z',
-      // Nothing tied to them: left null
-      4: null,
-      5: '2026-02-01T00:00:00.000Z',
+    // A token registered by someone else long ago, now moved to this user
+    await db.devicePushToken.create({
+      data: {
+        userId: deviceUser.id,
+        token: 'tok',
+        platform: 'ios',
+        createdAt: at('2018-01-01T00:00:00'),
+      },
     });
+    const { updatedAt: movedAt } = await db.devicePushToken.update({
+      where: { token: 'tok' },
+      data: { updatedAt: at('2026-10-01T00:00:00') },
+    });
+
+    const result = await backfill.backfillUserCreatedAt(db);
+    assert.deepEqual(result, { batches: 1, updated: 6 });
+
+    const createdAt = await createdAtById();
+    assert.deepEqual(createdAt, {
+      // Added the 2020 expense themselves
+      1: '2020-01-01T00:00:00.000Z',
+      // Their balance, not the old expense they were added to
+      2: '2026-11-10T00:00:00.000Z',
+      3: '2026-04-01T00:00:00.000Z',
+      4: '2026-07-01T00:00:00.000Z',
+      5: cap.toISOString(),
+      6: null,
+      7: movedAt.toISOString(),
+    });
+  },
+);
+
+void test(
+  'createdAt backfill: keeps exact times, changes nothing when run again, covers every batch',
+  { skip: !databaseUrl },
+  async () => {
+    await clearAll();
+
+    // Created after the column was added: its exact time stays, despite older activity
+    const exact = await db.user.create({ data: { id: 1, email: 'exact@example.com' } });
+    assert.ok(exact.createdAt);
+    await expenseBy('older', exact.id, at('2020-01-01T00:00:00'));
+
+    // Seven legacy users with a signal, one without, across batches of two
+    await Promise.all(
+      [2, 3, 4, 5, 6, 7, 8].map((id) =>
+        legacyUser(id, { emailVerified: at(`2026-0${id}-01T00:00:00`) }),
+      ),
+    );
+    await legacyUser(9);
+
+    const first = await backfill.backfillUserCreatedAt(db, { batchSize: 2 });
+    assert.deepEqual(first, { batches: 4, updated: 7 });
+
+    const after = await createdAtById();
+    assert.equal(after[1], exact.createdAt.toISOString());
+    [2, 3, 4, 5, 6, 7, 8].forEach((id) => {
+      assert.equal(after[id], `2026-0${id}-01T00:00:00.000Z`, `user ${id}`);
+    });
+    assert.equal(after[9], null);
+
+    // Only user 9 is left to look at, and it still has nothing
+    const second = await backfill.backfillUserCreatedAt(db, { batchSize: 2 });
+    assert.deepEqual(second, { batches: 1, updated: 0 });
+    assert.deepEqual(await createdAtById(), after);
+  },
+);
+
+void test(
+  'data migrations: run once, and a failure is logged without stopping startup',
+  { skip: !databaseUrl },
+  async () => {
+    await clearAll();
+    const runs: string[] = [];
+    const errors: unknown[] = [];
+    const originalError = console.error;
+    const originalLog = console.log;
+    console.error = (...args: unknown[]) => errors.push(args);
+    console.log = () => undefined;
+
+    try {
+      const ok = { version: '1.0.0', name: 'ok', run: async () => runs.push('ok') };
+      const failing = {
+        version: '1.1.0',
+        name: 'failing',
+        run: async () => {
+          runs.push('failing');
+          throw new Error('boom user@example.com');
+        },
+      };
+
+      assert.equal(await migrations.runDataMigrations(db, [ok, failing]), false);
+      const version = () =>
+        db.appMetadata.findUnique({ where: { key: migrations.DATA_VERSION_KEY } });
+      assert.equal((await version())?.value, '1.0.0');
+      assert.ok(!JSON.stringify(errors).includes('user@example.com'));
+
+      // Next start: only the failed one runs again
+      assert.equal(
+        await migrations.runDataMigrations(db, [
+          ok,
+          { ...failing, run: async () => runs.push('fixed') },
+        ]),
+        true,
+      );
+      assert.deepEqual(runs, ['ok', 'failing', 'fixed']);
+      assert.equal((await version())?.value, '1.1.0');
+
+      // The real list marks the backfill done for the stats
+      await db.appMetadata.deleteMany();
+      assert.equal(await migrations.runDataMigrations(db), true);
+      const result = await stats.getAdminStats(db, { days: 1, now: NOW });
+      assert.equal(result.newUsersBackfilled, true);
+    } finally {
+      console.error = originalError;
+      console.log = originalLog;
+    }
   },
 );
