@@ -239,13 +239,19 @@ export const deleteMobileSession = async (sessionToken: string, pushToken?: stri
 };
 
 /**
+ * App store reviewers can't receive our emails: one configured address gets a fixed code instead,
+ * for signing in and for deleting the account.
+ */
+export const isReviewLoginEmail = (email: string) => {
+  const reviewEmail = env.REVIEW_LOGIN_EMAIL && tryNormalizeEmail(env.REVIEW_LOGIN_EMAIL);
+  return !!reviewEmail && !!env.REVIEW_LOGIN_CODE && reviewEmail === tryNormalizeEmail(email);
+};
+
+export const reviewLoginCode = () => env.REVIEW_LOGIN_CODE!.trim().toUpperCase();
+
+/**
  * Sends the same sign-in code as the web email provider, stored the way next-auth stores it.
  */
-const isReviewLoginEmail = (email: string) =>
-  !!env.REVIEW_LOGIN_EMAIL &&
-  !!env.REVIEW_LOGIN_CODE &&
-  email === tryNormalizeEmail(env.REVIEW_LOGIN_EMAIL);
-
 export const sendEmailCode = async (rawEmail: string, ip: string) => {
   const email = tryNormalizeEmail(rawEmail);
 
@@ -273,9 +279,8 @@ export const sendEmailCode = async (rawEmail: string, ip: string) => {
     );
   }
 
-  // App store reviewers can't receive our emails: one configured address gets a fixed code instead
   const isReviewLogin = isReviewLoginEmail(email);
-  const token = isReviewLogin ? env.REVIEW_LOGIN_CODE!.trim().toUpperCase() : generateEmailToken();
+  const token = isReviewLogin ? reviewLoginCode() : generateEmailToken();
   await adapter.createVerificationToken({
     identifier: email,
     token: hashVerificationToken(token, getAuthSecret()),

@@ -6,6 +6,7 @@ import { env } from '~/env';
 import { authOptions, generateEmailToken } from '~/server/auth';
 import { db } from '~/server/db';
 import { sendAccountDeletedEmail, sendAccountDeletionCodeEmail } from '~/server/mailer';
+import { isReviewLoginEmail, reviewLoginCode } from '~/server/mobileAuth';
 import {
   HANDOFF_IDENTIFIER_PREFIX,
   hashVerificationToken,
@@ -159,7 +160,9 @@ export const requestAccountDeletionCode = async (userId: number) => {
     throw rateLimited(result.retryAfterSeconds);
   }
 
-  const code = generateEmailToken();
+  // Like at sign-in, the review account's code is the fixed one and nothing is emailed
+  const isReviewAccount = isReviewLoginEmail(user.email);
+  const code = isReviewAccount ? reviewLoginCode() : generateEmailToken();
   const identifier = deleteCodeIdentifier(userId);
 
   await db.$transaction([
@@ -174,11 +177,13 @@ export const requestAccountDeletionCode = async (userId: number) => {
   ]);
   await resetRateLimit(ACCOUNT_DELETION_LIMITS.verifyPerCode, key);
 
-  const sent = await sendAccountDeletionCodeEmail(
-    user.email,
-    code,
-    DELETE_ACCOUNT_CODE_MAX_AGE_SECONDS / MINUTE,
-  );
+  const sent =
+    isReviewAccount ||
+    (await sendAccountDeletionCodeEmail(
+      user.email,
+      code,
+      DELETE_ACCOUNT_CODE_MAX_AGE_SECONDS / MINUTE,
+    ));
 
   if (!sent) {
     throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to send email' });
@@ -455,7 +460,7 @@ export const deleteAccount = async (
     ).catch(console.error);
   });
 
-  if (email) {
+  if (email && !isReviewLoginEmail(email)) {
     sendAccountDeletedEmail(email).catch(console.error);
   }
 };
