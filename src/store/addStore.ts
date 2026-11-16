@@ -1008,6 +1008,7 @@ export const inviteParticipant = async (
     image: null,
     currency: 'USD',
     deletedAt: null,
+    createdAt: null,
   });
 
   try {

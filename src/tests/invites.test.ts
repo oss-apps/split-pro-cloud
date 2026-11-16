@@ -11,6 +11,7 @@ const createUser = (id: number, name: string): User => ({
   email: `${name.toLowerCase()}@example.com`,
   emailVerified: null,
   deletedAt: null,
+  createdAt: null,
   image: null,
   currency: 'USD',
 });

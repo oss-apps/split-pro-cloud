@@ -53,6 +53,7 @@ const AddPage: NextPageWithUser<{
       ...user,
       emailVerified: null,
       deletedAt: null,
+      createdAt: null,
       name: user.name ?? null,
       email: user.email ?? null,
       image: user.image ?? null,

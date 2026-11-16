@@ -10,6 +10,17 @@ export async function register() {
     validateAuthEnv();
 
     const { env } = await import('./env');
+
+    if ('phase-production-build' !== process.env.NEXT_PHASE) {
+      const [{ runDataMigrations }, { db }] = await Promise.all([
+        import('./migrations'),
+        import('./server/db'),
+      ]);
+      // Not awaited: the server starts serving (and passes its healthcheck) while these run.
+      // It logs its own errors and never rejects.
+      void runDataMigrations(db);
+    }
+
     if (!env.RECURRING_RUNNER_DISABLED && 'phase-production-build' !== process.env.NEXT_PHASE) {
       const { startRecurringRunner } = await import('./server/api/services/recurringRunner');
       startRecurringRunner(
