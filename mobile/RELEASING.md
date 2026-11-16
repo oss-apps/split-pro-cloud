@@ -35,11 +35,7 @@ lists both. The links live in `src/components/Site/constants.ts`.
 ## Next
 
 1. Get Android to 12 opted-in testers. The 14 days only start counting once there are 12.
-2. Android push notifications need a Firebase project with an Android app `app.splitpro`. Then:
-   - add `google-services.json` (`android.googleServicesFile` in `app.config.ts`);
-   - upload the FCM V1 key to EAS;
-   - add a 96×96 notification icon;
-   - rebuild and release.
+2. Verify Android push notifications on the next internal build (see Firebase setup below).
 3. Before the public launch:
    - retake the store screenshots with realistic demo data;
    - use native Android confirm dialogs;
@@ -85,6 +81,19 @@ node ~/.appstore/scripts/asc/play-release.mjs <file.aab> "<release notes>"
 
 - `play-release.mjs` uploads the bundle once and releases it to internal and closed testing.
 - versionCode is incremented remotely by EAS.
+
+### Android Firebase push setup
+
+- EAS must have an FCM V1 service account credential assigned to `app.splitpro`.
+- `GOOGLE_SERVICES_JSON` is an EAS **file** environment variable with **secret** visibility in
+  both `production` and `preview`. `app.config.ts` reads its path; keep the file out of git.
+- Local builds may omit the variable, but Android push requires it. To test push locally, set it
+  to the path of the maintainer's `google-services.json`.
+- The notification plugin uses `assets/notification-icon.png`, a white-on-transparent logo mark.
+- Android emulators need Google Play services to receive remote notifications.
+- For an **internal-only** release, do not run `play-release.mjs` or `ship-builds.sh`: they also
+  publish to closed testing. Use `play-upload.mjs <file.aab> internal "<notes>"` for an internal
+  draft, then complete only that track through Play Console or the publishing API.
 
 **Both at once**
 
