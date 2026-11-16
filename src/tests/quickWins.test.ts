@@ -21,6 +21,7 @@ const me: User = {
   email: 'me@example.com',
   emailVerified: null,
   deletedAt: null,
+  createdAt: null,
   image: null,
   currency: 'INR',
 };
