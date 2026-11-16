@@ -33,6 +33,7 @@ export const DEFAULT_DAYS = 90;
 export const WEEKS = 12;
 export const MONTHS = 6;
 const STATEMENT_TIMEOUT_MS = 5000;
+const WORK_MEM = '32MB';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export const adminStatsQuery = z.object({
@@ -105,8 +106,20 @@ export const zeroFill = <K extends string>(
   );
 };
 
-/** Timestamps are stored as UTC `timestamp(3)`, so compare against UTC wall time. */
-const ts = (date: Date) => Prisma.sql`${date.toISOString().slice(0, 23)}::timestamp`;
+/**
+ * A typed literal for a date the server computed. Timestamps are stored as UTC `timestamp(3)`,
+ * so they compare against UTC wall time. Inlined rather than bound: a bound text parameter cast
+ * to `timestamp` is re-parsed for every row it's compared with. Safe to inline, since the text
+ * only ever comes from `Date.toISOString()`.
+ */
+const literal = (text: string, type: 'timestamp' | 'date') => {
+  if (!/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}\.\d{3})?$/.test(text)) {
+    throw new Error('Not a date');
+  }
+  return Prisma.raw(`'${text}'::${type}`);
+};
+const ts = (date: Date) => literal(date.toISOString().slice(0, 23), 'timestamp');
+const utcDate = (date: Date) => literal(dayKey(date), 'date');
 
 /**
  * Users who have signed in at least once: `u` is the "User" row, joined with `SIGNED_IN_JOIN`. A join
@@ -217,8 +230,12 @@ const getDailyCounts = async (tx: Tx, firstDay: Date, end: Date) => {
 };
 
 /**
- * Distinct active users per day, ISO week and month, from one scan of the expense events since
- * `since`.
+ * Distinct active users per day, ISO week and month.
+ *
+ * Expense events since `since` become one row per user and day they were active (`userDays`, a
+ * hash aggregate), and weeks and months are counted from those, so the involvement rows are
+ * read and grouped once. Participants come from a join that hashes the expenses in the window and
+ * streams "ExpenseParticipant" past it; whether users signed in is checked once they are deduped.
  */
 const getActiveUsers = async (
   tx: Tx,
@@ -229,44 +246,64 @@ const getActiveUsers = async (
     firstMonth,
     end,
   }: { since: Date; firstDay: Date; firstWeek: Date; firstMonth: Date; end: Date },
-) =>
-  tx.$queryRaw<(KeyedRow & { unit: 'day' | 'week' | 'month' })[]>`
+) => {
+  const isEvent = Prisma.sql`e."deletedAt" IS NULL
+    AND e."createdAt" >= ${ts(since)} AND e."createdAt" < ${ts(end)}
+    AND NOT ${AUTO_RECURRING}`;
+
+  return tx.$queryRaw<(KeyedRow & { unit: 'day' | 'week' | 'month' })[]>`
     WITH "events" AS (
-      SELECT e."id", e."createdAt", e."addedBy", e."paidBy"
+      SELECT e."createdAt"::date AS "day", e."addedBy", e."paidBy"
       FROM "Expense" e
       LEFT JOIN "RecurringExpense" r ON r."id" = e."recurringId"
-      WHERE e."deletedAt" IS NULL
-        AND e."createdAt" >= ${ts(since)} AND e."createdAt" < ${ts(end)}
-        AND NOT ${AUTO_RECURRING}
+      WHERE ${isEvent}
     ),
-    "involved" AS (
-      SELECT "createdAt" AS "at", "addedBy" AS "userId", TRUE AS "creator" FROM "events"
-      UNION ALL SELECT "createdAt", "paidBy", FALSE FROM "events"
-      UNION ALL
-        SELECT ev."createdAt", ep."userId", FALSE
-        FROM "events" ev
-        JOIN "ExpenseParticipant" ep ON ep."expenseId" = ev."id"
-    ),
-    "active" AS MATERIALIZED (
-      SELECT i."at", i."userId", i."creator"
-      FROM "involved" i
-      JOIN "User" u ON u."id" = i."userId"
+    "signedIn" AS (
+      SELECT u."id"
+      FROM "User" u
       ${SIGNED_IN_JOIN}
       WHERE u."deletedAt" IS NULL AND ${SIGNED_IN}
+    ),
+    "userDays" AS MATERIALIZED (
+      SELECT i."day", i."userId", bool_or(i."creator") AS "creator"
+      FROM (
+        SELECT "day", "addedBy" AS "userId", TRUE AS "creator" FROM "events"
+        UNION ALL SELECT "day", "paidBy", FALSE FROM "events"
+        UNION ALL
+          SELECT e."createdAt"::date, ep."userId", FALSE
+          FROM "ExpenseParticipant" ep
+          JOIN "Expense" e ON e."id" = ep."expenseId"
+          LEFT JOIN "RecurringExpense" r ON r."id" = e."recurringId"
+          WHERE ${isEvent}
+      ) i
+      WHERE i."userId" IN (SELECT "id" FROM "signedIn")
+      GROUP BY 1, 2
     )
-    SELECT 'day' AS "unit", to_char(date_trunc('day', "at"), 'YYYY-MM-DD') AS "key",
-      COUNT(DISTINCT "userId") AS "activeUsers",
-      COUNT(DISTINCT "userId") FILTER (WHERE "creator") AS "activeCreators"
-    FROM "active" WHERE "at" >= ${ts(firstDay)} GROUP BY 2
+    SELECT 'day' AS "unit", to_char("day", 'YYYY-MM-DD') AS "key",
+      COUNT(*) AS "activeUsers", COUNT(*) FILTER (WHERE "creator") AS "activeCreators"
+    FROM "userDays"
+    WHERE "day" >= ${utcDate(firstDay)}
+    GROUP BY "day"
     UNION ALL
-    SELECT 'week', to_char(date_trunc('week', "at"), 'YYYY-MM-DD'),
-      COUNT(DISTINCT "userId"), COUNT(DISTINCT "userId") FILTER (WHERE "creator")
-    FROM "active" WHERE "at" >= ${ts(firstWeek)} GROUP BY 2
+    SELECT 'week', to_char("week", 'YYYY-MM-DD'), COUNT(*), COUNT(*) FILTER (WHERE "creator")
+    FROM (
+      SELECT date_trunc('week', "day")::date AS "week", "userId", bool_or("creator") AS "creator"
+      FROM "userDays"
+      WHERE "day" >= ${utcDate(firstWeek)}
+      GROUP BY 1, 2
+    ) AS "weeks"
+    GROUP BY "week"
     UNION ALL
-    SELECT 'month', to_char(date_trunc('month', "at"), 'YYYY-MM'),
-      COUNT(DISTINCT "userId"), COUNT(DISTINCT "userId") FILTER (WHERE "creator")
-    FROM "active" WHERE "at" >= ${ts(firstMonth)} GROUP BY 2
+    SELECT 'month', to_char("month", 'YYYY-MM'), COUNT(*), COUNT(*) FILTER (WHERE "creator")
+    FROM (
+      SELECT date_trunc('month', "day")::date AS "month", "userId", bool_or("creator") AS "creator"
+      FROM "userDays"
+      WHERE "day" >= ${utcDate(firstMonth)}
+      GROUP BY 1, 2
+    ) AS "months"
+    GROUP BY "month"
   `;
+};
 
 const ACTIVE_FIELDS = ['activeUsers', 'activeCreators'] as const;
 
@@ -291,6 +328,10 @@ export const getAdminStats = async (
       await tx.$executeRaw`SET TRANSACTION READ ONLY`;
       await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = ${STATEMENT_TIMEOUT_MS}`);
       await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = 1000`);
+      // These queries group a few hundred thousand rows: enough memory to do it without spilling
+      // to disk, and no JIT, whose compile time costs more than it saves here
+      await tx.$executeRawUnsafe(`SET LOCAL work_mem = '${WORK_MEM}'`);
+      await tx.$executeRawUnsafe(`SET LOCAL jit = off`);
 
       const totals = await getTotals(tx);
       const daily = await getDailyCounts(tx, firstDay, end);
