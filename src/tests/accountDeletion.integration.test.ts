@@ -723,3 +723,76 @@ void test(
     }
   },
 );
+
+void test(
+  'account deletion: the review account uses the fixed review code and can sign up again',
+  { skip: !databaseUrl },
+  async () => {
+    const t = await setup();
+    const reviewEmail = t.emailOf('Review');
+    const frank = await t.createUser('Frank');
+    const userIds = [frank.id];
+    const originalEnv = { ...t.env };
+    t.env.REVIEW_LOGIN_EMAIL = reviewEmail.toUpperCase();
+    t.env.REVIEW_LOGIN_CODE = 'rv7k2m';
+    t.env.INVITE_ONLY = false;
+
+    /** Runs `action`, returning the first argument of everything it logged. */
+    const logsOf = async (action: () => Promise<unknown>) => {
+      const logged: unknown[] = [];
+      const original = console.log;
+      console.log = (...args: unknown[]) => logged.push(args[0]);
+      try {
+        await action();
+      } finally {
+        console.log = original;
+      }
+      return logged;
+    };
+    const signInAsReviewer = async () => {
+      await t.sendEmailCode(reviewEmail, `review-${reviewEmail}`);
+      const { user } = await t.verifyEmailCode(reviewEmail, 'RV7K2M', `review-${reviewEmail}`);
+      userIds.push(user.id);
+      return t.db.user.findUniqueOrThrow({ where: { id: user.id } });
+    };
+
+    try {
+      // Other accounts still need the emailed code: the review code doesn't work for them
+      const frankCaller = t.callerFor(frank);
+      const frankCode = await t.requestCode(frank);
+      assert.notEqual(frankCode, 'RV7K2M');
+      await assert.rejects(
+        frankCaller.user.deleteAccount({ code: 'RV7K2M' }),
+        withCode('BAD_REQUEST'),
+      );
+      await frankCaller.user.deleteAccount({ code: frankCode });
+      assert.ok((await t.db.user.findUniqueOrThrow({ where: { id: frank.id } })).deletedAt);
+
+      const reviewer = await signInAsReviewer();
+      const caller = t.callerFor(reviewer);
+
+      // The review code only works once a code has been requested
+      await assert.rejects(caller.user.deleteAccount({ code: 'RV7K2M' }), withCode('BAD_REQUEST'));
+
+      // Requesting sends nothing, and the fixed code deletes the account, also without an email
+      await t.resetRateLimit(t.ACCOUNT_DELETION_LIMITS.verifyPerCode, String(reviewer.id));
+      const requestLogs = await logsOf(() => caller.user.requestDeleteAccountCode());
+      assert.ok(!requestLogs.includes('Account deletion code : '));
+      const deleteLogs = await logsOf(() => caller.user.deleteAccount({ code: ' rv7k2m ' }));
+      assert.ok(!deleteLogs.includes('Account deleted email : '));
+      const deleted = await t.db.user.findUniqueOrThrow({ where: { id: reviewer.id } });
+      assert.ok(deleted.deletedAt);
+      assert.equal(deleted.email, null);
+
+      // The reviewer can sign in again, as a fresh account
+      const again = await signInAsReviewer();
+      assert.notEqual(again.id, reviewer.id);
+      assert.equal(again.email, reviewEmail);
+      assert.equal(again.deletedAt, null);
+    } finally {
+      Object.assign(t.env, originalEnv);
+      await t.db.verificationToken.deleteMany({ where: { identifier: reviewEmail } });
+      await t.db.user.deleteMany({ where: { id: { in: userIds } } });
+    }
+  },
+);
