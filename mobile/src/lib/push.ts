@@ -3,8 +3,8 @@
  * API (`user.registerPushToken`). The backend sends `data.url` with a web-style path such as
  * `/expenses/123`; `getPushRoute` maps it to an app route.
  *
- * Push only works in a native build on a real device. On web and simulators every call here is a
- * no-op that reports `unsupported`.
+ * Push requires a native build. Android emulators with Google Play services work too; web and
+ * iOS simulators report `unsupported`.
  */
 import { createTRPCProxyClient, httpLink } from '@trpc/client';
 import Constants from 'expo-constants';
@@ -35,7 +35,7 @@ export type PushState = 'unsupported' | 'undetermined' | 'denied' | 'disabled' |
 export type EnablePushResult = 'enabled' | 'denied' | 'unsupported' | 'unavailable';
 
 export const isPushSupported = () =>
-  ('ios' === Platform.OS || 'android' === Platform.OS) && Device.isDevice;
+  'android' === Platform.OS || ('ios' === Platform.OS && Device.isDevice);
 
 const getProjectId = (): string | undefined => {
   const extra = Constants.expoConfig?.extra as { eas?: { projectId?: unknown } } | undefined;

@@ -28,6 +28,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   },
   android: {
     package: 'app.splitpro',
+    googleServicesFile: process.env.GOOGLE_SERVICES_JSON ?? undefined,
     adaptiveIcon: {
       foregroundImage: './assets/icon.png',
       backgroundColor: ICON_BACKGROUND,
@@ -55,8 +56,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         microphonePermission: false,
       },
     ],
-    // TODO: add `icon`, a 96x96 white-on-transparent PNG, or Android shows a white square.
-    ['expo-notifications', { color: '#06b6d4', defaultChannel: 'default' }],
+    [
+      'expo-notifications',
+      { icon: './assets/notification-icon.png', color: '#06b6d4', defaultChannel: 'default' },
+    ],
     [
       'expo-splash-screen',
       {
