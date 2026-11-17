@@ -27,97 +27,12 @@ import UploadFile from './UploadFile';
 import { CategoryIcons } from '../ui/categoryIcons';
 import Link from 'next/link';
 import { CURRENCIES } from '~/lib/currency';
+import { CATEGORIES } from '~/lib/categories';
 import { env } from '~/env';
 import { AMOUNT_TOO_LARGE_MESSAGE, isAmountWithinLimit } from '~/utils/numbers';
 import { AdSlot } from '../Ads/AdSlot';
 import { useRecentCurrencies } from '~/hooks/useRecentCurrencies';
 import { SPLIT_WAITING_MESSAGE, getDefaultSplitNote } from '~/utils/defaultSplit';
-
-const categories = {
-  entertainment: {
-    name: 'Entertainment',
-    items: [
-      {
-        games: 'Games',
-        movies: 'Movies',
-        music: 'Music',
-        sports: 'Sports',
-        other: 'Entertainment',
-      },
-    ],
-  },
-  food: {
-    name: 'Food & Drinks',
-    items: [
-      {
-        diningOut: 'Dining Out',
-        groceries: 'Groceries',
-        liquor: 'Liquor',
-        other: 'Food & Drinks',
-      },
-    ],
-  },
-  home: {
-    name: 'Home',
-    items: [
-      {
-        electronics: 'Electronics',
-        furniture: 'Furniture',
-        supplies: 'Supplies',
-        maintenance: 'Maintenance',
-        mortgage: 'Mortgage',
-        pets: 'Pets',
-        rent: 'Rent',
-        services: 'Services',
-        other: 'Home',
-      },
-    ],
-  },
-  life: {
-    name: 'Life',
-    items: [
-      {
-        childcare: 'Childcare',
-        clothing: 'Clothing',
-        education: 'Education',
-        gifts: 'Gifts',
-        medical: 'Medical',
-        taxes: 'Taxes',
-        other: 'Life',
-      },
-    ],
-  },
-  travel: {
-    name: 'Travel',
-    items: [
-      {
-        bus: 'Bus',
-        train: 'Train',
-        car: 'Car',
-        fuel: 'Fuel',
-        parking: 'Parking',
-        plane: 'Plane',
-        taxi: 'Taxi',
-        other: 'Travel',
-      },
-    ],
-  },
-  utilities: {
-    name: 'Utilities',
-    items: [
-      {
-        cleaning: 'Cleaning',
-        electricity: 'Electricity',
-        gas: 'Gas',
-        internet: 'Internet',
-        trash: 'Trash',
-        phone: 'Phone',
-        water: 'Water',
-        other: 'Utilities',
-      },
-    ],
-  },
-};
 
 export const AddOrEditExpensePage: React.FC<{
   isStorageConfigured: boolean;
@@ -365,7 +280,7 @@ export const AddOrEditExpensePage: React.FC<{
                 shouldCloseOnAction
               >
                 <div className="">
-                  {Object.entries(categories).map(([categoryName, categoryDetails]) => {
+                  {Object.entries(CATEGORIES).map(([categoryName, categoryDetails]) => {
                     return (
                       <div key={categoryName} className="mb-8">
                         <h3 className="mb-4 text-lg font-semibold">{categoryDetails.name}</h3>

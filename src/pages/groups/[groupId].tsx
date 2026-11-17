@@ -48,6 +48,11 @@ import { GroupSettleUp } from '~/components/group/GroupSettleUp';
 import { GroupDefaultSplit } from '~/components/group/GroupDefaultSplit';
 import { GroupRecurringRules } from '~/components/Expense/RecurringRule';
 import { RepeatIcon } from '~/components/Expense/RepeatIcon';
+import {
+  ExpenseSearch,
+  NoMatchingExpenses,
+  useExpenseSearch,
+} from '~/components/Expense/ExpenseSearch';
 
 const BalancePage: NextPageWithUser<{
   enableSendingInvites: boolean;
@@ -60,6 +65,11 @@ const BalancePage: NextPageWithUser<{
   const expensesQuery = api.group.getExpenses.useQuery({ groupId });
   const deleteGroupMutation = api.group.delete.useMutation();
   const leaveGroupMutation = api.group.leaveGroup.useMutation();
+
+  const expenseSearch = useExpenseSearch(expensesQuery.data, (e) => [
+    e.paidByUser.name ?? e.paidByUser.email,
+    ...e.expenseParticipants.map((p) => p.user.name ?? p.user.email),
+  ]);
 
   const [isInviteCopied, setIsInviteCopied] = useState(false);
   const [showDeleteTrigger, setShowDeleteTrigger] = useState(false);
@@ -389,7 +399,20 @@ const BalancePage: NextPageWithUser<{
             </div>
           </motion.div>
         )}
-        {expensesQuery.data?.map((e, index, expenses) => {
+        {expensesQuery.data?.length ? (
+          <ExpenseSearch
+            filter={expenseSearch.filter}
+            onChange={expenseSearch.setFilter}
+            options={expenseSearch.options}
+            className="mb-2 px-2"
+          />
+        ) : null}
+        {expenseSearch.isFiltering && !expenseSearch.filtered?.length ? (
+          <NoMatchingExpenses
+            onClear={() => expenseSearch.setFilter({ query: '', category: null })}
+          />
+        ) : null}
+        {expenseSearch.filtered?.map((e, index, expenses) => {
           const youPaid = e.paidBy === user.id;
           const isSettlement = e.splitType === SplitType.SETTLEMENT;
           const receiver = isSettlement
